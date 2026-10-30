@@ -4,7 +4,6 @@ Usage: py tools/ai2/ant.py <dir relative to ai2src\\appinventor> [ant args...]
   e.g. py tools/ai2/ant.py buildserver
 """
 
-import os
 import subprocess
 import sys
 from pathlib import Path

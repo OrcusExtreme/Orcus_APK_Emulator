@@ -1,6 +1,6 @@
 # Orcus APK Emulator — 계획
 
-> **상태: Phase 2 진행 중.** Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
+> **상태: Phase 3a 진행 중.** Phase 2는 2026-10-30에 끝났다(A9 승인). Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
 > 라이선스 동의(★D2)와 UAC 승인·재부팅(★D1)은 사용자가 직접 한다. 에이전트는 이 둘을 대신하지 않는다.
 >
 > - 상세 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 적대적 검토 66건과 수정 점검 52건을 반영했다. 추적 표는 §16에 있다.
@@ -275,9 +275,21 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 
 **산출물**
 - **`engine`:** 상태 기계 전체. 소유권 잠금, epoch와 원인, STOPPING 의도별 출구, 준비·골든 수명주기, 초기화 검증, 실패 재구축 1회, 자동 재시작 1회, private adb 감시와 재등록, COLD 모드, GPU 렌더러 감지 + 배너 + GPU 모드 작은 대화상자(툴바 [설정]과 배너에서 연다).
-- **`device`:** 프레임, 입력 큐(포인터, 키, chord, 붙여넣기), 컨트롤 FIFO 스레드, logcat, 스크린샷.
-- **`apk`:** 판정·스테이징, 매니페스트, 사전 점검, 설치 정책과 오류 대응, 실행 전 방향 맞추기, 실행, 감시(크래시·블록 실행 오류·컴포넌트 오류·TTS·음성 인식), epoch 기반 빠른 경로, 크래시 뒤 재설치.
+  - **준비(Phase 2 결과, ARCHITECTURE §6.5):** 기기 설정 11개(3버튼 내비, 스타일러스 필기 끄기, Bluetooth 끄기, 클립보드 토스트 끄기 포함) → 3 s 뒤 `sync` → 깨끗한 콜드 세션에서 설정이 남았는지 확인 → 저장 → 검증 부팅(로드 30 s 뒤 adb 응답). 어느 단계든 실패하면 골든을 저장하지 않는다.
+  - `session_init`: 위치 테스트 제공자(gps·fused) 준비 + 서울시청.
+- **`device`:** 프레임, 입력 큐(포인터, 키, chord, 붙여넣기), 컨트롤 FIFO 스레드, logcat, 스크린샷. 포인터는 §9.2 표(S7에서 오차 0–1 px로 확정)로 바꾸고 떼기 보장을 지킨다(S7: 안 떼면 다음 "누름"이 같은 손가락의 이동이 됨). ASCII 문자도 붙여넣기로 보낸다(키 이벤트는 Gboard가 자모로 바꿈).
+- **`apk`:** 판정·스테이징, 매니페스트(방향은 숫자 값), 사전 점검, 설치 정책과 오류 대응, 실행 전 방향 맞추기, 실행, 감시(크래시·블록 실행 오류·컴포넌트 오류·TTS·음성 인식, S5 실측 문자열: ANR은 WindowManager 줄, 음성 인식 없음은 `error 10`/errorNumber 0, 토스트 경고 3줄은 무시), epoch 기반 빠른 경로, 크래시 뒤 재설치.
 - **`app.Session` / `HeadlessSession`**, `orcus-cli run | smoke`(3a 범위).
+
+**작업 순서(3a 안)** — 단계마다 유닛 테스트 → `py tools/dev.py check` → 필요하면 기기 확인. 진행은 §4에 적는다.
+1. **engine 기반:** `seams.py`(ProcessHost·JobControl·DiscoverySource·AdbRunner·PortProber·Clock·ChannelFactory), `adb.py`(private adb 서버·재등록·DeviceShell), `provision.py`(준비 단계·`session_init`·기능 탐지, `tools/spikes/provision_draft.py` 승격), `snapshots.py`(유효성 키·`provision.json`), `gpu.py`(렌더러 판정), 조기 종료 분류.
+2. **EngineManager**(`engine/manager.py`): supervisor·worker·proc-wait·keepalive 스레드, §5.1 표 전체. FakeEmulatorServer와 가짜 seam으로 유닛 테스트(§12.2).
+3. **device:** DeviceSession, 프레임, 입력(§9.2 표·떼기 보장·붙여넣기), 컨트롤 FIFO(3a는 최소), logcat(Text 모드 파서·백로그 버리기), 스크린샷.
+4. **apk:** 판정·스테이징, 매니페스트(방향 숫자 표), 사전 점검, 설치, 실행, 감시(S5 문자열), 시기 판정, ApkService(빠른 경로·epoch 처리).
+5. **app:** Session / HeadlessSession 조립, `orcus-cli run | smoke | engine status|shot`.
+6. **기기 통합 시험:** 골든 부팅 → 픽스처 설치·실행 → OrcusProbe 오류 카드(§12.3의 3a 범위).
+7. **gui:** 메인 창, 폰 화면(프레임 펌프·9:16·회전), 입력 매퍼, 베젤 키, 툴바, 드롭, [앱]·[로그] 패널, 배너·토스트, 보고서 복사, 단일 인스턴스, 로그오프 빠른 정지, GPU 모드 대화상자.
+8. **수용 시험** B1·B2·B4·B7·B8·B9·B11·B12·B15 + 패키징 스모크.
 - **`gui`:**
   - 메인 창, 9:16 폰 화면(1:1, 화면별 크기), 프레임 펌프, 정규 좌표 입력, 베젤 키, 툴바.
   - 드롭(I/O 없는 사전 검사)과 파일 선택.
@@ -296,7 +308,7 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
   - 초기화하면 앱이 사라지고 epoch가 **정확히 1** 오른다(원인 RESET, 재설치 없음).
   - 크래시 뒤 자동 재시작하면 마지막 앱을 다시 설치하고, 골든 모드에서는 데이터 초기화 안내를 띄운다(원인 CRASH_RESTART).
   - GPU 모드 대화상자로 `software`를 고르면 재구축을 확인받은 뒤 COLD로 READY가 되고, "느린 그래픽 모드" 배너와 칩이 뜬다.
-- **B12.** 오류 카드가 각각 맞게 뜬다: 크래시(`am crash`), ANR, 블록 실행 오류, 컴포넌트 오류(601, 1501, 그리고 908에는 권한 허용 버튼). 2701, 음성 인식 없음(UseLegacy 켬·끔 세 경로), TTS 없음은 해당 패키지를 끈 상태(`pm disable-user`)에서 확인한다.
+- **B12.** 오류 카드가 각각 맞게 뜬다: 크래시(`am crash`), ANR, 블록 실행 오류, 컴포넌트 오류(601, 1501, 3806, 그리고 908에는 권한 허용 버튼). 2701, 음성 인식 없음(UseLegacy 켬·끔 세 경로), TTS 없음은 해당 패키지를 끈 상태(`pm disable-user`)에서 확인한다. 기대 문자열은 docs/spikes.md S5에 있다.
 - **B15.** 테스트와 앱 동작:
   - 유닛·레이어·pyright, 3a 범위 기기 테스트(ARCHITECTURE.md §12.3의 1–4, 6–15), 3a 스모크가 모두 통과한다.
   - `.apk`를 인자로 두 번째 실행을 하면 3 s 안에 첫 창에서 열린다.
@@ -306,21 +318,22 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 
 **산출물**
 - **[센서] 패널:**
-  - 흔들기(감도별, 패키지마다 기억, 중력 방향 펄스)
-  - 회전과 [화면 방향 맞추기] + 방향 불일치 배너
-  - 최소형 기울기 패드(20° 제한)
-  - 위치(프리셋·힌트)
-  - 마이크(앱별 동의)
-- **한글 입력 바**
+  - 흔들기(감도별, 패키지마다 기억, 중력 방향 펄스 — S7에서 네 자세 모두 확인)
+  - 회전과 [화면 방향 맞추기] + 방향 불일치 배너(표시 회전은 `dumpsys window displays`). 회전 버튼은 15°씩 0.6 s 이상에 걸쳐 돌리는 방식을 시험한다(S7: 한 번에 돌리면 Shaking이 잡힘)
+  - 최소형 기울기 패드(20° 제한, 회전 벡터의 x·z축 — y는 가속도를 바꾸지 않음)
+  - 위치(프리셋·힌트) — **프레임워크 테스트 제공자로 넣는다**(S7: gRPC `setGps`는 App Inventor 앱에 닿지 않음)
+  - 마이크(앱별 동의, 녹음 장치가 없는 PC에서는 끄고 안내)
+- **휠:** 게스트에 휠 장치가 없다(S7) → Canvas 밖에서만 짧은 세로 드래그로 흉내
+- **한글 입력 바**(Paste 키 확정, S8)
 - **최소형 설정 대화상자**(`ApplyResult`로 재시작·재구축 확인)
 - **닫을 때 데이터 안내**(골든 모드)
 - **3b 스모크**(흔들기·회전·위치 추가)
 
 **수용 기준**
-- **B3.** TalkToMe가 한국어로 말한다(S1이 긍정일 때. 아니면 분명한 칩과 런타임 카드). 흔들기: 맞는 감도에서 클릭 1회 = Shaking 1회, 10회 중 9회 이상(역방향 자세 포함).
+- **B3.** TalkToMe가 한국어로 말한다(S1 긍정: 내장 한국어 음성). 흔들기: 맞는 감도에서 클릭 1회 = Shaking 1회, 10회 중 9회 이상(역방향 자세 포함).
 - **B5.** 4방향 회전에서 탭 오차 ±4 패널 px 이내. 창과 화면이 회전을 따른다. 가로 고정 Screen2는 [화면 방향 맞추기] 뒤 바르게 보인다.
 - **B6.** "안녕하세요 Orcus"가 AI2 TextBox·MultiLine에 정확히 들어간다(NumbersOnly에서는 걸러짐).
-- **B13.** 위치: 프리셋을 고르면 OrcusProbe가 3 s 안에 갱신된다(정확한 위치 허용 상태). 위치 힌트가 보인다. 마이크 동의를 기억한다. 기울기 패드로 OrientationSensor 값이 바뀐다.
+- **B13.** 위치: 프리셋을 고르면 OrcusProbe가 10 s 안에 갱신된다(정확한 위치 허용 상태. Phase 2 실측 7.6 s 이내, 3b에서 정밀 측정 뒤 목표를 줄임). 위치 힌트가 보인다. 마이크 동의를 기억한다. 기울기 패드로 OrientationSensor 값이 바뀐다.
 - **B14.** 설정 변경이 반영된다(GPU 모드 변경은 재구축 확인 뒤). 골든 모드에서 앱을 실행한 뒤 창을 닫으면 데이터 안내가 뜬다. COLD 모드에서는 뜨지 않는다.
 - **B10.** 유닛·기기·스모크 테스트가 모두 통과한다. 수동 점검도 통과한다: 배율 100/125/150%, 다른 모니터로 창 이동, Mirage 켬, V3 켬.
 
@@ -335,7 +348,7 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 - **확장 기능:**
   - 폰 화면에 직접 한글 입력(S8 통과 시), 두 손가락 핀치
   - 조도·근접·배터리, 문자·전화 수신
-  - 사진·소리 파일 드롭, 카메라에 이미지 보여주기(S5 통과 시) 또는 웹캠, 진동 표시
+  - 사진·소리 파일 드롭, 카메라에 이미지 보여주기(`-camera-back imagefile` 확인은 Phase 2에서 못 해 착수 전에 함) 또는 웹캠, 진동 표시(`dumpsys vibrator_manager`, S5 확인)
   - 설치된 앱 목록, 영어 UI, 진단 묶음
   - 업그레이드 관문(첫 엔진 업그레이드 전에), 개발용 detached 모드(선택)
 - **배포:**
@@ -420,3 +433,29 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
   - **S5·S8·S7 일부(사용자 픽스처 없이):** App Inventor Companion APK로 설치 5–7 s·실행 1.5 s(드롭→실행 10 s 목표 안), 크래시 로그 문자열 확보, gRPC logcat은 Text 모드만 동작. 한글은 Paste 키로 정확히 들어가고 Ctrl+V는 실패(`ㅍ` 입력) → Paste 키 확정, ASCII도 붙여넣기로. 골든 로드 직후 Bluetooth 프로세스 크래시(3a 준비 단계에서 BT 끄기 시험). 3버튼 내비 강제(D7 변경), 베젤 키 3개 동작, 회전 시 프레임이 LANDSCAPE로 옴.
   - **패키징 스모크(A8) 통과:** 창 EXE·콘솔 EXE의 `--selftest`, 창 EXE의 `--boot-check`(host·host_hidden). 첫 빌드에서 selftest가 PySide6 누락을 잡아냈다. 앱 폴더 119 MB(Qt 정리는 Phase 4).
   - **S4 골든 멈춤과 해결:** 준비 세션에서 저장한 골든은 로드 약 21 s 뒤 게스트 전체가 멈췄다(adb·화면·logcat. 3회 재현, 처음 S4는 세션을 20 s 안에 끝내 못 봤다). 변형 4개(저장 방식·GPU 모드)와 "저장 4분 뒤 로드" 실험으로 원인을 "로캘 변경으로 프레임워크가 재시작된 준비 세션에서 저장한 것"으로 좁혔다. 준비 부팅에서는 설정만 적용하고 끈 뒤, 깨끗한 콜드 부팅에서 골든을 저장하자 로드 뒤 90 s 동안 멀쩡하고 시계도 맞았다(−1.2 s). §6.5에 7a단계로 반영, 1회성 준비는 약 90 s.
+- **2026-10-30 저녁 — 픽스처(HelloPurr·TalkToMe·OrcusProbe) 생성기, APK 빌드는 승인 대기**
+  - 웹 IDE는 Google 로그인이 필요해 에이전트가 쓰지 않는다. 대신 `tools/ai2/`에 프로젝트 생성기를 만들었다: 블록 DSL(`blocks.py`) 하나로 .bky와 .yail을 함께 만들고, `aia.py`가 .scm·project.properties·.aia·빌드용 zip을 만든다. 형식은 appinventor-sources `0712c114`의 YAIL 생성기와 `YaVersion`(239/40)·컴포넌트 버전·이벤트 인자 이름·속성 타입을 원본 Java에서 확인해 맞췄다. 미디어는 직접 그리고 합성했다.
+  - 정적 검사(괄호 균형, XML·JSON 파싱, 컴포넌트·전역 변수 참조, 명세 이름, 라벨/버튼 문구 충돌)와 단위 테스트 20개 추가 → 전체 140개 통과, pyright 0건. `tests/fixtures/OrcusProbe.aia` 생성.
+  - 명세에서 바꾼 것(docs/fixtures.md 반영): Screen1 화면 방향은 고정하지 않음(S7·B5의 자동 회전 확인용), `lblLangs`에 "langs " 접두어, 버튼 문구가 라벨 첫 단어와 겹치지 않게 함, 블록 오류는 `evaluate but ignore`로 실행.
+  - **APK 빌드는 아직 못 했다.** 빌드 서버를 Ant로 빌드하는 명령이 "외부에서 받은 코드 실행"으로 자동 차단됐다(appinventor-sources의 build.xml과 Java 코드가 이 PC에서 실행된다). 사용자가 허용하거나 직접 실행하거나, 웹 IDE에 .aia를 가져와 빌드하는 셋 중 하나를 정해야 한다. 그 뒤 에뮬레이터 설치·실행 확인 → S1·S3·S5·S7·S8 나머지.
+- **2026-10-30 저녁 2 — 픽스처 빌드, A4, S1·S3·S5·S7·S8 (상세는 `docs/spikes.md`, 스크립트 `tools/spikes/fx_*.py`)**
+  - 사용자가 생성한 .aia 3개를 웹 IDE에서 빌드했다(가져오기·빌드 모두 성공). minSdk 14, targetSdk 36.
+  - **A4 통과:** HelloPurr 설치 1.8 s → 실행 1.0 s → Screen1 resumed.
+  - **S1:** Google TTS에 내장된 한국어 음성으로 바로 말한다(내려받기·로그인 없음) → 준비 단계의 음성 단계 삭제.
+  - **S5:** 1501·601·908·2701·3806·RuntimeErrorAlert·ANR·음성 인식 없음의 실제 문자열 확보. 설계와 다른 것: ANR은 `WindowManager: ANR in Window{…}`, 인식 서비스 없음은 `error 10` + errorNumber 0, 마이크 꺼진 인식은 3806. 진동은 `dumpsys vibrator_manager`로 보인다.
+  - **S8:** Paste 키로 TextBox·MultiLine·Password·WebViewer에 한글이 그대로 들어간다(NumbersOnly는 숫자만). ASCII 키 이벤트는 자모가 된다("abc"→"뮻").
+  - **S7:** §9.2 좌표 표를 네 방향 모두 오차 0–1 px로 확정(B5). 흔들기 상수(25/16/9) 확인, 네 자세에서 감지. 가로에서 26° 기울이면 프레임이 뒤집힌다. 휠은 게스트에 장치가 없다. 이동은 약 60 Hz로 묶인다. 손을 떼지 않으면 손가락이 남는다.
+  - **S3(기술 절반):** 게스트 소리 출력과 녹음 흐름은 정상이다. 이 PC에는 녹음 장치가 없다. 스피커로 들리는지는 사람 확인이 남았다(`tools/spikes/fx_s3_listen.py`).
+  - **설계가 실측과 달라 고친 것:**
+    - Gboard가 가상 터치 장치를 스타일러스로 보고, 세션마다 첫 텍스트 상자 탭에서 전체 화면 "스타일러스 사용해 보기" 시트를 띄웠다(입력이 막힘) → `stylus_handwriting_enabled 0`을 준비에 추가.
+    - **위치:** App Inventor LocationSensor는 fused 제공자에 BALANCED로 요청해 gRPC `setGps`가 닿지 않는다 → 프레임워크 테스트 제공자로 넣는다.
+    - Bluetooth 끄기(로드 뒤 크래시 0건)와 클립보드 접근 토스트 끄기를 준비에 추가.
+    - 준비 세션의 마지막 설정이 사라졌다(SettingsProvider 지연 쓰기 + 전원 끄기) → 3 s 뒤 `sync`.
+    - 회전 자체가 Shaking을 일으킨다 → 3b에서 천천히 돌리기 시험.
+    - 매니페스트 방향은 숫자 값이다.
+  - **골든 사고:** 종료 중 qemu 크래시 다음 준비 부팅이 조용히 죽었는데, 스크립트가 다음 세션에서 골든을 저장해 로드 뒤 adb가 붙지 않는 골든이 생겼다(뒤 시험 3개 실패) → `-wipe-data`로 처음부터 다시 준비했다(첫 부팅 92 s). 준비에 "실패하면 저장 안 함 + 검증 부팅 30 s"를 넣었고, 하네스에 gRPC 유지 호출을 넣었다(120 s 유휴 종료 방지).
+  - **Phase 2에서 하지 못한 것:** S3 스피커 확인(사람), 카메라 `imagefile`(Phase 4 기능 판단용 → 착수 전), Qt 한/영 키(GUI가 있어야 함 → 3b), `ScreenOrientationChanged` 라벨.
+  - 다음: A9 — 위 결과로 고친 Phase 3 계획(§3 Phase 3a·3b)을 사용자에게 승인받는다.
+- **2026-10-30 밤 — S3 사람 확인, A9 승인, Phase 3a 시작**
+  - S3: 사용자가 `fx_s3_listen.py`로 고양이 소리와 "안녕하세요"가 PC 스피커로 잘 들리는 것을 확인했다 → 소리 대체 경로(streamAudio + QtMultimedia)는 넣지 않는다.
+  - **A9 승인:** 사용자가 고친 Phase 3 계획으로 Phase 3a 시작을 지시했다("이제 Phase3a를 시작"). Phase 2 완료.

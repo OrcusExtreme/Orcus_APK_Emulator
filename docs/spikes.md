@@ -236,3 +236,139 @@
 | 게스트 인터넷 | 됨(`ping 8.8.8.8` 44 ms, 비행기 모드 꺼짐) → Google TTS가 한국어 음성을 내려받거나 온라인 합성할 수는 있다 |
 | 남은 질문 | TalkToMe로 실제 한국어 발화가 되는지, 처음 한 번 음성을 내려받는지·로그인이 필요한지 → 되면 준비 단계(§6.5 5단계)에서 미리 내려받아 골든에 넣는다. 음성 인식(OrcusProbe)도 같은 방식으로 확인 |
 | 이미지 결정(D8) | google_apis 36 유지(TTS·인식 제공자·root가 모두 있음). playstore 대안은 필요 없어 보임 |
+
+---
+
+아래는 사용자 픽스처(웹 IDE로 빌드한 HelloPurr·TalkToMe·OrcusProbe)로 한 것이다. 패키지 이름은 `appinventor.ai_<계정>.<앱>`이다.
+
+## 픽스처 확인 (`tools/spikes/fx_inspect.py`)
+
+| 항목 | 결과 |
+|---|---|
+| 생성한 .aia → 웹 IDE | 세 앱 모두 가져오기·빌드 성공(사용자). 에셋(kitty.png, meow.wav, probe.html)이 APK에 그대로 들어감 |
+| 매니페스트 | minSdk 14, **targetSdk 36**(현재 App Inventor), versionCode 1, 네이티브 라이브러리 없음(dex 2개), 3.6–3.9 MB |
+| 화면 방향 | apkInspector는 `screenOrientation`을 **숫자**로 준다: Screen1 `-1`(unspecified), Screen2 `0`(landscape), 바코드 캡처 액티비티 `0` → §7.6 방향 판정은 이름이 아니라 숫자 표(0 landscape, 1 portrait, 6 sensorLandscape, 8 reverseLandscape, 11 userLandscape …)로 한다 |
+| OrcusProbe 권한 | 위치 3종 + MOCK_LOCATION, CAMERA(바코드), RECORD_AUDIO, READ_MEDIA_AUDIO, READ_EXTERNAL_STORAGE, VIBRATE, INTERNET |
+
+## 골든 재구축 — 3버튼 내비(D7) (15:40–15:44, `tools/spikes/fx_regolden.py`)
+
+| 항목 | 결과 |
+|---|---|
+| 이유 | 14:33 골든은 3버튼 오버레이를 준비 목록에 넣기(14:46) 전 것이라 제스처 내비였다 |
+| 골든 세션에서 설치한 앱 | 다음 콜드 부팅에 **남지 않는다**(제3자 패키지 0개) → 디스크도 골든 로드 때 저장 시점으로 돌아간다(S4의 "디스크 복원" 확인). 세션은 그대로 버릴 수 있다 |
+| 3버튼 | `navigation_mode=0`, 화면 아래 ◁ ○ ▢ |
+| Bluetooth 끄기 1차 | 다음 부팅에서 `bluetooth_on=1`로 돌아오고 로드 직후 크래시(`hci_layer.cc:527 on_hardware_error: Hardware Error Event with code 0x42`)도 그대로였다 → 원인은 아래 "마지막 설정 유실" |
+| 골든 부팅 | 5.8 s |
+
+### 골든 재구축 2–4차 — 깨진 골든과 안전장치 (16:01–16:40, `fx_regolden.py`)
+
+| 항목 | 결과 |
+|---|---|
+| 2차 실패 | 준비 부팅(16:01)이 부팅 완료 7 s 뒤 **로그 없이 사라졌다**(adb 서버: `connection terminated: read failed`, WER·crashpad 기록 없음). 직전 세션(15:59) 종료 때 qemu가 크래시했다(`qemu-system-x86_64-headless.exe`, `combase.dll`, 0xc0000602 fail-fast). 스크립트는 준비 명령이 모두 실패했는데도 다음 세션에서 골든을 저장했고, 그 골든은 로드 뒤 adb가 붙지 않았다(뒤 시험 3개가 부팅 대기 시간 초과) |
+| 유휴 종료 | adb만 기다리는 동안 gRPC 호출이 없어 120 s 뒤 에뮬레이터가 스스로 꺼졌다(`Idled to long, shutting down`) → 하네스에 20 s 간격 `getStatus` 유지 호출 추가. 엔진은 프레임·logcat 스트림이 있어 해당 없음 |
+| 안전장치 | 준비 명령이 하나라도 실패하거나, 다음 부팅에 설정이 남지 않았거나, 저장이 실패하면 **골든을 건드리지 않는다.** 저장 뒤 로드해 30 s 뒤 adb가 답하는지까지 확인한다 → Phase 3a 준비(§6.5)에 그대로 넣는다 |
+| 3차(`-wipe-data`) | 빈 userdata에서 첫 부팅 91.6 s, 준비 명령 9개 적용 → 다음 부팅에서 **마지막 명령(`stylus_handwriting_enabled`)만 사라짐** → 안전장치가 저장을 막음 |
+| **마지막 설정 유실** | SettingsProvider는 바뀐 값을 최대 약 2 s 뒤에 파일로 쓰는데, 하네스의 SHUTDOWN은 전원 끄기라서 세션 마지막 설정이 사라진다(1차 Bluetooth도 같은 원인) → 준비가 끝나면 **3 s 기다린 뒤 `sync`** 하고 끈다 |
+| 4차 | 준비 명령 10개 적용 + flush → 다음 부팅에서 전부 유지(스타일러스 0, `bluetooth_on=0` 포함) → 저장 → 골든 부팅 6.3 s, 30 s 뒤 adb 정상, **Bluetooth 크래시 0건**(꺼진 채 저장하면 로드 뒤 스택이 돌지 않는다) → Bluetooth 끄기를 준비 목록에 넣는다(App Inventor BluetoothClient 앱은 원래 이 PC 휴대폰에서 쓸 수 없다) |
+
+## S8 사전 확인 — Gboard 스타일러스 안내 시트 (15:54–16:00, `fx_stylus.py`, `fx_stylus2.py`, `fx_stylus3.py`)
+
+| 항목 | 결과 |
+|---|---|
+| 증상 | **골든 세션마다 첫 텍스트 상자 탭**에서 Gboard의 전체 화면 "스타일러스 사용해 보기" 시트가 앱을 덮는다. 붙여넣기도 버튼 탭도 앱에 닿지 않는다(TalkToMe [Talk To Me]가 동작하지 않은 원인). 골든은 매번 처음 상태라 세션마다 다시 뜬다 |
+| 보이지 않는 이유 | 시트는 IME 창이라 `uiautomator dump`에 나오지 않는다 → 화면 픽셀로 판정했다 |
+| 원인 | 가상 터치 장치(`virtio_input_multi_touch_1…11`)가 모두 `TOUCHSCREEN | STYLUS` 소스를 알린다. MouseEvent(압력 0x400)와 TouchEvent(손가락) 모두 같은 장치로 들어가고, 둘 다 시트를 띄운다 |
+| 해결 | `settings put secure stylus_handwriting_enabled 0`(기본값 null) → 마우스로 탭해도 일반 한국어 키보드, 붙여넣기·버튼·말하기 정상 → **준비 목록에 추가하고 골든을 다시 만들었다** |
+
+## S5 — App Inventor 실제 빌드 (15:47–15:53, `tools/spikes/fx_s5.py`)
+
+| 항목 | 결과 |
+|---|---|
+| **A4** | HelloPurr 설치 1.8 s(-g 2.0 s) → `am start -W` 1.02 s → `HelloPurr/.Screen1` resumed |
+| 실행 시간 | HelloPurr 1.02 s(종료 뒤 다시 0.39 s), TalkToMe 0.47 s, OrcusProbe 1.3 s. OrcusProbe를 골든 로드 직후 처음 실행한 세션에서는 5.6 s(WebView 첫 초기화로 추정) → 드롭→실행 10 s 목표 안 |
+| -g | 위험 권한이 없는 앱은 차이 없음. OrcusProbe를 -g 없이 실행하면 시작하자마자 위치 권한 대화상자("앱 사용 중에만 허용 / 이번만 허용 / 허용 안함", LocationSensor) |
+| 1501 | `E Form: Form Screen1 ErrorOccurred, errorNumber = 1501, componentType = BarcodeScanner, functionName = BarcodeScanner, messages = Your device does not have a scanning application installed.` 앞에 `W System.err: ActivityNotFoundException … com.google.zxing.client.android.SCAN` 스택 |
+| 601 | `… errorNumber = 601, componentType = ActivityStarter, functionName = StartActivity, messages = No corresponding activity was found.` |
+| 2701 | Google TTS를 끈 상태(`pm disable-user`)에서 AvailableLanguages → **12.4 s 뒤** `… errorNumber = 2701, componentType = TextToSpeech, functionName = TextToSpeech, messages = TextToSpeech is not yet ready to perform this operation` |
+| InternalTTS | **D 수준 줄도 gRPC Text logcat으로 온다**(26줄): `speak called when TTS not initialized`, `delaying call to speak.  Retries is: N Message is: …` |
+| 블록 실행 오류 | `E RuntimeErrorAlert: alert(Select list item: Attempt to get item number 5 of a list of length 0: [], Select list item: List index too large, End Application` + 대화상자(제목 "Select list item: List index too large", 버튼 END APPLICATION). 버튼을 누르면 Screen1이 끝나 홈으로 간다 |
+| 음성 인식, UseLegacy 끔, 제공자 있음 | 마이크가 꺼져 있으므로 5.5 s 뒤 `… errorNumber = 3806, componentType = SpeechRecognizer, functionName = GetText, messages = No Match` (설계 표의 3802가 아니다) |
+| 음성 인식, UseLegacy 켬 | Google TTS의 `GoogleTTSActivity` 인식 화면("• • •", "한국어 (대한민국)") → Back으로 닫힘, 오류 없음 |
+| 인식 제공자 없음(TTS·ASI를 `pm disable-user`) | UseLegacy 켬: `W System.err: android.content.ActivityNotFoundException: No Activity found to handle Intent { act=android.speech.action.RECOGNIZE_SPEECH … }` + RuntimeErrorAlert "Runtime Error" → 설계 패턴과 같다. UseLegacy 끔: `E SpeechRecognizer: Bind to system recognition service failed with error 10` + `… errorNumber = 0, … messages = Try Again.` → 설계의 3802·`no selected voice recognition service`가 아니다 |
+| 토스트 | 처리하지 않은 컴포넌트 오류는 `Notifier.ShowAlert` **토스트**다. dump에는 없고, logcat에 `E Toast: getXOffset() shouldn't be called on text toasts…` 3줄이 따라붙는다(감시에서 무시) |
+| 진동 | `dumpsys vibrator_manager`에 `effect | finished | duration: 531ms | … usage: TOUCH | <pkg>` → [P4] 진동 표시를 이 줄로 할 수 있다 |
+| 소리(S3 기술 절반) | gRPC `streamAudio`는 소리가 날 때만 패킷을 보낸다(조용할 때 0개). 고양이 소리 213패킷·최고 1,733, TTS 최고 944–1,634(16비트 최대의 3–5%) → 게스트 소리 출력은 정상. 스피커로 들리는지는 사람 확인 |
+| gRPC logcat | `logcat -c` 뒤에도 연결 직후 약 1,500줄을 먼저 보낸다 → 세션 시작 전 줄을 버리는 설계 유지 |
+
+## S1 — 한국어 TTS 실제 발화 (fx_s5)
+
+| 항목 | 결과 |
+|---|---|
+| OrcusProbe Speak "안녕하세요"(Language ko) | **말한다.** `GoogleTTSServiceImpl: For default lang ko-kr is name ko-KR-language (ko-kr-x-ism-server)` → `TTS dispatch: ko-kr-x-ism-seanet-embedded` → Google TTS에 **내장된 한국어 음성**으로 기기 안에서 합성(tflite). AfterSpeaking(true) → "tts true" |
+| 내려받기·로그인 | 없음(superpacks 폴더 비어 있음). 앞의 "한국어 음성 데이터 없음"은 `/data` 쪽만 본 결과였다 |
+| TalkToMe(Language 비움 = 기기 로캘 ko-KR) | 흔들기로 "Stop shaking me!" 발화(`TTS initialized after 0 retries`), 영어 문장도 한국어 음성으로 읽음 |
+| AvailableLanguages | 71개(ko 포함). `ar_XB` 로캘 경고 스택이 W로 찍힘 |
+| → 결정 | 준비 단계에서 음성을 내려받을 필요가 없다. S1의 "로그인이 필요한가" → 아니오 |
+
+### S5 보충 (16:40–16:42, `fx_s5b.py`, 새 골든)
+
+| 항목 | 결과 |
+|---|---|
+| 908 | 녹음 권한 대화상자에서 [허용 안함] → 1.1 s 뒤 `E Form: … errorNumber = 908, componentType = SoundRecorder, functionName = Start, messages = The permission RECORD_AUDIO has been denied. Please enable it in the Settings app.` SpeechRecognizer(UseLegacy 끔)는 같은 줄에 `functionName = GetText`. 두 번째 요청에도 대화상자가 다시 떴다 |
+| ANR | [ANR loop] 뒤 화면 탭 4번 → **6.2 s 뒤** `W InputDispatcher: Window … is unresponsive` + `I WindowManager: ANR in Window{… <pkg>/<pkg>.Screen1}. Reason:Input dispatching timed out …` + `D ActivityManager: created ANR temporary file` → 설계의 `ActivityManager: ANR in <pkg>`가 아니라 **WindowManager 줄**로 판정해야 한다 |
+
+## S8 — App Inventor 입력란에 한글 (16:49–16:52, `fx_s8.py`, 스타일러스 꺼진 새 골든)
+
+`setClipboard` → 100 ms → Paste 키. 각 입력란은 gRPC MouseEvent로 탭했다.
+
+| 입력란 | 결과 |
+|---|---|
+| TextBox | "안녕하세요 Orcus" 그대로. 스타일러스 시트 없음(골든 수정 확인) |
+| TextBox MultiLine | "첫째 줄⏎둘째 줄" 두 줄 그대로(화면) |
+| PasswordTextBox | dump에는 `•••••••`(7자, `password=true`)로만 보인다 → 글자 수로 확인 |
+| TextBox NumbersOnly | 한글은 들어가지 않음(빈 칸 유지), "12345"는 그대로 |
+| WebViewer 안 `<input>` | 한글 그대로(화면). dump에서는 HTML 입력란을 찾지 못했다 → Phase 3 기기 시험은 화면 비교로 확인 |
+| 클립보드 토스트 | 붙여넣을 때마다 화면 아래에 **"OrcusProbe에서 클립보드 데이터를 붙여넣음"** 토스트(`ClipboardService` 줄). `clipboard_show_access_notifications 0`으로 사라진다(S7 보충) |
+| Qt 한/영 키 | GUI가 있어야 하므로 Phase 3b에서 확인 |
+| Ctrl+V | (S8 일부에서) 실패 → **Paste 키로 확정** |
+
+## S3 — 녹음 (16:52–16:53, `fx_s3.py`)
+
+| 항목 | 결과 |
+|---|---|
+| 마이크 기본값 | `getMicrophoneState` = 꺼짐 |
+| 녹음 흐름 | [record]→[stop] → `SoundRecorder: … Firing AfterSoundRecorded with …/files/My Documents/Recordings/app_inventor_<시각>.3gp`(약 13 KB) → Player 재생 → "rec ok". 마이크를 꺼도 켜도 같다 |
+| 이 PC의 녹음 장치 | **없다**: 에뮬레이터 로그 `dsound: Could not initialize DirectSoundCapture … No sound driver is available` → 이 PC에서는 `setMicrophoneState(true)`로도 실제 소리를 녹음할 수 없다(마이크가 있는 PC에서 다시 확인) |
+| 소리 출력 | 탭할 때마다 터치 효과음(최고 약 1,634)이 `streamAudio`에 잡힌다 |
+| 스피커(사람 확인) | **잘 들림**(사용자, 2026-10-30, `tools/spikes/fx_s3_listen.py`: 고양이 소리 5번 + "안녕하세요" 2번). 창이 없는 헤드리스 에뮬레이터도 PC 스피커로 소리를 낸다 → `streamAudio` + QtMultimedia 대체 경로는 필요 없다. Orcus 창 최소화 상태는 GUI가 생기는 3a에서 다시 본다 |
+
+## S7 — OrcusProbe (16:42–16:50, `fx_s7.py`)
+
+| 항목 | 결과 |
+|---|---|
+| Back | `GoBack` → "back 0"→"back 1", 앱 그대로(Screen.BackPressed) |
+| 이동 밀도 | 50 이동/0.53 s → Dragged 30번, 25 이동/0.52 s → 24번, 100 이동/0.56 s → 32번 → **게스트는 화면 프레임마다(약 60 Hz) 한 번** 묶어 보낸다. 빠른 10 이동/0.09 s → fling 속도 6.14 |
+| 입력 고착 | 누른 채 떼지 않으면 2 s 뒤에도 눌린 상태다. 그 뒤 다른 곳을 "누르면" 새 탭이 아니라 **같은 손가락의 이동**(Dragged)이 된다 → §9.3 "떼기 보장"이 꼭 필요하다 |
+| 회전 | z=90 → 프레임 LANDSCAPE, 표시 `ROTATION_90`(앱이 따라 돎). z=270 → REVERSE_LANDSCAPE, `ROTATION_270`(내비 바가 왼쪽). **z=180 → 프레임 REVERSE_PORTRAIT인데 표시는 직전 회전 그대로**(180°를 허용하지 않음) |
+| 표시 회전 읽기 | `dumpsys window displays`의 `mCurrentRotation=ROTATION_n`(0.06 s) 또는 uiautomator `hierarchy rotation`. `dumpsys input`의 SurfaceOrientation 줄은 API 36에 없다 |
+| MouseEvent 좌표 | **회전 전 패널 좌표**다. 게스트가 자기 표시 회전으로 바꾼다: 가로 고정 Screen2(표시 90°)에서 보낸 (px, py)는 표시 (py, 720−px)에 떨어졌다(오차 ≤2 px) |
+| §9.2 표 LANDSCAPE 행 | 자세 z=90 + 표시 90°에서 (u, v) → ((1−v)·W, u·H)가 **오차 0 px** |
+| 기울기(x·y) | 회전 벡터는 [x = 앞뒤로 기울임, y = 세로축 회전(가속도 변화 없음), z = 화면 회전]. 세로에서 x를 30°까지 기울여도 프레임은 PORTRAIT. 가로(z=90)에서 x 26° 이상이면 **프레임이 PORTRAIT로 뒤집힌다**(20°는 유지). 20°에서 가속도 성분 3.36 m/s² |
+| 휠 | `injectWheel` dy=±120 ×3: 라벨 위·Canvas 위 모두 **스크롤되지 않음** |
+| 미결 | 위치(setGps 뒤에도 "loc -"), 흔들기(감도 버튼을 못 찾음), 네 방향 좌표 → 아래 S7 보충 |
+
+### S7 보충 (17:01–17:12, `fx_s7b.py`, `fx_s7c.py`, `fx_gps.py`)
+
+| 항목 | 결과 |
+|---|---|
+| **좌표(B5)** | `pointer_location`을 켜고 패널 좌표로 누른 점의 십자선을 gRPC 프레임에서 찾아 §9.2 표로 되돌림 → **네 프레임 회전 모두 오차 0–1 px**. 앱(표시가 자세를 따름, 180°만 예외)과 홈 화면(표시 0° 고정) 모두 같다 → 표 확정. 프레임 크기는 자세대로 720×1280 / 1280×720 |
+| 좌우 기울임(z) | 세로에서 ±30°까지 PORTRAIT. 가로에서 ±24°까지 LANDSCAPE, **±26°부터 PORTRAIT** → 20° 제한이면 안전 |
+| 흔들기 감도 | Weak+Δ25, Moderate+Δ16, Strong+Δ9 → 각 1번. Moderate+Δ25 1, Strong+Δ16 1, Moderate+Δ9 0, Weak+Δ16 0 |
+| 흔들기 자세 | Moderate+Δ16(중력 방향 부호): 세로·거꾸로·가로·반대 가로 **모두 감지** |
+| 회전이 흔들기를 일으킴 | 회전 자체가 가속도를 바꾼다: 180° 회전은 19.6 m/s² → Moderate·Strong에서 Shaking. Strong에서는 90° 회전도 Shaking. STEP·SMOOTH 둘 다 같다(0→90→0, 0→180→0 각 2번) |
+| **위치** | gRPC `setGps`·콘솔 `geo fix` 모두 게스트에 닿지 않는다(GOLDEN·COLD 둘 다, gps 제공자 켜짐, 마지막 위치 null, `getGps`에는 값 있음). **원인:** App Inventor LocationSensor는 Google Play 서비스의 **fused 제공자에 BALANCED로 요청**하고, 그 요청은 GNSS를 켜지 않는다(GNSS HAL `IGnss/default`는 있음) |
+| 위치 대안 | 프레임워크 테스트 제공자: `appops set com.android.shell android:mock_location allow` → `cmd location providers add-test-provider gps`·`fused` → `set-test-provider-enabled … true` → `set-test-provider-location … --location 37.5665,126.9780 --accuracy 5` → **"loc 37.5665,126.9780"**(7.6 s 안, 1 s 간격으로 세 번 보냄) |
+| 클립보드 토스트 끄기 | `settings put secure clipboard_show_access_notifications 0` → 붙여넣기 그대로, 토스트·`ClipboardService` 줄 없음 |
+| ASCII 키 이벤트 | `KeyboardEvent{text:"abc"}` → TextBox에 **"뮻"**(ko-KR Gboard가 자모로 조합) |
+| 휠 장치 | `getevent -lp`: 키보드 2개, 전원 버튼, 터치 장치 11개뿐. REL_WHEEL 장치 없음 |
+| 확인하지 못함 | `Screen.ScreenOrientationChanged` 라벨(가로에서는 라벨이 화면 밖). 표시가 자세를 따라 도는 것은 확인함 |

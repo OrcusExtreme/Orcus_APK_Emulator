@@ -785,16 +785,19 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    3. `service check`로 `settings, lock_settings, location, package, activity, input_method`가 **5회 연속** 응답할 때까지 기다린다(S4: 부팅 뒤 6.6–7.6 s).
    - 재시작 신호가 끝내 오지 않아도 로케일이 맞고 서비스가 응답하면 진행한다.
 3. **렌더러 확인:** GOLDEN인데 소프트웨어 렌더러면 `ENGINE_PROVISION_FAILED`(단계 "renderer", 해결: [GPU 모드 바꾸기])로 중단한다.
-4. **1회성 기기 설정**(`engine/provision.py`. S4에서 아래 7개를 모두 적용하고 다시 읽어 확인함, 초안 `tools/spikes/provision_draft.py`). 명령마다 읽기 확인이 맞을 때까지 최대 30 s 재시도한다:
+4. **1회성 기기 설정**(`engine/provision.py`. Phase 2에서 아래 10개를 모두 적용하고 다음 부팅에서 다시 읽어 확인함, 초안 `tools/spikes/provision_draft.py`). 명령마다 읽기 확인이 맞을 때까지 최대 30 s 재시도한다:
    - 자동 회전 켜기: `settings put system accelerometer_rotation 1`
    - 화면 꺼짐 시간 최대: `settings put system screen_off_timeout 2147483647`, `svc power stayon true`
    - 잠금 화면 끄기: `locksettings set-disabled true`
-   - 위치 켜기: `cmd location set-location-enabled true` (U)
-   - S5에서 adb 설치 검증 프롬프트가 보이면: `settings put global verifier_verify_adb_installs 0`, `package_verifier_enable 0`
-   - 내비 바는 `hw.mainKeys=yes`로 숨긴다(§11.2, S7에서 확인).
-5. **이미지별 단계(S1에서 결정):** 한국어(ko-KR) TTS 음성 데이터와 기본 TTS 엔진을 골든에 구워 넣는다.
+   - 위치 켜기: `cmd location set-location-enabled true`
+   - adb 설치 검증 끄기: `settings put global verifier_verify_adb_installs 0`, `package_verifier_enable 0`
+   - **3버튼 내비:** `cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`. `hw.mainKeys=yes`는 API 36에서 내비 바를 숨기지 못한다(S7, D7 변경)
+   - **스타일러스 필기 끄기:** `settings put secure stylus_handwriting_enabled 0`. 가상 터치 장치가 `TOUCHSCREEN | STYLUS`를 알려, 끄지 않으면 세션마다 첫 텍스트 상자 탭에서 Gboard의 전체 화면 "스타일러스 사용해 보기" 시트가 앱을 가린다(S8 사전 확인)
+   - **Bluetooth 끄기:** `cmd bluetooth_manager disable`. 켜진 채 저장하면 골든을 로드할 때마다 netsim Bluetooth 스택이 크래시한다(S5)
+   - **클립보드 접근 토스트 끄기:** `settings put secure clipboard_show_access_notifications 0`. 한글 입력은 붙여넣기라서, 켜져 있으면 확정할 때마다 토스트가 앱 아래쪽을 가린다(S8. 세션에서 확인했고 골든 재구축으로는 아직 확인하지 않음)
+   - **마지막에 3 s 기다린 뒤 `sync`한다.** SettingsProvider는 값을 최대 약 2 s 뒤에 파일로 쓰고 `setVmState(SHUTDOWN)`은 전원 끄기라서, 그대로 끄면 마지막 설정이 사라진다(Phase 2에서 두 번 겪음)
+5. **이미지별 단계 — 없음(S1 결과).** Google TTS에 내장된 한국어 음성(`ko-kr-x-ism-seanet-embedded`)으로 기기 안에서 바로 말한다. 내려받기·로그인이 필요 없다.
    - **개인 Google 계정을 골든에 로그인하지 않는다.** 로그인하면 그 PC의 모든 학생이 계정을 공유하게 되고, 토큰이 스냅샷에 남는다.
-   - 로그인이 꼭 필요하면 오프라인 음성 패키지나 사이드로드 엔진(`tts_default_synth`)으로 대신한다. 그것도 안 되면 TTS 없음 칩과 안내로 처리한다(D8).
 6. **`session_init()`(§6.6)과 기능 탐지** → `state\device_caps.json`:
    - `getprop ro.build.version.sdk`, `getprop ro.product.cpu.abilist`
    - `pm list packages com.google.android.tts`
@@ -806,6 +809,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 7. **관찰값 검증:** `persist.sys.locale` = `ko-KR`, `persist.sys.timezone` = `Asia/Seoul`인지 본다. 다르면 단계 이름과 함께 실패로 끝낸다. 관찰값은 `provision.json`과 `device_caps.json`에 기록한다.
    - **COLD는 여기서 끝난다.** `provision.json`(mode: COLD)을 쓰고, 이 부팅이 그대로 SESSION_INIT → READY로 이어진다.
 7a. **(GOLDEN) 준비 세션을 끄고, 깨끗한 세션에서 저장한다.** `setVmState(SHUTDOWN)` → `-change-locale` 없이 COLD 플래그로 다시 부팅 → 10 s 안정 → 4단계 설정과 로캘·시간대가 남아 있는지 읽어 확인 → `setprop debug.wm.disable_deprecated_target_sdk_dialog true`(RAM 속성) → 8·9단계.
+   - **4단계 명령이 하나라도 실패했거나 이 확인에서 하나라도 빠지면 저장하지 않고 실패로 끝낸다.** 기존 골든도 지우지 않는다. Phase 2에서 준비 세션이 부팅 7 s 뒤 사라졌는데 스크립트가 다음 세션에서 저장해, 로드 뒤 adb가 붙지 않는 골든이 생긴 적이 있다.
    - **이유(S4 실측):** 준비 세션(로캘 변경 → 프레임워크 재시작 직후)에서 저장한 골든은 로드할 때 게스트 시계가 저장 시각에 멈춰 있고, **로드 약 21 s 뒤 게스트 전체가 멈췄다**(adb·화면·logcat 모두. 3회 재현). 일반 세션에서 저장한 스냅샷은 4분 뒤 로드해도 시계가 맞고(−0.1 s) 90 s 넘게 멀쩡했다. 저장 방식(gRPC·콘솔)과 GPU 모드(host·host_hidden·software)는 원인이 아니었다.
    - 비용: 콜드 부팅 1회(약 25 s). 1회성 준비 전체는 약 90 s.
 8. **표식:**
@@ -817,7 +821,8 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    2. `SnapshotService.SaveSnapshot("orcus_golden")`을 부르고 **응답의 `success`와 `err`를 확인한다.** 실패도 정상 응답으로 오기 때문이다(P).
    3. 실패하면 `adb -H 127.0.0.1 -P 15037 -s emulator-5640 emu avd snapshot save orcus_golden`로 저장한다.
    4. `ListSnapshots`에서 Compatible 또는 Loaded인지 확인한다.
-10. **검증 부팅:** `setVmState(SHUTDOWN)` → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식 확인 → `provision.json` 기록 → READY.
+10. **검증 부팅:** `setVmState(SHUTDOWN)` → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식과 4단계 설정 확인 → **로드 30 s 뒤에도 adb가 답하는지 확인**(S4의 "로드 20–25 s 뒤 멈춤" 검사) → `provision.json` 기록 → READY. 실패하면 골든을 지우고 `ENGINE_PROVISION_FAILED`로 끝낸다.
+    - 실측(Phase 2, `-wipe-data`부터): 첫 부팅 92 s, 재시작 대기 9 s, 설정 약 10 s, 콜드 부팅 22 s, 저장 2 s, 검증 부팅 6 s → 약 3분 30초.
     - UI 문구: "처음 준비하는 중 (약 3분) — 한 번만 합니다".
     - 재구축이면 이유를 보여준다. 예: "그래픽 드라이버가 바뀌어 휴대폰을 다시 준비합니다 (약 3분)".
 
@@ -829,7 +834,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 - `svc power stayon true`
 - `setMicrophoneState(realAudioEnabled=false)`. 앱별 동의가 있으면 **[P3b]** ApkService가 실행할 때 다시 켠다.
 - `setprop debug.orcus.session <새 uuid>`: 세션 nonce(§6.7). engine이 이 값을 기억한다.
-- `setGps(37.5665, 126.9780)`(서울시청): 앱이 에뮬레이터 기본 위치가 아니라 서울에서 시작하게 한다.
+- **위치 테스트 제공자 준비 + 서울시청(37.5665, 126.9780):** `appops set com.android.shell android:mock_location allow` → `cmd location providers add-test-provider gps`·`fused` → `set-test-provider-enabled <p> true` → `set-test-provider-location <p> --location 37.5665,126.9780 --accuracy 5`. gRPC `setGps`는 App Inventor 앱에 닿지 않는다(S7: LocationSensor가 fused 제공자에 BALANCED로 요청해 GNSS가 켜지지 않음). 약 0.5 s.
 - **게스트 시계 확인(보험):** 깨끗한 세션에서 저장한 골든은 로드할 때 에뮬레이터가 시계를 맞춘다(S4: 1–4분 뒤 로드에서 오차 −0.1…−1.2 s). 준비 세션에서 저장한 골든만 시계가 저장 시각에 멈췄다(§6.5 7a로 막음). 그래도 오차가 5 s를 넘으면 `su 0 date -u MMDDhhmmYYYY.ss`로 맞춘다(userdebug 이미지, S4에서 동작 확인). TLS를 쓰는 Web 컴포넌트와 Clock 수업 때문에 필요하다.
 - 렌더러 확인, `DeviceCaps` 캐시 읽기.
 
@@ -888,6 +893,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 
 - **읽는 항목:**
   - package, launcher(상대 이름 `.Screen1`을 package 기준으로 풀어 씀), **launcher의 `android:screenOrientation`**, label(한글 가능)
+    - apkInspector는 방향을 **숫자**로 준다(픽스처 실측: unspecified `-1`, landscape `0`). 숫자 표로 바꾼다: 0 landscape, 1 portrait, 6 sensorLandscape, 7 sensorPortrait, 8 reverseLandscape, 9 reversePortrait, 11 userLandscape, 12 userPortrait
   - versionCode/Name, min/targetSdk, 권한, `<queries>`, 기능(feature)
   - 네이티브 ABI(`lib/<abi>/`, 그리고 `assets/` 아래 ELF 매직)
   - 아이콘(`res/mipmap-xxxhdpi-v4/ic_launcher.png`)
@@ -960,12 +966,12 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 
 | 분류 | 신호 | 표시 |
 |---|---|---|
-| `APP_SPEECH_MISSING` | 앱 PID의 어떤 줄이든(`AndroidRuntime` FATAL 스택, `W/System.err`, RuntimeErrorAlert 메시지) `ActivityNotFoundException` 또는 `No Activity found to handle Intent`와 `RECOGNIZE_SPEECH`가 함께 있음. 또는(UseLegacy 끔) `E/Form … errorNumber = 3802`(GetText)나 `no selected voice recognition service` 줄이 있고 `DeviceCaps.speech_recognizer`가 거짓 | "이 PC 휴대폰에는 음성 인식 앱이 없어 오류가 났습니다. 음성 인식은 실제 휴대폰이나 Companion으로 시험하세요. (SpeechRecognizer의 UseLegacy를 끄면 오류 창 대신 ErrorOccurred로 받습니다.)" |
+| `APP_SPEECH_MISSING` | 앱 PID의 어떤 줄이든(`AndroidRuntime` FATAL 스택, `W/System.err`, RuntimeErrorAlert 메시지) `ActivityNotFoundException` 또는 `No Activity found to handle Intent`와 `RECOGNIZE_SPEECH`가 함께 있음(S5 실측: `W System.err` + RuntimeErrorAlert "Runtime Error"). 또는(UseLegacy 끔) `E SpeechRecognizer: Bind to system recognition service failed with error 10` 줄이나 그 뒤의 `E/Form … errorNumber = 0, componentType = SpeechRecognizer, functionName = GetText, messages = Try Again.`이 있고 `DeviceCaps.speech_recognizer`가 거짓 | "이 PC 휴대폰에는 음성 인식 앱이 없어 오류가 났습니다. 음성 인식은 실제 휴대폰이나 Companion으로 시험하세요. (SpeechRecognizer의 UseLegacy를 끄면 오류 창 대신 ErrorOccurred로 받습니다.)" |
 | `APP_CRASH` | `FATAL EXCEPTION` + `Process: <pkg>` (AndroidRuntime) | 빨간 배너 "○○가 예기치 않게 종료되었습니다" + 예외 첫 줄, [자세히] [다시 실행] [보고서 복사] |
 | `APP_AI_RUNTIME_ERROR` | `E/RuntimeErrorAlert` `alert(` | 카드: 블록 실행 오류 메시지를 한국어 설명과 함께 보여준다. [다시 실행] 포함. `System.err` 스택만으로는 크래시로 보지 않는다 |
 | `APP_AI_COMPONENT_ERROR` | `E/Form … ErrorOccurred, errorNumber = N` | 정보 카드(앱이 처리했을 수 있음). 번호별 한국어 설명은 아래 목록 |
 | `APP_TTS_MISSING` | 앱 PID의 `InternalTTS` 로그: `max number of speak retries exceeded (20): speak will fail`(Speak 후 약 10 s) 또는 `speak called and tts.speak result was an error`. `DeviceCaps.tts_engine`이 None이면 첫 `speak called when TTS not initialized`에서 바로 표시 | "이 PC 휴대폰에 한국어 음성 엔진이 없어 말하기가 실패했습니다…" + 이유 보기 |
-| `APP_ANR` | ActivityManager `ANR in <pkg>` | 배너 + 설명 |
+| `APP_ANR` | `WindowManager: ANR in Window{… <pkg>/…}. Reason:Input dispatching timed out`(S5 실측: 입력 뒤 약 6 s, 앞에 `InputDispatcher: Window … is unresponsive`) 또는 ActivityManager `ANR in <pkg>` | 배너 + 설명 |
 | `APP_DIED` | PID가 사라짐(크래시 흔적 없음) | "앱이 종료됨" + [다시 실행] |
 
 `APP_AI_COMPONENT_ERROR`의 번호별 설명:
@@ -973,13 +979,13 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - 2701 → `AvailableLanguages`/`AvailableCountries`에서만 발생하는 TTS 준비 오류다.
 - 908 → "권한이 거부되었습니다" + [이 앱 권한 모두 허용].
 - 601 → ActivityStarter.
-- 3802 → SpeechRecognizer 'Client Side Error'. 음성 인식 서비스가 없으면 `APP_SPEECH_MISSING`으로 본다.
+- 3806 → SpeechRecognizer 'No Match'. 마이크가 꺼져 있으면(기본) 인식 서비스가 있어도 약 5 s 뒤 항상 이 번호다 → "마이크를 켜면 말소리를 인식할 수 있습니다" + [마이크 켜기]([P3b]).
+- 0 → SpeechRecognizer 'Try Again.'(서비스 연결 실패). `APP_SPEECH_MISSING` 규칙으로 처리한다.
+- 3802 → SpeechRecognizer 'Client Side Error'(Phase 2에서는 보지 못함).
 - 그 외 번호는 원문을 보여준다.
 
-- **S5 확인 사항:**
-  - `streamLogcat`이 D 수준 줄을 전달하는지(`InternalTTS`는 모두 `Log.d`)
-  - ko-KR 음성만 없는 경우의 실제 로그
-  - UseLegacy를 끈 SpeechRecognizer가 음성 인식 서비스 없이 내는 3802 줄
+- **처리하지 않은 컴포넌트 오류는 토스트다**(`Notifier.ShowAlert`). uiautomator dump에는 나오지 않고, logcat에 `E Toast: getXOffset()/getYOffset()/setGravity() shouldn't be called on text toasts…` 3줄이 따라붙는다 → 감시에서 무시한다.
+- **S5 결과:** `streamLogcat`은 D 수준 줄도 전달한다(`InternalTTS` 26줄). 2701은 AvailableLanguages 뒤 12.4 s에 온다. 이 이미지는 한국어 음성이 내장되어 "ko-KR 음성만 없는 경우"는 생기지 않는다(엔진을 끈 경우만 `APP_TTS_MISSING`).
 - **App Inventor 자체 오류 대화상자는 크래시로 취급하지 않는다.**
 
 ### 7.9 세션 동작
@@ -1064,7 +1070,7 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 
 - GUI는 표시 중인 프레임 안의 정규 좌표 (u, v) ∈ [0, 1]과 그 프레임의 `seq`만 보낸다(`PointerAt`).
 - device는 그 `seq` 프레임의 회전(최근 프레임 몇 개를 기억)과 `getStatus.hardwareConfig`의 패널 크기를 써서 **회전 전 패널 픽셀**로 바꾼다. 그래서 회전하는 순간에도 새 프레임 기준으로 잘못 변환하지 않는다.
-- 아래 표는 잠정이다. S7에서 네 모서리를 탭해 부호를 확정하고, device의 유닛 테스트로 고정한다.
+- 아래 표는 **S7에서 확정**했다(`tools/spikes/fx_s7b.py`): `pointer_location`을 켜고 패널 좌표로 누른 점을 프레임에서 찾아 표로 되돌리니, 네 프레임 회전 모두 **오차 0–1 px**였다(B5 기준 ±4 px). 게스트 표시 회전이 자세와 같을 때(앱이 따라 돎)와 다를 때(세로 고정 홈 화면, 가로 고정 Screen2, 180°) 모두 맞다. MouseEvent는 회전 전 패널 좌표이고, 표시 회전은 게스트가 스스로 적용하기 때문이다. device의 유닛 테스트로 고정한다.
 
 | rotation | panel x | panel y |
 |---|---|---|
@@ -1090,7 +1096,8 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
   - 앱이 종료됨
 - 한 제스처 안에서 MouseEvent와 TouchEvent를 섞지 않는다.
 - **오른쪽 클릭**은 Back(설정, 기본 켬), **가운데 클릭**은 Home이다.
-- **휠:** `WheelEvent{dy = angleDelta().y()}`(한 칸에 120, P). 부호와 커서 위치 스크롤은 S2·S7에서 확인한다.
+- **이동 밀도(S7):** 게스트는 화면 프레임마다(약 60 Hz) 한 번 묶어 Dragged를 보낸다(10 ms 간격 50번 → 30번). 그보다 촘촘히 보내도 얻는 것이 없고, 20 ms 간격이면 거의 다 전달된다.
+- **휠: 게스트에 휠을 받을 장치가 없다**(S7: `getevent -lp`에 REL_WHEEL 없음, `injectWheel`로 스크롤되지 않음). **[P3b]** 대안: 커서가 Canvas 밖에 있을 때만 휠 한 칸을 짧은 세로 드래그(약 120 패널 px)로 흉내 낸다. Canvas 위에서는 드래그 이벤트가 되므로 보내지 않는다.
 - **[P4]** 두 손가락 핀치(Ctrl + 드래그, TouchEvent id 0/1)를 넣는다.
 
 ### 9.4 키
@@ -1136,7 +1143,9 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - 폰 아래의 `QPlainTextEdit`에서 Windows IME로 조합한다.
   - Enter는 `paste_text(s)`를 부른다: `setClipboard(ClipData{text})` → 100 ms 대기 → `KeyboardEvent{key:'Paste'}`.
   - Shift+Enter는 줄바꿈이다. 바는 열린 채로 있고 Esc로 닫는다.
-  - 방식(Paste 키 대 Ctrl+V chord)은 S8에서 정한다.
+  - **방식은 Paste 키로 확정(S8).** App Inventor TextBox·MultiLine(줄바꿈 유지)·PasswordTextBox·WebViewer 안 `<input>`에 그대로 들어간다. NumbersOnly는 숫자만 받는다(한글은 조용히 버려짐). Ctrl+V chord는 `v`만 들어가고 Gboard가 `ㅍ`으로 바꾼다.
+  - ASCII도 붙여넣기로 보낸다: `KeyboardEvent{text:"abc"}`는 ko-KR Gboard에서 "뮻"이 된다(S8).
+  - 준비 단계에서 `clipboard_show_access_notifications 0`을 설정한다. 켜져 있으면 붙여넣을 때마다 "○○에서 클립보드 데이터를 붙여넣음" 토스트가 앱 아래쪽을 가린다(S8, 끄면 사라짐 확인).
   - 툴팁: "휴대폰 클립보드를 덮어씁니다. 비밀번호에는 쓰지 마세요."
 - **[P4] 폰 화면에 직접 한글 입력:** `WA_InputMethodEnabled` + `QInputMethodEvent`를 쓴다. 조합 중인 글자는 폰 아래 말풍선에 보이고, 확정된 문자열은 키 입력과 같은 큐 순서로 `paste_text`한다. S8을 통과해야 넣는다.
 - **쓰지 않는 것:** ADBKeyBoard(GPL)는 쓰지 않는다. 게스트 한국어 IME(Gboard)는 S1 결과를 보고 나중에 선택한다.
@@ -1162,38 +1171,46 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - 60 ms 펄스는 표본 약 3개다(I).
   - 감도가 맞으면 첫 표본의 편차 0.9Δ(14.4 / 22.5 / 8.1)가 대역 안이라 1번 울리고, 나머지 표본은 400 ms 간격에 막힌다.
   - **다른 감도도 울릴 수 있다.** 예: Δ16의 둘째 표본 12.8은 Strong 대역이다. 그래서 "다른 감도에서는 안 울림"은 약속하지 않는다.
-- **검증:** App Inventor 감지기를 유닛 테스트에 이식해 "맞는 감도에서 정확히 1번"을 확인한다. 실기 확인은 S7(역방향 자세 포함)이다.
+- **검증:** App Inventor 감지기를 유닛 테스트에 이식해 "맞는 감도에서 정확히 1번"을 확인한다.
+- **S7 실기 결과(OrcusProbe, 세로):** Weak+Δ25, Moderate+Δ16, Strong+Δ9 → **각각 정확히 1번**. Moderate+Δ25, Strong+Δ16 → 1번(큰 Δ는 더 민감한 감도도 울림), Moderate+Δ9, Weak+Δ16 → 0번. TalkToMe(Moderate 기본)도 Δ16으로 "Stop shaking me!"를 말했다. 거꾸로·가로·반대 가로 자세에서도 Moderate+Δ16이 감지됐다(중력 방향 부호).
+- **회전도 흔들기로 잡힌다(S7):** 회전은 가속도를 한 번에 바꾼다. 180° 회전(19.6 m/s²)은 Moderate·Strong에서, 90° 회전은 Strong에서 Shaking을 일으킨다. STEP과 SMOOTH 모두 그렇다. 실제 폰을 빠르게 돌려도 같은 일이 생기므로 막지는 않되, **[P3b]** 회전 버튼은 15°씩 0.6 s 이상에 걸쳐 돌리는 방식을 시험한다(10개 표본 평균과의 차이를 5 m/s² 아래로 유지). 안 되면 회전 직후 흔들기 감지가 생길 수 있다고 툴팁에 적는다.
 
 **방향(회전)**
 - **프레임 회전은 기기 자세를 따른다.** 스트리밍 프레임의 `format.rotation`(과 픽셀 방향)은 가상 기기의 **자세(가속도)**로 정해진다(P, `ScreenshotUtils.deriveRotation`).
-  - 축과의 오차가 약 26° 안일 때만 그 방향으로 보고, 아니면 PORTRAIT로 본다.
-  - 게스트의 표시 회전은 반영하지 않는다. 그래서 가로 고정 Screen이나 BarcodeScanner 캡처 화면(`screenOrientation="landscape"`)은 세로 자세에서 옆으로 누운 채 보인다.
+  - 축과의 오차가 약 26° 안일 때만 그 방향으로 보고, 아니면 PORTRAIT로 본다. S7 실측: 가로 자세에서 z를 ±24°까지 기울이면 LANDSCAPE, ±26°부터 PORTRAIT. 세로에서는 ±30°까지 PORTRAIT(아니면 PORTRAIT로 보기 때문).
+  - 게스트의 표시 회전은 반영하지 않는다. 그래서 가로 고정 Screen이나 BarcodeScanner 캡처 화면(`screenOrientation="landscape"`)은 세로 자세에서 옆으로 누운 채 보인다(S7: Screen2를 세로 자세로 열면 프레임 PORTRAIT, 표시 `ROTATION_90`).
+  - **180°는 표시가 따라 돌지 않는다**(S7): z=180이면 프레임은 REVERSE_PORTRAIT인데 표시는 직전 회전 그대로다(Android가 180°를 허용하지 않음). 탭 좌표는 §9.2 표대로 맞는다.
 - **대응:**
   - **[P3a]** launcher의 방향을 읽어 실행 전에 기기를 돌린다(§7.6).
   - **[P3b]** 표시 회전이 기기 자세와 다르면 배너와 [화면 방향 맞추기]를 보여준다.
-    - 표시 회전은 S7에서 정한 명령으로 읽는다(`dumpsys input`의 SurfaceOrientation 또는 `dumpsys window`).
+    - 표시 회전은 `dumpsys window displays`의 `mCurrentRotation=ROTATION_n`으로 읽는다(S7: 0.06 s). API 36의 `dumpsys input`에는 SurfaceOrientation 줄이 없다.
     - Screen2, 스캐너 화면, 실행 중 ScreenOrientation 블록도 이 방법으로 해결한다.
-- **[P3b] 회전 버튼(F7/F8):** `setPhysicalModel(ROTATION, [0,0,0] | [0,0,90] | [0,0,180] | [0,0,-90], STEP)`. 벡터는 S7에서 확정한다.
+- **[P3b] 회전 버튼(F7/F8):** `setPhysicalModel(ROTATION, [0,0,0] | [0,0,90] | [0,0,180] | [0,0,270], STEP)` → 프레임 PORTRAIT / LANDSCAPE / REVERSE_PORTRAIT / REVERSE_LANDSCAPE(S7 확정). 앱 표시는 0·90·270°만 따라 돈다.
   - 골든에서 자동 회전이 켜져 있어, App Inventor의 "unspecified" 방향은 기기 회전을 따른다.
   - 프레임이 회전하면 창과 베젤도 함께 돈다.
 
 **[P3b] 기울기 패드(최소형)**
-- 점을 끌면 `setPhysicalModel(ROTATION, [pitch, roll, z], STEP)`을 보낸다. 같은 스레드에서 갱신을 합쳐 최대 20 Hz로 보낸다.
+- 점을 끌면 `setPhysicalModel(ROTATION, [x, 0, z₀ + dz], STEP)`을 보낸다(z₀ = 현재 회전 버튼 각도). 같은 스레드에서 갱신을 합쳐 최대 20 Hz로 보낸다.
+  - **S7: 회전 벡터는 [x = 앞뒤로 기울임, y = 세로축 회전, z = 화면 회전]이다. y는 가속도를 바꾸지 않는다**(중력과 같은 축) → 패드의 위아래는 x, 좌우는 z의 작은 변화로 보낸다.
 - 더블클릭하면 가운데로 돌아간다. AccelerometerSensor·OrientationSensor 게임용이다.
-- **현재 회전 축에서 최대 20°까지만** 기울인다. 약 26°를 넘으면 `deriveRotation`이 프레임을 PORTRAIT로 뒤집어, 게스트 UI는 가로인데 화면만 세로로 돈다. 더 큰 기울기가 필요한지는 S7에서 본다.
+- **현재 회전 축에서 최대 20°까지만** 기울인다(S7: 가로 자세는 26°부터 프레임이 PORTRAIT로 뒤집힘, 24°까지 유지). 20°에서 가속도 성분은 3.36 m/s²(중력의 34%)다.
 
 **[P3b] 위치**
-- `setGps(lat, lon, alt, satellites)`. 기본값은 서울시청이며 `session_init`에서 적용한다. 프리셋을 둔다.
+- **프레임워크 테스트 제공자로 넣는다**(S7 결과로 변경): `cmd location providers set-test-provider-location gps|fused --location <lat>,<lon> --accuracy 5`를 두 제공자에 보낸다. 제공자 준비는 `session_init`(§6.6)에서 한다. 기본값은 서울시청이고 프리셋을 둔다.
+  - gRPC `setGps`·콘솔 `geo fix`는 쓰지 않는다: App Inventor LocationSensor는 Google Play 서비스 fused 제공자에 BALANCED로 요청하고, 그 요청은 GNSS를 켜지 않아 에뮬레이터 GPS 값이 앱까지 오지 않는다(S7, GOLDEN·COLD 모두).
+  - 앱은 1 s 간격으로 보낸 값을 수 초 안에 받는다(S7: 세 번 보낸 뒤 "loc 37.5665,126.9780"). 위치를 바꾸면 값을 1 s 간격으로 2–3번 보낸다.
+  - 테스트 제공자 위치는 `Location.isMock()`이 참이다. App Inventor는 이 값을 보지 않는다.
 - **위치 힌트**(위치 컨트롤 옆과 `LOCATION` 칩):
   - "App Inventor LocationSensor 기본값은 TimeInterval 60000 ms·DistanceInterval 5 m라서, 첫 위치 뒤에는 약 1분마다·5 m 이상 움직였을 때만 LocationChanged가 옵니다. 빨리 보려면 TimeInterval을 1000으로 바꾸세요."(P)
   - "권한 대화상자에서 '대략적인 위치'를 고르면 10분에 한 번만 갱신됩니다 — [이 앱 권한 모두 허용]으로 정확한 위치를 허용하세요."
 
 **[P4]** 조도·근접(`setPhysicalModel`), 배터리(`setBattery`), 문자·전화 수신(`sendSms`/`sendPhone`).
-**진동:** gRPC 신호가 없다(I). [P3a]에서는 VIBRATE INFO 칩(§7.4)만 보여준다. **[P4]**에서 logcat이나 `dumpsys vibrator_manager`로 표시를 시도한다(U, S5).
+**진동:** gRPC 신호가 없다(I). [P3a]에서는 VIBRATE INFO 칩(§7.4)만 보여준다. **[P4]** 표시는 `dumpsys vibrator_manager`로 한다: HelloPurr의 Vibrate(500)가 `effect | finished | duration: 531ms | … usage: TOUCH | <pkg>` 줄로 남았다(S5).
 
 ### 9.8 오디오·마이크·카메라
 
 - **소리:** 에뮬레이터가 DirectSound로 직접 내며 앱이 할 일은 없다(U).
+  - S5: 게스트는 소리를 낸다. gRPC `streamAudio`는 소리가 날 때만 패킷을 보낸다(고양이 소리 213패킷, TTS, 16비트 최대의 3–5% 레벨). 무음 대체 경로가 필요해지면 이 스트림을 쓴다.
   - S3에서 **Orcus 창이 앞에 있을 때와 최소화했을 때** 모두 확인한다.
   - 무음이면 GPU `host_hidden`(L2)을 시도한다. 그래도 안 되면 `streamAudio` → `QAudioSink`(PySide6-Addons, +40 MB)로 가는데, S3 결과가 그것을 요구할 때만 한다.
 - **[P3b] 마이크:**
@@ -1201,9 +1218,10 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - 토글하면 `setMicrophoneState(realAudioEnabled=true)`를 런타임에 보낸다. 재실행이 필요 없고 골든에도 영향이 없다.
   - RECORD_AUDIO 앱에는 켜기를 제안한다. 동의는 패키지마다 기억하고, 실행할 때 다시 적용한다.
   - 켜져 있는 동안 빨간 "마이크 켜짐"을 표시한다. 녹음이 무음이면 Windows '데스크톱 앱의 마이크 액세스' 설정을 안내한다.
+  - S3: SoundRecorder 녹음·재생 흐름은 마이크 꺼짐·켜짐 모두 동작한다(3gp 약 13 KB, AfterSoundRecorded). 이 PC에는 녹음 장치가 없어(`dsound: Could not initialize DirectSoundCapture`) 실제 소리는 확인하지 못했다 → 녹음 장치가 없으면 [마이크 켜기]를 끄고 "이 PC에 마이크가 없습니다"를 보여준다. 장치 유무는 에뮬레이터 로그의 이 줄로 안다.
 - **카메라:** `hw.camera.back=emulated`(**소프트웨어 가상 카메라**, P).
   - Camera·Camcorder는 가짜 영상을 받는다. BarcodeScanner는 실제 바코드를 비출 수 없으므로 인식할 수 없다(§7.4 문구).
-  - **S5 확인 항목:** `-camera-back imagefile:D:\OrcusAPK\camera\current.png`(고정 ASCII 경로)를 확인한다.
+  - **확인 항목(Phase 2에서 미실시 → [P4] 착수 전):** `-camera-back imagefile:D:\OrcusAPK\camera\current.png`(고정 ASCII 경로)를 확인한다. OrcusProbe의 BarcodeScanner는 외부 스캐너를 쓰므로(1501) 내장 스캐너용 픽스처가 따로 필요하다.
     - 헤드리스 37.2.12에서 동작하는가
     - 스캔하는 사이에 파일을 바꾸면 반영되는가
     - 골든 유효성에 영향이 있는가(카메라 설정은 스냅샷 호환성에 들어갈 수 있음)
@@ -1588,13 +1606,15 @@ firstboot.bootFromLocalSnapshot=no
 2. **정리:** 앱(또는 CLI)을 종료한 뒤, 그리고 테스트 프로세스를 TerminateProcess로 죽인 뒤 N s(S4) 안에 **이미지가 `D:\OrcusAPK\sdk` 아래인 프로세스가 하나도 남지 않는다**(private adb 서버 포함).
 3. **프레임:** 첫 프레임이 비어 있지 않고 행 순서가 맞다. 요청 크기와 같고 9:16이다. 회전하면 재요청이 동작한다.
 4. **설치·실행:** 픽스처가 설치되고 실행된다. 두 번째는 빠른 경로를 탄다. **초기화 뒤 같은 파일을 드롭하면 다시 설치된다.**
-5. **OrcusProbe**(§12.4)의 라벨을 `uiautomator dump`로 읽어 확인한다:
-   - 탭 오차 ±4 패널 px(4방향 회전)
+5. **OrcusProbe**(§12.4)의 라벨을 `uiautomator dump`로 읽어 확인한다. Phase 2 스파이크에서 배운 것:
+   - dump는 센서 라벨이 계속 바뀌어도 2–4 s에 된다. **IME 창(키보드·Gboard 시트)과 토스트는 dump에 없다** → 화면 픽셀이나 logcat으로 본다. WebView 안 입력란은 dump에서 찾기 어렵다 → 화면 비교.
+   - 가로에서는 Canvas가 화면을 채워 아래 라벨이 화면 밖이다 → 좌표 검사는 `pointer_location` 십자선을 프레임에서 찾는 방식(`tools/spikes/fx_s7b.py`)으로 한다.
+   - 탭 오차 ±4 패널 px(4방향 회전) — S7: 0–1 px
    - 300 px 드래그에 Dragged 20회 이상. Flung 속도가 드래그 속도에 비례한다
    - 흔들기 클릭 1번 = Shaking 1번(맞는 감도, 역방향 자세 포함)
    - Back → BackPressed
    - "안녕하세요 Orcus"가 TextBox·MultiLine에 정확히 들어간다(NumbersOnly에서는 걸러짐)
-   - **ACCESS_FINE_LOCATION을 허용한 상태에서** `setGps`가 3 s 안에 반영된다(Probe는 TimeInterval=1000). 기본 속성 앱은 첫 위치만 확인한다
+   - **ACCESS_FINE_LOCATION을 허용한 상태에서** 테스트 제공자 위치가 10 s 안에 반영된다(Probe는 TimeInterval=1000). 기본 속성 앱은 첫 위치만 확인한다
    - 기울기 패드로 OrientationSensor 값이 바뀐다
    - 가로 고정 Screen2가 [화면 방향 맞추기] 뒤 바르게 보인다
 6. **손가락 고착:** 드래그 중 입력 스트림을 끊고 다시 연결한 뒤 탭한다 → 탭이 등록되고 드래그는 이어지지 않는다.
@@ -1608,16 +1628,17 @@ firstboot.bootFromLocalSnapshot=no
     - 크래시: `adb shell am crash <pkg>`로 일으킨다. AI2 블록 오류는 대개 RuntimeErrorAlert로 잡히기 때문이다.
     - 블록 실행 오류 버튼, 601, 908(권한 거부), 1501(BarcodeScanner), ANR(Probe의 ANR 버튼)
     - 2701과 음성 인식 없음은 **해당 패키지를 끈 상태에서** 확인한다: `adb shell pm disable-user --user 0 <S1에서 확인한 TTS·음성 인식 패키지>`로 끄고, 끝나면 [휴대폰 초기화]. 2701은 버튼을 누르고 약 12 s 뒤에 온다(App Inventor가 120 × 100 ms 기다림).
-    - SpeechRecognizer 경로는 모두 `APP_SPEECH_MISSING` 카드가 떠야 한다:
-      - UseLegacy 켬: 권한 대화상자를 거치는 첫 실행은 FATAL, 이미 허용된 상태는 RuntimeErrorAlert
-      - UseLegacy 끔: 3802
+    - SpeechRecognizer 경로는 모두 `APP_SPEECH_MISSING` 카드가 떠야 한다(S5 실측, TTS·ASI 패키지를 끈 상태):
+      - UseLegacy 켬: 권한 대화상자를 거치는 첫 실행은 FATAL, 이미 허용된 상태는 RuntimeErrorAlert(`No Activity found to handle Intent { act=android.speech.action.RECOGNIZE_SPEECH … }`)
+      - UseLegacy 끔: `Bind to system recognition service failed with error 10` + errorNumber 0 "Try Again."
+    - 제공자가 있고 마이크가 꺼져 있으면 UseLegacy 끔은 3806 "No Match"다(카드는 마이크 안내).
     - 각각 맞는 카드가 떠야 한다.
 14. **단일 인스턴스:** 실행 중에 `.apk`를 인자로 두 번째 실행을 하면 3 s 안에 첫 창에서 열린다.
 15. **가로 고정 launcher:** Screen1이 가로 고정인 픽스처를 드롭하면, 실행 전에 기기가 가로로 돌아 있어 화면이 바르게 보인다.
 
 ### 12.4 픽스처 (APK는 크기·라이선스 때문에 저장소에 넣지 않고 `D:\OrcusDev\fixtures`에 둔다)
 
-- **OrcusProbe**: Phase 2에서 1쪽 명세를 주면 사용자가 App Inventor nb207로 만든다. **S3·S5 전**에 필요하다. `.aia`는 저장소에 둔다.
+- **OrcusProbe**: `tools/ai2/projects.py`가 1쪽 명세(docs/fixtures.md)대로 `.aia`를 만들고, 사용자가 App Inventor 웹 IDE에서 빌드한다(Phase 2에서 그렇게 만듦). `.aia`는 저장소에 둔다.
   - Canvas: TouchDown/Dragged/Flung(x, y, 속도)
   - 센서: Shaking 횟수(감도 전환 버튼 포함), AccelerometerSensor·OrientationSensor 값 라벨, 방향 라벨, LocationSensor(**TimeInterval=1000, DistanceInterval=0**)
   - 입력: BackPressed 횟수, TextBox / MultiLine / PasswordTextBox / NumbersOnly, **WebViewer**(입력란이 있는 페이지, S8용)
@@ -1627,8 +1648,8 @@ firstboot.bootFromLocalSnapshot=no
     - **BarcodeScanner 버튼**(UseExternalScanner 기본값 true → 1501)
     - 블록 실행 오류 버튼, ActivityStarter 잘못된 action 버튼(601), 권한 요청 버튼(908 확인용), **ANR 버튼**(10 s 넘게 도는 블록 반복 뒤 화면을 탭)
   - **가로 고정 Screen2**
-- **App Inventor 예제**(사용자가 nb207로 빌드):
-  - 스파이크 전: HelloPurr, TalkToMe
+- **App Inventor 예제**(`.aia`는 `tools/ai2`가 만들거나 공식 튜토리얼대로, 빌드는 사용자가 웹 IDE에서):
+  - 스파이크 전: HelloPurr, TalkToMe(Phase 2에서 생성·빌드 완료)
   - **3a 수용 시험 전:** PaintPot, BallBounce, MoleMash, 한글 이름 앱(HelloPurr 이름만 바꿔도 됨), AndroidMinSdk = 36 빌드, 가로 고정 앱(HelloPurr의 ScreenOrientation만 landscape로)
   - **레거시 APK:** 2018년 이전 빌드는 구할 수 있을 때만 쓴다. 없으면 레거시 항목은 '해당 없음'으로 기록한다.
 - **MITAI2Companion 2.81u**(18,365,393 B): `tools/fetch_fixtures.py`가 받고 SHA-256을 고정한다. 파서 회귀용이다.

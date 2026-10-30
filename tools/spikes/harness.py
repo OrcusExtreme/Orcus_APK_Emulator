@@ -98,6 +98,7 @@ class Live:
             self.launch()
             self.connect()
             self.timings["connect"] = round(time.monotonic() - t0, 2)
+            self._start_keepalive()
             self.wait_booted()
             self.timings["booted"] = round(time.monotonic() - t0, 2)
         except BaseException:
@@ -147,6 +148,20 @@ class Live:
                 return
             time.sleep(0.25)
         raise TimeoutError("no discovery file")
+
+    def _start_keepalive(self, every_s: float = 20.0) -> None:
+        """-idle-grpc-timeout 120 shuts the emulator down after 2 min without gRPC calls; long adb-only phases
+        (waiting for adb, provisioning) must not trigger it."""
+        import threading
+
+        def beat() -> None:
+            while self.emulator is not None and self.emulator.poll() is None and self.stub is not None:
+                try:
+                    self.status()
+                except grpc.RpcError:
+                    pass
+                time.sleep(every_s)
+        threading.Thread(target=beat, daemon=True).start()
 
     def status(self) -> ec.EmulatorStatus:
         assert self.stub is not None

@@ -27,7 +27,17 @@ PROVISION = [
     # the edge gestures that could steal Canvas drags (S7)
     ("cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton",
      "settings get secure navigation_mode", "0"),
+    # the virtio touch devices report TOUCHSCREEN | STYLUS, so Gboard opens its full-screen "try your stylus" sheet
+    # on the first text-field tap of every session; it blocks taps and paste (fx_stylus3)
+    ("settings put secure stylus_handwriting_enabled 0", "settings get secure stylus_handwriting_enabled", "0"),
+    # the netsim Bluetooth stack crashes right after every golden load (S5); off before the save, it cannot
+    ("cmd bluetooth_manager disable", "settings get global bluetooth_on", "0"),
+    # Korean input is a paste; with this on, every paste shows "<app> pasted from your clipboard" (S8, fx_s7b)
+    ("settings put secure clipboard_show_access_notifications 0",
+     "settings get secure clipboard_show_access_notifications", "0"),
 ]
+# SettingsProvider writes its XML up to ~2 s after a change, and the harness's SHUTDOWN is a power-off: the last
+# setting of a session was lost twice (bluetooth_on, stylus_handwriting_enabled). flush() before ending a session.
 # RAM only: set in the saving session (and again in session_init for COLD sessions)
 RAM_PROPS = [("setprop debug.wm.disable_deprecated_target_sdk_dialog true",
               "getprop debug.wm.disable_deprecated_target_sdk_dialog", "true")]
@@ -54,6 +64,12 @@ def wait_framework_restart(live: Live, timeout_s: float = 120) -> float:
     while not all(services_up(live) for _ in range(5)) and time.monotonic() - t0 < timeout_s:
         time.sleep(1)
     return round(time.monotonic() - t0, 1)
+
+
+def flush(live: Live, settle_s: float = 3.0) -> str:
+    """Let SettingsProvider write its delayed XML, then sync the filesystem, before the session is powered off."""
+    time.sleep(settle_s)
+    return sh(live, "sync; echo synced")[1]
 
 
 def apply_checked(live: Live, steps: list[tuple[str, str, str]], timeout_s: float = 30) -> dict[str, str]:

@@ -3,7 +3,8 @@
 Only the blocks the Orcus fixtures need. Formats follow appinventor-sources (blocklyeditor YAIL generators and
 the Companion's own Screen1.bky/.yail): component_event / component_set_get / component_method, text,
 math_number, logic_boolean, lexical and global variables, text_join, math_add, math_format_as_decimal,
-controls_forRange, lists_select_item, lists_create_with, controls_openAnotherScreen, controls_closeScreen.
+controls_forRange, controls_eval_but_ignore, lists_select_item, lists_create_with, controls_openAnotherScreen,
+controls_closeScreen.
 """
 
 from dataclasses import dataclass, field
@@ -14,11 +15,31 @@ _ids = count(1)
 
 
 def yail_str(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """AI.Yail.quotifyForREPL: escape quotes and backslashes, anything outside printable ASCII as \\uXXXX."""
+    out = []
+    for ch in s:
+        if ch in '\\"':
+            out.append("\\" + ch)
+        elif " " <= ch <= "~":
+            out.append(ch)
+        else:
+            out.extend(f"\\u{unit:04x}" for unit in _utf16_units(ch))
+    return '"' + "".join(out) + '"'
+
+
+def _utf16_units(ch: str) -> list[int]:
+    data = ch.encode("utf-16-be")
+    return [int.from_bytes(data[i:i + 2], "big") for i in range(0, len(data), 2)]
 
 
 def _bid() -> str:
     return str(next(_ids))
+
+
+def reset_ids() -> None:
+    """Number block ids from 1 in each .bky, so a project always produces the same file."""
+    global _ids
+    _ids = count(1)
 
 
 class Expr:
@@ -56,10 +77,14 @@ class Num(Expr):
     n: float | int
 
     def yail(self) -> str:
-        return str(self.n)
+        return _num(self.n)
 
     def bky(self) -> str:
-        return f'<block type="math_number" id="{_bid()}"><field name="NUM">{self.n}</field></block>'
+        return f'<block type="math_number" id="{_bid()}"><field name="NUM">{_num(self.n)}</field></block>'
+
+
+def _num(n: float | int) -> str:
+    return str(int(n)) if float(n).is_integer() else repr(float(n))
 
 
 @dataclass
@@ -251,6 +276,19 @@ class ForRange(Stmt):
 
 
 @dataclass
+class EvalIgnore(Stmt):
+    """'evaluate but ignore': run an expression as a statement."""
+    value: Expr
+
+    def yail(self) -> str:
+        return f'(begin {self.value.yail()} "ignored")'
+
+    def bky(self) -> str:
+        return (f'<block type="controls_eval_but_ignore" id="{_bid()}"><value name="VALUE">{self.value.bky()}'
+                f'</value></block>')
+
+
+@dataclass
 class OpenScreen(Stmt):
     name: str
 
@@ -296,8 +334,8 @@ class Event:
 
     def yail(self) -> str:
         params = " ".join(f"${p}" for p in self.params)
-        body = "\n".join(s.yail() for s in self.body)
-        return f"(define-event {self.comp} {self.event}({params})(set-this-form)\n{body})"
+        body = "\n ".join(s.yail() for s in self.body) or "(get-var *the-null-value*)"
+        return f"(define-event {self.comp} {self.event}({params})(set-this-form)\n  {body})"
 
     def bky(self, x: int, y: int) -> str:
         return (f'<block type="component_event" id="{_bid()}" x="{x}" y="{y}">'

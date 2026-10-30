@@ -3,11 +3,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.3-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/badge/Release-v0.1.4-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.4)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-120%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-140%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -20,7 +20,7 @@
 Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or LDPlayer) that suffer from multi-gigabyte memory footprints, bloated user interfaces, bundled ads, and persistent background telemetry, Orcus APK Emulator executes an official **Google Android Emulator** instance in headless mode (`-no-window -gpu host`) atop the **Windows Hypervisor Platform (WHPX)**. It streams frames and injects inputs via a low-latency, token-protected **gRPC API**, providing an instantaneous, native-feeling development testing experience.
 
 ### 🎯 Key Highlights
-* **Drag-and-Drop Instant Launch**: Drop any `.apk` file directly onto the window; the runtime stages the file, validates the manifest, and displays the running app in **under 10 seconds**.
+* **Drag-and-Drop Instant Launch**: Drop any `.apk` file directly onto the window; the runtime stages the file, validates the manifest, and displays the running app in **under 10 seconds** (measured 2.8s total on official HelloPurr).
 * **Golden Snapshot Boot (4.8–5.8s)**: Bypasses multi-minute cold boot sequences by launching from a pre-warmed, clean golden system snapshot on every session (measured 4.8–5.8s vs 10s budget).
 * **Ultra-Low Latency GPU Streaming**: Headless `-gpu host` rendering over gRPC (NVIDIA GTX 1660 hardware acceleration), streaming 432×768 RGB888 at ~50 fps with only 0.23 host CPU cores and 6 ms frame age.
 * **Lean Runtime Footprint**: Restricts running processes to only 4 daemons (Host GUI, Private ADB server, `emulator.exe`, and `qemu-system-x86_64-headless.exe`).
@@ -79,13 +79,13 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.3 / Phase 2 Completed)
+## 📊 Current Progress & Status (v0.1.4 / Phase 2 Completed)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)** and **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9, and Packaging Smoke Tests)**, backed by **120 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)** and **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9 with Real MIT App Inventor Fixtures, and Packaging Smoke Tests)**, backed by **140 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
-    A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.3)"]
+    A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
     B --> C["Phase 3a: Core Engine, APK & GUI<br/>(Next Milestone)"]
     C --> D["Phase 3b: Sensors, IME & Settings<br/>(Planned)"]
     D --> E["Phase 4: Inno Setup & Release<br/>(Planned)"]
@@ -96,11 +96,12 @@ flowchart LR
     style E fill:#4a4e69,stroke:#22223b,color:#fff
 ```
 
-### ✅ Implemented Capabilities (v0.1.3)
+### ✅ Implemented Capabilities (v0.1.4)
 
 #### 1. Architecture Specifications ([docs/](docs/))
 * **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Comprehensive v3 technical specification addressing 66 adversarial review findings and 52 verification items.
-* **[docs/spikes.md](docs/spikes.md)**: Empirical measurement logs covering all Phase 2 spikes (S0a, S0b, S1, S2, S4, S5, S6, S7, S8, S9, A5, A6, A8).
+* **[docs/spikes.md](docs/spikes.md)**: Empirical measurement logs covering all Phase 2 spikes (S0a, S0b, S1, S2, S3, S4, S5, S6, S7, S8, S9, A4, A5, A6, A8).
+* **[docs/fixtures.md](docs/fixtures.md)**: Specifications and acceptance criteria for test APK fixtures (`HelloPurr`, `TalkToMe`, `OrcusProbe`).
 * **[docs/research/phase1-research-brief.md](docs/research/phase1-research-brief.md)**: Fact-checking summary covering 6 technical domains (WHPX hypervisor, gRPC streaming, ADB isolation, APK parsing, App Inventor quirks, packaging).
 * **[plan.md](plan.md)**: Master phase plan and acceptance test matrix (Criteria A1–A9, B1–B15).
 
@@ -140,23 +141,33 @@ flowchart LR
 * [`bootcheck.py`](src/orcus/engine/bootcheck.py): Verifies headless WHPX boot readiness (`doctor --boot-check`, testing both `host` and `host_hidden` GPU modes).
 * [`selftest.py`](src/orcus/engine/selftest.py): End-to-end component integrity checker validating dependency pins, gRPC stubs, and UTF-8 clipboard roundtrips (`orcus-cli selftest`, `OrcusAPK.exe --selftest`).
 
-#### 7. Empirical Spike Measurements & Performance Validation (`docs/spikes.md`, `tools/spikes/`)
+#### 7. App Inventor Fixture Toolchain (`tools/ai2/`, `tests/fixtures/`)
+* [`blocks.py`](tools/ai2/blocks.py): Pure Python AST DSL synthesizing both visual `.bky` XML and runtime `.yail` Scheme bytecode.
+* [`aia.py`](tools/ai2/aia.py) / [`projects.py`](tools/ai2/projects.py): Complete project package builder generating `.scm` form definitions, `project.properties`, and `.aia` archives matching upstream App Inventor YaVersion specifications (239/40).
+* [`tests/fixtures/`](tests/fixtures/): Pre-generated, validated `.aia` test projects for `HelloPurr`, `TalkToMe`, and `OrcusProbe`.
+
+#### 8. Empirical Spike Measurements & Performance Validation (`docs/spikes.md`, `tools/spikes/`)
+* **A4 (Real App Inventor APK Smoke Test)**: Official `HelloPurr.apk` install completed in **1.8s**, launch completed in **1.0s** (Total: 2.8s, vastly exceeding the 10s budget).
 * **S0b (WHPX Headless Boot)**: Successfully booted under WHPX in headless mode (initial cold boot 103s, subsequent warm-cold boot 27–31s).
+* **S1 (Korean TTS Engine)**: Verified offline Google TTS immediate Korean speech playback ("안녕하세요") with zero downloads or account logins required.
 * **S2 (Host GPU Screen Streaming)**: Verified `-gpu host -no-window` renders directly with host NVIDIA GeForce GTX 1660. Streams 432×768 RGB888 at ~50 fps with only 0.23 host CPU cores, 6 ms frame age, and 46 ms touch-drag-to-frame latency.
+* **S3 (Sound Playback & Hearing Test)**: Verified guest audio engine pipeline. Auditory verification confirmed distinct sound playback (cat purr / meow) and Korean TTS output via `fx_s3_listen.py`.
 * **S4 (Golden Snapshot Instant Boot)**: Achieved **4.8–5.8s boot time** (surpassing the < 10s budget). Designed a 2-phase provisioning routine that eliminates post-restore guest freezing and maintains sub-second clock drift.
+* **S5 (Error, Warning & ANR Telemetry)**: Harvested exact logcat signatures for error 1501 (missing sound file), 601 (unsupported format), 908 (permission denied), 2701 (speech recognizer not found), 3806 (microphone access denied), `RuntimeErrorAlert`, and WindowManager ANR.
+* **S7 (Precise Coordinate Mapping & Motion Sensors)**: Validated normalized 4-orientation touch coordinate transforms with 0–1 px error margin. Calibrated shake acceleration thresholds (25/16/9) across all orientations, tilt angles, and ~60 Hz drag motion streams.
+* **S8 (Comprehensive Korean Text Injection)**: Verified guest `Paste` keycode reliably injects Korean UTF-8 strings into `TextBox`, `MultiLine`, `PasswordTextBox`, and `WebViewer`.
 * **S9 (Private ADB Daemon)**: Verified port 15037 ADB daemon isolation, 0.06s re-registration, shared key authentication, and zero cross-talk with port 5037 or physical devices.
-* **S5 / S8 / S7 (APK Lifecycle & Input)**: App Inventor Companion installation took 5.3s, launch took 1.45s (total drop-to-launch within 10s). Guest `Paste` key injection established for 100% reliable Korean text entry (avoiding Gboard composition anomalies). 3-button navigation overlay and bezel key emulation validated.
 * **A5 (Teardown Guarantees)**: Kernel Win32 Job Object terminates all child/grandchild emulator daemons in under **0.55s** upon host process kill.
 * **A8 (Packaging Smoke Test)**: Packaged standalone PyInstaller onedir distribution (119 MB) featuring dual executables (`OrcusAPK.exe` & `orcus-cli.exe`), cleanly passing `--selftest` and `--boot-check`.
 
-#### 8. Developer Toolchain & Testing Infrastructure (`tools/`, `tests/`)
+#### 9. Developer Toolchain & Testing Infrastructure (`tools/`, `tests/`)
 * [`bootstrap.py`](tools/bootstrap.py): Fully automated environment bootstrapper setting up `D:\OrcusDev\venv` using strict hash-pinned requirements.
 * [`dev.py`](tools/dev.py): Unified development runner directing all build and test caches to D: drive (`check`, `test`, `typecheck`, `cli`).
 * [`build.py`](tools/build.py): PyInstaller onedir automated builder with hidden-import resolution and post-build verification.
 * [`gen_protos.py`](tools/gen_protos.py): Automated protobuf and gRPC stub generator with drive-isolated caching.
 * [`fetch_fixtures.py`](tools/fetch_fixtures.py): Automated fetcher for official MIT App Inventor test APK fixtures.
-* **Spike Harnesses (`tools/spikes/`)**: Comprehensive measurement and diagnostic harnesses (`harness.py`, `viewer.py`, `s4_golden.py`, `s9_adb.py`, etc.).
-* **Automated Test Suite**: **120 pytest unit tests** passing with 100% success rate. Zero Pyright type check diagnostics.
+* **Spike Harnesses (`tools/spikes/`)**: Comprehensive measurement and diagnostic harnesses (`harness.py`, `viewer.py`, `fx_s3_listen.py`, `fx_*.py`, etc.).
+* **Automated Test Suite**: **140 pytest unit tests** passing with 100% success rate. Zero Pyright type check diagnostics.
 
 ---
 
@@ -166,7 +177,7 @@ flowchart LR
 Orcus_APK_Emulator/
 ├── docs/                       # Architecture specifications & research documents
 │   ├── ARCHITECTURE.md         # Full technical architecture specification (v3)
-│   ├── fixtures.md             # Test APK fixture specifications (HelloPurr, OrcusProbe)
+│   ├── fixtures.md             # Test APK fixture specifications (HelloPurr, TalkToMe, OrcusProbe)
 │   ├── spikes.md               # Spike measurement protocols and empirical findings (S0a–S9)
 │   └── research/               # Phase 1 domain research briefs
 ├── src/
@@ -191,8 +202,14 @@ Orcus_APK_Emulator/
 │       └── setup/              # Resumable downloader, safe extractor, WHPX configuration
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
-│   └── unit/                   # 120 unit test suites covering common, contracts, setup, emugrpc, engine
+│   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
+│   └── unit/                   # 140 unit test suites covering contracts, setup, emugrpc, engine, ai2
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
+│   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
+│   │   ├── aia.py              # Archive packaging and manifest construction
+│   │   ├── blocks.py           # .bky XML and .yail Scheme code generator
+│   │   ├── build_fixtures.py   # Fixture bundle builder
+│   │   └── projects.py         # HelloPurr, TalkToMe, OrcusProbe project specifications
 │   ├── bootstrap.py            # Automated venv creation & dependency installation
 │   ├── dev.py                  # Test / typecheck / CLI execution harness
 │   ├── devenv.py               # Development environment path management
@@ -200,7 +217,7 @@ Orcus_APK_Emulator/
 │   ├── build.py                # Standalone PyInstaller onedir distribution builder
 │   ├── gen_protos.py           # Protobuf/gRPC stub compiler
 │   ├── fetch_fixtures.py       # Official App Inventor test APK downloader
-│   └── spikes/                 # Empirical measurement harnesses (S0a–S9)
+│   └── spikes/                 # Empirical measurement harnesses (S0a–S9, fx_*.py)
 ├── NOTICE                      # Upstream license notices and attributions
 ├── plan.md                     # Master project plan and acceptance criteria (A1–A9, B1–B15)
 ├── pyproject.toml              # Project metadata, build configuration, and pyright settings
@@ -233,7 +250,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (120 tests)
+# 4. Run the automated unit test suite (140 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -264,11 +281,12 @@ The setup pipeline will:
 ## 🗺️ Roadmap & Milestones
 
 - [x] **Phase 1: Architecture & Technical Foundations** (Completed, 2026-10-30)
-- [x] **Phase 2: Skeleton, Setup Automation & Spikes** (Completed: v0.1.3)
+- [x] **Phase 2: Skeleton, Setup Automation & Spikes** (Completed: v0.1.4)
   - [x] Project skeleton, contracts, common utilities, and setup pipeline
-  - [x] 120 automated unit tests and strict Pyright compliance
+  - [x] 140 automated unit tests and strict Pyright compliance
   - [x] Emulator gRPC protobuf compilation (`orcus.emugrpc`) and FakeEmulatorServer mock
-  - [x] Spike harnesses (`tools/spikes/`) covering S0a–S9 (GPU latency, golden boot, audio, sensors)
+  - [x] App Inventor fixture generator (`tools/ai2/`, HelloPurr, TalkToMe, OrcusProbe)
+  - [x] Spike harnesses (`tools/spikes/`) covering S0a–S9 (GPU latency, golden boot, audio, sensors, error telemetry)
   - [x] Standalone PyInstaller onedir smoke test (A8, 119 MB distribution)
 - [ ] **Phase 3a: Core Execution Runtime & Primary GUI** (Next Milestone)
   - [ ] `engine`: State machine, private ADB daemon watchdog, golden snapshot restore

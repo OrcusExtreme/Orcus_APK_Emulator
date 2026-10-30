@@ -1,0 +1,275 @@
+"""The App Inventor fixtures of docs/fixtures.md, as data: HelloPurr, TalkToMe, OrcusProbe.
+
+HelloPurr and TalkToMe follow the official tutorials' designs and blocks; their media (kitty.png, meow.wav) are
+drawn and synthesized here, so nothing third-party is bundled. Label texts in OrcusProbe start with a fixed word
+("touch ", "drag ", ...) because the device tests find them by text in `uiautomator dump`; no button text starts
+with one of those words.
+"""
+
+import io
+import math
+import struct
+import wave
+import zlib
+
+from ai2 import aia
+from ai2 import blocks as b
+from ai2.aia import FILL_PARENT, Component, Project, Screen
+
+WHITE, BLUE, YELLOW = "&HFFFFFFFF", "&HFF0000FF", "&HFFFFFF00"
+SCREEN1 = {"AppName": "", "Title": "Screen1", "Theme": "AppTheme.Light.DarkActionBar", "ActionBar": "True",
+           "Sizing": "Responsive"}
+
+
+# --- small builders -----------------------------------------------------------------------------------------
+def label(name: str, text: str, **props: str) -> Component:
+    return Component("Label", name, {"Text": text, **props})
+
+
+def button(name: str, text: str, **props: str) -> Component:
+    return Component("Button", name, {"Text": text, **props})
+
+
+def row(name: str, *children: Component) -> Component:
+    return Component("HorizontalArrangement", name, {"Width": FILL_PARENT}, list(children))
+
+
+def component(ctype: str, name: str, **props: str) -> Component:
+    return Component(ctype, name, dict(props))
+
+
+def set_text(lbl: str, value: b.Expr) -> b.Set:
+    return b.Set(lbl, "Label", "Text", value)
+
+
+def join(*parts: b.Expr | str) -> b.Join:
+    return b.Join([b.Text(p) if isinstance(p, str) else p for p in parts])
+
+
+def dec(param: str, places: int) -> b.Decimal:
+    return b.Decimal(b.Param(param), places)
+
+
+def click(btn: str, *body: b.Stmt) -> b.Event:
+    return b.Event(btn, "Button", "Click", [], list(body))
+
+
+def call(comp: str, ctype: str, method: str, *args: b.Expr, types: tuple[str, ...] = ()) -> b.Call:
+    assert len(args) == len(types), f"{comp}.{method}: one YAIL type per argument"
+    return b.Call(comp, ctype, method, list(args), list(types))
+
+
+def incr(var: str) -> b.SetGlobal:
+    return b.SetGlobal(var, b.Add(b.Global(var), b.Num(1)))
+
+
+def screen1(app_name: str, **props: str) -> dict[str, str]:
+    return SCREEN1 | {"AppName": app_name} | props
+
+
+# --- HelloPurr ----------------------------------------------------------------------------------------------
+def hello_purr() -> Project:
+    s = Screen("Screen1", screen1("HelloPurr"), [
+        label("Label1", "Pet the Kitty", BackgroundColor=BLUE, FontSize="30", TextColor=YELLOW),
+        button("Button1", "", Image="kitty.png"),
+        component("Sound", "Sound1", Source="meow.wav"),
+        component("AccelerometerSensor", "AccelerometerSensor1"),
+    ], events=[
+        click("Button1", call("Sound1", "Sound", "Play"),
+              call("Sound1", "Sound", "Vibrate", b.Num(500), types=("number",))),
+        b.Event("AccelerometerSensor1", "AccelerometerSensor", "Shaking", [], [call("Sound1", "Sound", "Play")]),
+    ])
+    return Project("HelloPurr", [s], {"kitty.png": kitty_png(), "meow.wav": meow_wav()})
+
+
+# --- TalkToMe -----------------------------------------------------------------------------------------------
+def talk_to_me() -> Project:
+    speak = lambda msg: call("TextToSpeech1", "TextToSpeech", "Speak", msg, types=("text",))  # noqa: E731
+    s = Screen("Screen1", screen1("TalkToMe"), [
+        component("TextBox", "TextBox1", Hint="Type something", Width=FILL_PARENT),
+        button("Button1", "Talk To Me"),
+        component("TextToSpeech", "TextToSpeech1"),
+        component("AccelerometerSensor", "AccelerometerSensor1"),
+    ], events=[
+        click("Button1", speak(b.Get("TextBox1", "TextBox", "Text"))),
+        b.Event("AccelerometerSensor1", "AccelerometerSensor", "Shaking", [], [speak(b.Text("Stop shaking me!"))]),
+    ])
+    return Project("TalkToMe", [s])
+
+
+# --- OrcusProbe ---------------------------------------------------------------------------------------------
+def orcus_probe() -> Project:
+    acc, tts, rec = "AccelerometerSensor", "TextToSpeech", "SoundRecorder"
+    s1 = Screen("Screen1", screen1("OrcusProbe", Title="OrcusProbe", Scrollable="True"), [
+        component("Canvas", "Canvas1", Width=FILL_PARENT, Height="300", BackgroundColor=WHITE),
+        row("rowTouch", label("lblTouch", "touch -"), label("lblDrag", "drag 0"), label("lblFling", "fling -"),
+            button("btnResetTouch", "reset")),
+        row("rowSens", button("btnWeak", "weak"), button("btnModerate", "moderate"), button("btnStrong", "strong"),
+            label("lblSens", "sens 2")),
+        row("rowShake", label("lblShake", "shake 0"), label("lblBack", "back 0"),
+            label("lblScreenOrient", "screen -")),
+        label("lblAccel", "accel -"),
+        label("lblOrient", "orient -"),
+        label("lblLoc", "loc -"),
+        row("rowText1", component("TextBox", "txtPlain", Hint="plain", Width=FILL_PARENT),
+            component("TextBox", "txtMulti", Hint="multi", MultiLine="True", Width=FILL_PARENT)),
+        row("rowText2", component("PasswordTextBox", "txtPassword", Hint="password", Width=FILL_PARENT),
+            component("TextBox", "txtNumber", Hint="number", NumbersOnly="True", Width=FILL_PARENT)),
+        component("WebViewer", "WebViewer1", Width=FILL_PARENT, Height="120",
+                  HomeUrl="file:///android_asset/probe.html"),
+        row("rowTts", button("btnSpeak", "speak"), button("btnLangs", "voices"), label("lblTts", "tts -")),
+        label("lblLangs", "langs -"),
+        row("rowRec", button("btnRecStart", "record"), button("btnRecStop", "stop"), label("lblRec", "rec -")),
+        row("rowSpeech", button("btnSpeechLegacy", "listen (legacy)"), button("btnSpeechNew", "listen (new)")),
+        label("lblSpeech", "speech -"),
+        row("rowErr", button("btnScan", "scan"), button("btnBlockError", "block error"),
+            button("btnBadIntent", "bad intent")),
+        row("rowNav", button("btnAnr", "ANR loop"), button("btnScreen2", "open Screen2")),
+        component(acc, "AccelerometerSensor1"),
+        component("OrientationSensor", "OrientationSensor1"),
+        component("LocationSensor", "LocationSensor1", TimeInterval="1000", DistanceInterval="0"),
+        component(tts, "TextToSpeech1", Language="ko"),
+        component(rec, "SoundRecorder1"),
+        component("Player", "Player1"),
+        component("SpeechRecognizer", "SpeechRecognizer1"),                    # UseLegacy default: True
+        component("SpeechRecognizer", "SpeechRecognizer2", UseLegacy="False"),
+        component("BarcodeScanner", "BarcodeScanner1"),                        # UseExternalScanner default: True
+        component("ActivityStarter", "ActivityStarter1", Action="orcus.invalid.ACTION"),
+    ], globals=[b.GlobalDecl(g, b.Num(0)) for g in ("dragCount", "shakeCount", "backCount", "anrCount")])
+
+    def sens(btn: str, level: int) -> b.Event:
+        return click(btn, b.Set("AccelerometerSensor1", acc, "Sensitivity", b.Num(level), "number"),
+                     set_text("lblSens", b.Text(f"sens {level}")))
+
+    def heard(recognizer: str) -> b.Event:
+        return b.Event(recognizer, "SpeechRecognizer", "AfterGettingText", ["result", "partial"],
+                       [set_text("lblSpeech", join("speech ", b.Param("result")))])
+
+    s1.events = [
+        b.Event("Screen1", "Form", "BackPressed", [], [incr("backCount"), set_text("lblBack", join("back ", b.Global("backCount")))]),
+        b.Event("Screen1", "Form", "ScreenOrientationChanged", [],
+                [set_text("lblScreenOrient", join("screen ", b.Get("Screen1", "Form", "ScreenOrientation")))]),
+        b.Event("Canvas1", "Canvas", "Touched", ["x", "y", "touchedAnySprite"],
+                [set_text("lblTouch", join("touch ", dec("x", 0), ",", dec("y", 0)))]),
+        b.Event("Canvas1", "Canvas", "Dragged",
+                ["startX", "startY", "prevX", "prevY", "currentX", "currentY", "draggedAnySprite"],
+                [incr("dragCount"), set_text("lblDrag", join("drag ", b.Global("dragCount")))]),
+        b.Event("Canvas1", "Canvas", "Flung", ["x", "y", "speed", "heading", "xvel", "yvel", "flungSprite"],
+                [set_text("lblFling", join("fling ", dec("speed", 2)))]),
+        click("btnResetTouch", b.SetGlobal("dragCount", b.Num(0)), set_text("lblTouch", b.Text("touch -")),
+              set_text("lblDrag", b.Text("drag 0")), set_text("lblFling", b.Text("fling -"))),
+        b.Event("AccelerometerSensor1", acc, "Shaking", [],
+                [incr("shakeCount"), set_text("lblShake", join("shake ", b.Global("shakeCount")))]),
+        sens("btnWeak", 1), sens("btnModerate", 2), sens("btnStrong", 3),
+        b.Event("AccelerometerSensor1", acc, "AccelerationChanged", ["xAccel", "yAccel", "zAccel"],
+                [set_text("lblAccel", join("accel ", dec("xAccel", 1), ",", dec("yAccel", 1), ",", dec("zAccel", 1)))]),
+        b.Event("OrientationSensor1", "OrientationSensor", "OrientationChanged", ["azimuth", "pitch", "roll"],
+                [set_text("lblOrient", join("orient ", dec("azimuth", 0), ",", dec("pitch", 0), ",", dec("roll", 0)))]),
+        b.Event("LocationSensor1", "LocationSensor", "LocationChanged", ["latitude", "longitude", "altitude", "speed"],
+                [set_text("lblLoc", join("loc ", dec("latitude", 4), ",", dec("longitude", 4)))]),
+        click("btnSpeak", call("TextToSpeech1", tts, "Speak", b.Text("안녕하세요"), types=("text",))),
+        b.Event("TextToSpeech1", tts, "AfterSpeaking", ["result"], [set_text("lblTts", join("tts ", b.Param("result")))]),
+        click("btnLangs", set_text("lblLangs", join("langs ", b.Get("TextToSpeech1", tts, "AvailableLanguages")))),
+        click("btnRecStart", call("SoundRecorder1", rec, "Start")),
+        click("btnRecStop", call("SoundRecorder1", rec, "Stop")),
+        b.Event("SoundRecorder1", rec, "AfterSoundRecorded", ["sound"],
+                [b.Set("Player1", "Player", "Source", b.Param("sound")), call("Player1", "Player", "Start"),
+                 set_text("lblRec", b.Text("rec ok"))]),
+        click("btnSpeechLegacy", call("SpeechRecognizer1", "SpeechRecognizer", "GetText")),
+        click("btnSpeechNew", call("SpeechRecognizer2", "SpeechRecognizer", "GetText")),
+        heard("SpeechRecognizer1"), heard("SpeechRecognizer2"),
+        click("btnScan", call("BarcodeScanner1", "BarcodeScanner", "DoScan")),
+        click("btnBlockError", b.EvalIgnore(b.SelectItem(b.EmptyList(), b.Num(5)))),
+        click("btnBadIntent", call("ActivityStarter1", "ActivityStarter", "StartActivity")),
+        click("btnAnr", b.ForRange("number", b.Num(1), b.Num(30000000), b.Num(1), [incr("anrCount")])),
+        click("btnScreen2", b.OpenScreen("Screen2")),
+    ]
+    s2 = Screen("Screen2", {"Title": "Screen2", "ScreenOrientation": "landscape"}, [
+        label("lblScreen2", "Screen2 landscape"),
+        component("Canvas", "Canvas2", Width=FILL_PARENT, Height="200", BackgroundColor=WHITE),
+        label("lblTouch2", "touch2 -"),
+        button("btnBack2", "close"),
+    ], events=[
+        b.Event("Canvas2", "Canvas", "Touched", ["x", "y", "touchedAnySprite"],
+                [set_text("lblTouch2", join("touch2 ", dec("x", 0), ",", dec("y", 0)))]),
+        click("btnBack2", b.CloseScreen()),
+    ])
+    return Project("OrcusProbe", [s1, s2], {"probe.html": PROBE_HTML})
+
+
+PROBE_HTML = (b'<!doctype html><html><head><meta charset="utf-8">'
+              b'<meta name="viewport" content="width=device-width"></head>'
+              b'<body><input id="w" placeholder="web input"><textarea id="t"></textarea></body></html>\n')
+
+ALL = {"HelloPurr": hello_purr, "TalkToMe": talk_to_me, "OrcusProbe": orcus_probe}
+
+
+# --- media --------------------------------------------------------------------------------------------------
+def kitty_png(size: int = 240) -> bytes:
+    """A flat cartoon cat face (RGBA PNG), drawn pixel by pixel."""
+    orange, dark, pink, white = (244, 163, 64, 255), (40, 40, 40, 255), (232, 122, 144, 255), (255, 255, 255, 255)
+    s = size / 240
+
+    def tri(p, a, b_, c):
+        def side(p1, p2, p3):
+            return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
+        d1, d2, d3 = side(p, a, b_), side(p, b_, c), side(p, c, a)
+        return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+
+    def disc(p, cx, cy, r):
+        return (p[0] - cx * s) ** 2 + (p[1] - cy * s) ** 2 <= (r * s) ** 2
+
+    ears = [((40 * s, 110 * s), (62 * s, 18 * s), (112 * s, 64 * s)),
+            ((200 * s, 110 * s), (178 * s, 18 * s), (128 * s, 64 * s))]
+    rows = []
+    for y in range(size):
+        row = bytearray([0])                                      # PNG filter: none
+        for x in range(size):
+            p = (x + 0.5, y + 0.5)
+            px = (0, 0, 0, 0)
+            if disc(p, 120, 138, 86) or any(tri(p, *e) for e in ears):
+                px = orange
+            if disc(p, 88, 122, 16) or disc(p, 152, 122, 16):
+                px = white
+            if disc(p, 90, 124, 9) or disc(p, 150, 124, 9):
+                px = dark
+            if tri(p, (110 * s, 158 * s), (130 * s, 158 * s), (120 * s, 170 * s)):
+                px = pink
+            if any(abs(p[1] - (yy + k * (p[0] - xx)) * s) < 1.6 * s and lo * s <= p[0] <= hi * s
+                   for xx, yy, k, lo, hi in ((60, 170, 0.12, 30, 96), (60, 182, -0.08, 30, 96),
+                                             (180, 170, -0.12, 144, 210), (180, 182, 0.08, 144, 210))):
+                px = dark
+            row += bytes(px)
+        rows.append(bytes(row))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+            + chunk(b"IEND", b""))
+
+
+def meow_wav(rate: int = 22050, seconds: float = 0.7) -> bytes:
+    """A synthesized 'meow': a rising-then-falling glide with a few harmonics, 16-bit mono PCM."""
+    n = int(rate * seconds)
+    frames = bytearray()
+    phase = 0.0
+    for i in range(n):
+        t = i / n
+        f = 520 + 380 * math.sin(math.pi * min(1.0, t * 1.4)) - 120 * t
+        phase += 2 * math.pi * f / rate
+        env = min(1.0, t / 0.08) * min(1.0, (1 - t) / 0.3)
+        v = env * (0.6 * math.sin(phase) + 0.25 * math.sin(2 * phase) + 0.1 * math.sin(3 * phase))
+        frames += struct.pack("<h", int(max(-1.0, min(1.0, v)) * 26000))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def check_all() -> dict[str, list[str]]:
+    return {name: aia.problems(make()) for name, make in ALL.items()}
