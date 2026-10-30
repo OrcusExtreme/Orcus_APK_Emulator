@@ -121,6 +121,9 @@ def test_protocol_conformance(tmp_path: Path) -> None:
 
 def test_fresh_install_across_a_reboot_then_nothing(tmp_path: Path) -> None:
     w, p = World(), OrcusPaths(tmp_path)
+    leftover = p.tmp / "extract_emulator" / "emulator"   # what the old extract-then-rename code left behind
+    leftover.mkdir(parents=True)
+    (leftover / "qemu.dll").write_bytes(b"MZ")
     api, rec = start(w, p)
     rec.until(SetupStep.LICENSE, "waiting_user")
     lt = api.license()
@@ -134,6 +137,8 @@ def test_fresh_install_across_a_reboot_then_nothing(tmp_path: Path) -> None:
     rec.until(SetupStep.WHPX, "done")
     rec.until(SetupStep.DOWNLOAD, "done")
     rec.until(SetupStep.EXTRACT, "done")
+    assert not (p.tmp / "extract_emulator").exists()
+    assert not any(p.downloads.glob("*.zip")), "zips are deleted after a verified install"
     rec.until(SetupStep.REBOOT, "waiting_user")
     assert api.join(5) and w.resume_registered
     assert w.calls == {"index": 1, "dism": 1} and len(w.downloads) == 3

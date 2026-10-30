@@ -3,6 +3,8 @@
 import hashlib
 import http.server
 import threading
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -104,10 +106,15 @@ def test_verified_file_is_not_downloaded_again(server: str, tmp_path: Path) -> N
 
 
 def test_unreachable_server_is_setup_network(tmp_path: Path) -> None:
+    attempts: list[str] = []
+
+    def refused(req: urllib.request.Request) -> download.Response:
+        attempts.append(req.full_url)
+        raise urllib.error.URLError(ConnectionRefusedError(10061, "refused"))
     with pytest.raises(OrcusFailure) as e:
         download.download("http://127.0.0.1:9/x.zip", tmp_path / "x.zip", size=10, sha1="0" * 40,
-                          retries=1, backoff_s=0.01)
-    assert e.value.error.code is ErrorCode.SETUP_NETWORK
+                          opener=refused, retries=2, backoff_s=0.01)
+    assert e.value.error.code is ErrorCode.SETUP_NETWORK and len(attempts) == 3
 
 
 def test_cancel_keeps_part(server: str, tmp_path: Path) -> None:

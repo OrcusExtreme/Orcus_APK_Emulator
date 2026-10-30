@@ -61,7 +61,7 @@
 | `emulator.exe` → `qemu-system-x86_64-headless.exe` | engine | 엔진 세션 | 정상 정지 → (시간 초과 시) qemu → emulator 순 TerminateProcess → 최후에 Job |
 | (U) `netsimd.exe`, `crashpad_handler.exe` | emulator | 엔진 세션(netsimd는 유휴 15 s 뒤 스스로 종료한다는 기록이 있다) | Job 소속인지 S4/S6/S9에서 확인한다. 정지 후 남으면 우리 SDK 경로의 이미지만 종료한다 |
 | 단발 `adb.exe` 클라이언트, `emulator-check.exe`, `powershell.exe`(WHPX 상태 조회) | 작업 스레드 | 수 초 | 호출마다 타임아웃(§5.5 실행기), 넘으면 TerminateProcess |
-| `dism.exe` (WHPX 켜기, 1회) | setup, `ShellExecuteExW` runas | 1회 | 핸들로 기다린 뒤 종료 코드를 읽는다. 권한 상승 프로세스가 호출자의 Job을 물려받는지는 U다(S0a에서 `IsProcessInJob`으로 확인). CLI setup은 첫 SDK 자식을 띄우는 7단계에서야 Job을 만들므로, 3단계의 dism은 우리 Job과 무관하다. [P4] GUI 마법사에서는 dism이 도는 동안 창을 닫지 말라고 안내한다 |
+| `dism.exe` (WHPX 켜기, 1회) | setup, `ShellExecuteExW` runas | 1회 | 핸들로 기다린 뒤 종료 코드를 읽는다. **권한 상승한 dism도 호출자의 Job을 물려받는다**(S0a 실측: `IsProcessInJob`=true, 2026-10-30). CLI setup은 첫 SDK 자식을 띄우는 7단계에서야 우리 Job을 만들므로 3단계의 dism은 우리 KILL_ON_JOB_CLOSE와 무관하다(개발 중에는 venv 런처의 Job 안이다). [P4] GUI 마법사는 Job 안에서 dism을 띄우게 되므로, GUI가 죽으면 dism도 죽는다 → BREAKAWAY 도우미 프로세스로 띄우거나, dism이 끝날 때까지 창을 닫지 못하게 한다 |
 
 **Job Object 규칙**
 - GUI와 엔진을 쓰는 CLI는 시작 직후, 자식을 만들기 전에 다음 순서로 호출한다. `orcus-cli setup`은 첫 SDK 자식(7단계 `emulator-check`)을 띄우기 직전에 한다:
@@ -1445,7 +1445,7 @@ firstboot.bootFromLocalSnapshot=no
      - 실패하면 기본적으로 **다운로드 전에 멈춘다.** 사용자가 [그래도 다운로드]를 누르면 계속한다.
    - 재부팅 관문(6단계)은 이번 실행의 dism이 3010을 돌려준 경우에만 연다. InstallState는 재부팅 전에도 1을 보일 수 있기 때문이다.
    - .ps1 파일은 쓰지 않는다. 관리되는 Education PC의 실행 정책이 막을 수 있다.
-   - dism이 우리 Job에 들어가는지는 U다(S0a에서 `IsProcessInJob`으로 확인). CLI setup은 이 단계에서 아직 Job이 없다(§1.2).
+   - dism은 호출자의 Job에 들어간다(S0a 실측). CLI setup은 이 단계에서 아직 우리 Job이 없다(§1.2). 이 PC에서 dism은 25 s 걸렸고 종료 코드는 3010이었다.
 4. **다운로드**(재부팅을 기다리는 중에도 계속한다):
    - 표준 라이브러리 urllib, HTTP Range로 이어받기, `.part` 파일, 크기와 SHA-1 검증.
    - 네트워크 오류는 `SETUP_NETWORK`, 해시 불일치는 `SETUP_CHECKSUM`이다.
@@ -1456,15 +1456,19 @@ firstboot.bootFromLocalSnapshot=no
    - platform-tools와 이미지의 SHA-1은 Phase 2에서 인덱스로 읽어 `common/pins.py`에 고정한다.
    - 고정한 build가 인덱스에서 빠지면 고정 URL과 고정 SHA-1로 받는다. 값이 다르면 오류로 끝내고, 조용히 업그레이드하지 않는다.
 5. **압축 해제:**
-   - `tmp\extract_*`에 풀고(zip-slip 방지) 제자리로 옮긴다.
+   - **최종 위치(`sdk\<패키지>`)에 바로 푼다.** 모든 항목을 먼저 검사한다(zip-slip, Windows 금지 문자).
+   - **풀고 나서 폴더를 옮기지 않는다.** 이 PC에서는 Windows Defender(실시간 검사 켜짐)와 V3가 새 실행 파일을 잠깐씩 열어 둔다. 처음 설계(`tmp\extract_*`에 풀고 이름 바꾸기)는 첫 실행에서 "액세스 거부"(WinError 5)로 실패했다(S0b, 2026-10-30).
+   - 시작할 때 `<패키지>.partial` 표시 파일을 만들고, 검증이 끝나면 지운다. 표시가 남아 있으면 설치되지 않은 것으로 본다. 다음 실행에서 그 폴더를 지우고 다시 푼다.
+   - 폴더·파일 삭제는 잠금이 풀릴 때까지 최대 2분 재시도한다. 그래도 잠겨 있으면 `SETUP_QUARANTINE`을 "검사 중이라 잠김" 문구로 보여준다.
    - 핵심 파일이 있는지 확인한다: `Pkg.BuildId`, `emulator.exe`, `qemu-system-x86_64-headless.exe`, `qemu-system-x86_64.exe`, `adb.exe`, `emulator_access.json`, `*.proto`.
-     - 없으면 V3 격리(`SETUP_QUARANTINE`)로 보고, **복사 가능한 IT 요청문**(경로, build, 실행 파일, 이유)을 보여준다.
+     - 없으면 격리(`SETUP_QUARANTINE`, "파일이 사라짐")로 보고, **복사 가능한 IT 요청문**(경로, build, 실행 파일, 이유. V3와 Defender 모두)을 보여준다.
    - `netsimd.exe`·`crashpad_handler.exe`가 없으면 경고만 한다.
    - 빈 `sdk\platforms\`를 만들고 zip을 지운다.
 6. **재부팅 관문:** `reboot_pending`이면 "Windows를 다시 시작하면 설치가 이어집니다"를 보여주고 HKCU RunOnce를 등록한다.
 7. **가속 최종 확인:** setup은 이 단계 직전에 Job을 만든다(§1.2).
    - `emulator-check.exe accel`을 **단독으로** 실행한다. 여러 검사를 함께 돌리면 검사마다 결과 블록이 나오고, Hyper-V가 켜진 이 PC에서는 hyper-v 블록이 코드 2를 낸다.
    - accel 블록에 `WHPX(`와 `is installed and usable`이 있어야 한다. Windows 빌드 번호는 고정하지 않는다.
+   - **이 검사는 필요조건일 뿐이다.** 이 PC에서는 dism(3010) 직후 재부팅 전에도 'usable'을 보고했다(S0b). 그래서 6단계 재부팅 관문을 이 단계보다 먼저 두고, 가속이 실제로 되는지는 에뮬레이터를 부팅하는 `--boot-check`·S4에서 확인한다.
    - 실패했는데 RebootPending 키가 있으면 `SETUP_REBOOT_PENDING`: "Windows를 다시 시작해야 합니다."
    - 재부팅했는데도 꺼져 있으면(RebootPending 없음) `SETUP_WHPX_REVERTED`: "재부팅 뒤에도 기능이 꺼져 있습니다. PC 복원 프로그램이나 정책이 되돌렸을 수 있습니다." + IT 요청문.
    - 그 밖의 실패는 `SETUP_ACCEL_FAILED`. TCG로 대체하는 경로는 없다.

@@ -151,6 +151,8 @@ TEXT: dict[str, str] = {
     "setup.done": "설치가 끝났습니다. 휴대폰 첫 준비는 다음 단계에서 진행합니다.",
     "setup.provision.later": "휴대폰 첫 준비는 Phase 2에서는 검증 스크립트가, Phase 3부터는 프로그램이 자동으로 합니다.",
     "setup.quarantine.missing": "사라진 파일: {files}",
+    "setup.extract.locked": "백신(Windows Defender·V3)이 방금 푼 파일을 검사하느라 2분 넘게 붙잡고 있어 설치를 마치지 못했습니다. 잠시 뒤 다시 실행하세요. 계속되면 IT 요청문으로 검사 예외를 요청하세요.",
+    "setup.unexpected": "예상하지 못한 오류로 이 단계가 멈췄습니다. 다시 실행해 보고, 계속되면 로그 파일을 알려 주세요.",
 }
 
 
@@ -159,11 +161,14 @@ def spec(code: ErrorCode) -> MessageSpec:
 
 
 def error(code: ErrorCode, detail: str = "", log_excerpt: str = "", *,
-          remedy_label_key: str | None = None) -> OrcusError:
-    """OrcusError with the table's primary remedy."""
+          message_key: str | None = None, remedy_label_key: str | None = None) -> OrcusError:
+    """OrcusError with the table's primary remedy.
+
+    `message_key` picks a more precise sentence than the code's default (same channel and remedy).
+    """
     action = ERRORS[code].remedy
     remedy = Remedy(action, remedy_label_key or f"remedy.{action}") if action else None
-    return OrcusError(code, f"error.{code}", detail=detail, remedy=remedy, log_excerpt=log_excerpt)
+    return OrcusError(code, message_key or f"error.{code}", detail=detail, remedy=remedy, log_excerpt=log_excerpt)
 
 
 def text(key: str, **fmt: object) -> str:
@@ -189,15 +194,15 @@ PC 이름: {computer}
 결과: {detail}
 """
 
-IT_REQUEST_V3 = """[IT 지원 요청] AhnLab V3 검사 예외
+IT_REQUEST_V3 = """[IT 지원 요청] 백신 실시간 검사 예외 (AhnLab V3 / Microsoft Defender)
 
 PC 이름: {computer}
 사용자: {user}
-요청: 아래 폴더를 V3 실시간 검사 예외로 등록해 주세요.
+요청: 아래 폴더를 실시간 검사 예외로 등록해 주세요.
   D:\\OrcusAPK\\sdk  (Google Android Emulator {build}, platform-tools)
   D:\\OrcusAPK\\avd  (가상 휴대폰 디스크)
 실행 파일: emulator.exe, qemu-system-x86_64-headless.exe, qemu-system-x86_64.exe, adb.exe
-이유: 압축 해제 뒤 파일이 사라졌습니다(격리 의심). {detail}
+이유: 압축을 푼 SDK 파일이 사라지거나 검사 중에 잠겨 설치가 멈췄습니다. {detail}
 """
 
 

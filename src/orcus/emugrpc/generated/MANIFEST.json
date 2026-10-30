@@ -1,0 +1,20 @@
+{
+  "emulator_build": "16428233",
+  "protos": {
+    "emulator_controller.proto": "564e00a929e7e4a7af78269a738ea715f32d88c0fc9f92659bb8a1251c9d558f",
+    "snapshot.proto": "7b5c7907ec96d7ab35932466894cb285b4fada2ba276b09b726cbc77b890c14c",
+    "snapshot_service.proto": "0aacf854e1e774f6a054e0112a9210ab71bca29906f8db06255b29d6af11b531"
+  },
+  "generated": {
+    "__init__.py": "e4654877a78a0f254cb4c1ecd6f2df7dc44923658bcfc39de203b1d3967731e1",
+    "emulator_controller_pb2.py": "23fab849ed91cad48495ec87eb081d4674e66c76aab99d7bd8e4c0bc9c931e66",
+    "emulator_controller_pb2.pyi": "f159278123b9498104194344ed9e1dafaf0c6783c3db44f00df3e574b452d230",
+    "emulator_controller_pb2_grpc.py": "6dfd0cb6f8ed37deb862c99564d2e4af57574ba2d56fcdeb3cd241ae29507517",
+    "snapshot_pb2.py": "a3e5dead8a744cea8f594f3b0bea4b551fa180a7064f50640388f705ad1d9945",
+    "snapshot_pb2.pyi": "db1351aa1ca4d6a5349d20b9c8e50923f26fd10e68a606db6fbdc924752f4259",
+    "snapshot_pb2_grpc.py": "4220091fc942fd64d4c51c46f6c091df24c2620391d647127a50ff2cd52f69b9",
+    "snapshot_service_pb2.py": "e2e4049e7371c066d8c95ae7e2f6ae2150a9a6bb82e8fa2a8622b1bc9960a99a",
+    "snapshot_service_pb2.pyi": "0adfe4a4fd8c3322772a5ad3a20c2ff327288a553b376543240ac6492790bf2f",
+    "snapshot_service_pb2_grpc.py": "99c2dc1d43ca2e8f10f92d5cfc15091a5de84d330d46fc6d3293cfebaf5c888a"
+  }
+}

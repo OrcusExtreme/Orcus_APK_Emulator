@@ -5,6 +5,7 @@
     py tools/dev.py check                  test + typecheck
     py tools/dev.py cli [orcus-cli args]   e.g. `cli doctor`
     py tools/dev.py lock                   regenerate the hash locks
+    py tools/dev.py genprotos [dir]        vendor emulator protos + generate stubs
 """
 
 import sys
@@ -41,6 +42,8 @@ def main() -> int:
             return devenv.run([devenv.require_venv(), "-X", "utf8", "-m", "orcus.cli", *args])
         case "lock":
             return devenv.run([devenv.BASE_PY, devenv.REPO / "tools" / "lock.py"])
+        case "genprotos":
+            return devenv.run([devenv.require_venv(), devenv.REPO / "tools" / "gen_protos.py", *args])
         case _:
             print(__doc__)
             return 2

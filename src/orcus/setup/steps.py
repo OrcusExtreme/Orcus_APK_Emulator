@@ -9,6 +9,7 @@ method is called. In Phase 2 the PROVISION step is done by the spike harness and
 import threading
 import time
 import traceback
+import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -228,7 +229,8 @@ class SetupService:
                 return
             except Exception as e:   # unexpected: keep the trace in setup.log, show a short line
                 _log.error("step %s crashed:\n%s", step, traceback.format_exc())
-                outcome = _Failed(messages_ko.error(_FALLBACK_CODE[step], f"{type(e).__name__}: {e}"))
+                outcome = _Failed(messages_ko.error(_FALLBACK_CODE[step], f"{type(e).__name__}: {e}",
+                                                    message_key="setup.unexpected"))
             match outcome:
                 case _Done():
                     self._mark(step, "done")
@@ -380,23 +382,52 @@ class SetupService:
             last["bytes"] = -1
         return _Done()
 
+    def _clean_work_dirs(self) -> None:
+        """Leftovers of the earlier extract-then-rename code (tmp\\extract_*, tmp\\old_*). Best effort."""
+        for d in [*self._paths.tmp.glob("extract_*"), *self._paths.tmp.glob("old_*")]:
+            try:
+                extract.remove_tree(d, timeout_s=30)
+            except (OrcusFailure, OSError) as e:
+                _log.warning("could not remove %s yet: %s", d, e)
+
+    @staticmethod
+    def _zip_size(zip_path: Path, top: str) -> int:
+        try:
+            return extract.uncompressed_size(zip_path, top)
+        except (zipfile.BadZipFile, OSError):
+            return zip_path.stat().st_size
+
     def _extract(self) -> _Outcome:
+        self._clean_work_dirs()
         installed = self._state.setdefault("installed", {})
+        todo: list[tuple[pins.Archive, Path, int]] = []
         for archive in self._missing_archives():
             zip_path = self._paths.downloads / archive.filename
             if not zip_path.exists():
                 return _Failed(messages_ko.error(ErrorCode.SETUP_CHECKSUM, f"{zip_path.name} not downloaded"))
-
-            def progress(done: int, total: int) -> None:
-                self._emit(SetupStep.EXTRACT, "running", progress=done / total if total else None,
-                           done=done, total=total)
+            todo.append((archive, zip_path, self._zip_size(zip_path, archive.zip_top)))
+        grand_total = sum(size for _, _, size in todo)   # one progress bar for all archives
+        base = 0
+        last_emit = [0.0]
+        for archive, zip_path, size in todo:
+            def progress(done: int, _total: int, base: int = base) -> None:
+                now, overall = time.monotonic(), base + done
+                if now - last_emit[0] < 0.3 and overall < grand_total:
+                    return
+                last_emit[0] = now
+                self._emit(SetupStep.EXTRACT, "running", progress=overall / grand_total if grand_total else None,
+                           done=overall, total=grand_total)
             result = self._d.install_archive(self._paths, archive, zip_path, progress=progress, cancel=self._cancel)
             installed[archive.key] = {"revision": archive.revision, "found": result.found,
                                       "optional_missing": list(result.optional_missing)}
             if result.optional_missing:
                 _log.warning("%s: optional files missing: %s", archive.key, result.optional_missing)
             self._save_state()
-            zip_path.unlink(missing_ok=True)
+            try:   # the zip is no longer needed; a scanner may still be reading it
+                extract.retry_locked(lambda: zip_path.unlink(missing_ok=True), zip_path, timeout_s=30)
+            except OrcusFailure:
+                _log.warning("could not delete %s yet; the next run removes it", zip_path)
+            base += size
         self._paths.platforms.mkdir(parents=True, exist_ok=True)   # SDK-root validation needs it
         return _Done()
 
