@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "orcus-apk-emulator"
+version = "0.2.0.dev0"
+description = "Run MIT App Inventor APKs on Windows 11 with a headless Android Emulator"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+# Exact pins with hashes live in requirements.lock (runtime) and requirements-dev.lock (dev tools).
+dependencies = [
+    "PySide6-Essentials==6.12.0",
+    "grpcio==1.85.0",
+    "protobuf>=7.36.2,<8",
+    "apkInspector==1.3.7",
+]
+
+[project.scripts]
+orcus-cli = "orcus.cli:main"
+
+[project.gui-scripts]
+orcus = "orcus.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orcus"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["src", "tools"]
+markers = [
+    "device: needs the real AVD and SDK under D:\\OrcusAPK (spikes, Phase 3 device tests)",
+    "network: talks to dl.google.com or PyPI",
+]
+addopts = "-m \"not device and not network\""
+timeout = 60
+
+[tool.pyright]
+include = ["src", "tests", "tools"]
+exclude = ["src/orcus/emugrpc/generated", "tools/spikes"]
+pythonVersion = "3.14"
+pythonPlatform = "Windows"
+typeCheckingMode = "standard"
+strict = ["src/orcus/contracts"]
+venvPath = "D:/OrcusDev"
+venv = "venv"
+extraPaths = ["src", "tools", "tests"]
+reportMissingModuleSource = "none"

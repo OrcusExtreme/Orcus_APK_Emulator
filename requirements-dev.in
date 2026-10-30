@@ -1,0 +1,7 @@
+# Developer tools. Resolved against the runtime pins; tools/lock.py writes requirements-dev.lock.
+# androguard (APK parser cross-check) joins in Phase 3a together with apk.inspect.
+grpcio-tools==1.85.0
+pytest==9.2.0
+pytest-timeout==2.4.0
+pyright==1.1.414
+pyinstaller==6.22.3

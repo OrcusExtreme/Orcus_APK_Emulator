@@ -1,0 +1,23 @@
+Orcus APK Emulator
+==================
+
+This program does not include or redistribute any part of the Android SDK. The Android Emulator,
+platform-tools and the system image are downloaded on each PC after a person accepts the Android
+Software Development Kit License Agreement (android-sdk-license, section 3.4 forbids redistribution).
+The ARM translation in Google system images is licensed for development and debugging only.
+
+Runtime dependencies (installed from PyPI, versions pinned in requirements.lock):
+
+- PySide6-Essentials / shiboken6 6.12.0 - Qt for Python, LGPL-3.0 (Qt libraries are kept as separate,
+  replaceable DLLs in the packaged build)
+- grpcio 1.85.0 - Apache-2.0
+- protobuf 7.36.2 - BSD-3-Clause
+- apkInspector 1.3.7 - Apache-2.0
+- typing_extensions 4.16.0 - PSF-2.0
+
+Vendored files (added in Phase 2 after the license headers are checked):
+
+- Android Emulator gRPC .proto files (emulator build 16428233) - Apache-2.0,
+  Copyright The Android Open Source Project. Kept in src/orcus/emugrpc/protos/<build>/ with their headers.
+
+Packaged builds use PyInstaller; its bootloader is covered by the PyInstaller bootloader exception.

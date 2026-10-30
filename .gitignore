@@ -1,0 +1,13 @@
+# This folder is synced by Google Drive. Keep it source-only:
+# runtime data lives in D:\OrcusAPK, venv/caches/builds in D:\OrcusDev.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+.venv/
+*.part
+*.apk
+*.aab
+*.aix
