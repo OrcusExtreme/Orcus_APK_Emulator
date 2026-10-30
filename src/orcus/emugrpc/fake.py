@@ -171,8 +171,10 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
 
     def streamLogcat(self, request: ec.LogMessage, context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
         self.f.record("streamLogcat")
-        for entry in self._drain(self.f.logcat, context):
-            yield ec.LogMessage(entries=[entry])
+        for item in self._drain(self.f.logcat, context):
+            # str = threadtime text, as the real Text mode sends it in `contents` (S5: one entry per message,
+            # no newline); entries are kept for older tests, the real Parsed mode sends nothing
+            yield ec.LogMessage(contents=item) if isinstance(item, str) else ec.LogMessage(entries=[item])
 
     def _drain(self, q: "queue.Queue[Any]", context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
         while context.is_active() and not self.f.stopping.is_set():
@@ -243,7 +245,7 @@ class FakeEmulatorServer:
         self.gps = ec.GpsState()
         self.microphone = False
         self.notifications: "queue.Queue[ec.Notification]" = queue.Queue()
-        self.logcat: "queue.Queue[ec.LogcatEntry]" = queue.Queue()
+        self.logcat: "queue.Queue[ec.LogcatEntry | str]" = queue.Queue()
         self.snapshots: set[str] = set()
         self.loaded: str | None = None
         self.snapshot_script: dict[str, deque[ss.SnapshotPackage]] = {}

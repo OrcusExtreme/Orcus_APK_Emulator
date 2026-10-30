@@ -3,11 +3,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.4-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.4)
+[![Release](https://img.shields.io/badge/Release-v0.1.5-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.5)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-140%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-313%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -79,95 +79,90 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.4 / Phase 2 Completed)
+## 📊 Current Progress & Status (v0.1.5 / Phase 3a Completed)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)** and **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9 with Real MIT App Inventor Fixtures, and Packaging Smoke Tests)**, backed by **140 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, and **Phase 3a (Core Execution Runtime, APK Lifecycle, and PySide6 Native GUI)**, backed by **313 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
     A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
-    B --> C["Phase 3a: Core Engine, APK & GUI<br/>(Next Milestone)"]
-    C --> D["Phase 3b: Sensors, IME & Settings<br/>(Planned)"]
+    B --> C["Phase 3a: Core Engine, APK & GUI<br/>(Completed: v0.1.5)"]
+    C --> D["Phase 3b: Sensors, IME & Settings<br/>(Next Milestone)"]
     D --> E["Phase 4: Inno Setup & Release<br/>(Planned)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
     style B fill:#2d6a4f,stroke:#1b4332,color:#fff
-    style C fill:#1d3557,stroke:#457b9d,color:#fff
-    style D fill:#4a4e69,stroke:#22223b,color:#fff
+    style C fill:#2d6a4f,stroke:#1b4332,color:#fff
+    style D fill:#1d3557,stroke:#457b9d,color:#fff
     style E fill:#4a4e69,stroke:#22223b,color:#fff
 ```
 
-### ✅ Implemented Capabilities (v0.1.4)
+### ✅ Implemented Capabilities (v0.1.5)
 
 #### 1. Architecture Specifications ([docs/](docs/))
 * **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Comprehensive v3 technical specification addressing 66 adversarial review findings and 52 verification items.
 * **[docs/spikes.md](docs/spikes.md)**: Empirical measurement logs covering all Phase 2 spikes (S0a, S0b, S1, S2, S3, S4, S5, S6, S7, S8, S9, A4, A5, A6, A8).
-* **[docs/fixtures.md](docs/fixtures.md)**: Specifications and acceptance criteria for test APK fixtures (`HelloPurr`, `TalkToMe`, `OrcusProbe`).
+* **[docs/fixtures.md](docs/fixtures.md)**: Specifications and acceptance criteria for test APK fixtures (`HelloPurr`, `TalkToMe`, `OrcusProbe`, `PaintPot`, `BallBounce`, etc.).
 * **[docs/research/phase1-research-brief.md](docs/research/phase1-research-brief.md)**: Fact-checking summary covering 6 technical domains (WHPX hypervisor, gRPC streaming, ADB isolation, APK parsing, App Inventor quirks, packaging).
 * **[plan.md](plan.md)**: Master phase plan and acceptance test matrix (Criteria A1–A9, B1–B15).
 
 #### 2. Clean Architecture Contracts (`src/orcus/contracts/`)
 * [`apk.py`](src/orcus/contracts/apk.py): APK classification (`APK`, `AAB`, `AIA`, `AIX`, `UNKNOWN`), manifest extraction dataclasses, pre-flight check models, and execution contracts.
 * [`device.py`](src/orcus/contracts/device.py): Frame stream protocol (RGB888 buffers), mouse/touch/key event contracts, sensor injection, and logcat filtering.
-* [`engine.py`](src/orcus/contracts/engine.py): Emulator state machine (`STOPPED`, `PREPARING`, `READY`, `STOPPING`, `FAILED`), ownership locks, port allocation, and snapshot tokens.
+* [`engine.py`](src/orcus/contracts/engine.py): Emulator state machine (`STOPPED`, `PREPARING`, `READY`, `STOPPING`, `FAILED`), ownership locks, port allocation, snapshot tokens, and `EngineView` interface.
 * [`errors.py`](src/orcus/contracts/errors.py): Unified `ErrorCode` definitions and `OrcusError` exception hierarchy.
 * [`session.py`](src/orcus/contracts/session.py): Non-blocking Session API protocol coordinating GUI, APK engine, and emulator controllers.
 * [`setup.py`](src/orcus/contracts/setup.py): Step-by-step setup definitions, progress callbacks, and system doctor diagnostic reports.
 
-#### 3. Windows-Hardened Common Infrastructure (`src/orcus/common/`)
-* [`winjob.py`](src/orcus/common/winjob.py) / [`win32.py`](src/orcus/common/win32.py): Robust Win32 Job Object wrappers enforcing `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` with token elevation inspection.
-* [`paths.py`](src/orcus/common/paths.py): Safe path resolution and validation ensuring all runtime assets reside in ASCII-only paths (`D:\OrcusAPK`, `D:\OrcusDev`).
-* [`childenv.py`](src/orcus/common/childenv.py): Strict environment variable allowlist shielding child processes from polluted host configurations.
-* [`ports.py`](src/orcus/common/ports.py): Ephemeral port conflict resolution for private ADB (15037) and gRPC console endpoints.
-* [`accel.py`](src/orcus/common/accel.py): WHPX state detection (`InstallState`, `RebootPending`) and `emulator-check accel` diagnostic routines.
-* [`messages_ko.py`](src/orcus/common/messages_ko.py): User-friendly localized message catalog mapping all internal error codes to clear UI actions.
-* Additional utilities: [`config.py`](src/orcus/common/config.py), [`log.py`](src/orcus/common/log.py), [`jsonio.py`](src/orcus/common/jsonio.py), [`clock.py`](src/orcus/common/clock.py), [`pins.py`](src/orcus/common/pins.py), [`hostinfo.py`](src/orcus/common/hostinfo.py).
+#### 3. Core Engine Management & Supervision (`src/orcus/engine/`)
+* [`manager.py`](src/orcus/engine/manager.py): Robust `EngineManager` implementing the core state machine, supervisor/worker architecture, process watchdogs, and keep-alive pingers.
+* [`adb.py`](src/orcus/engine/adb.py): Private isolated ADB daemon supervisor (port 15037), 0.06s fast re-registration, shared key verification, `RawShell`, and epoch-bound `EpochShell`.
+* [`provision.py`](src/orcus/engine/provision.py): 11-step guest system configuration pipeline, async filesystem flushes (`sync`), and mock LocationSensor test provider injection.
+* [`snapshots.py`](src/orcus/engine/snapshots.py): Golden snapshot validation (`PROVISION_V=3`), automatic golden rebuild safeguards, and sub-6s instant boot restoration.
+* [`gpu.py`](src/orcus/engine/gpu.py) / [`exitlog.py`](src/orcus/engine/exitlog.py) / [`readonly.py`](src/orcus/engine/readonly.py): Hardware GPU fallback detection, crash log parsers, and external read-only discovery inspection.
 
-#### 4. Automated Setup & Verification Engine (`src/orcus/setup/`)
-* [`repo_index.py`](src/orcus/setup/repo_index.py): Parses Google official Android SDK repository XML feeds to resolve archive URLs and SHA-1 checksums.
-* [`download.py`](src/orcus/setup/download.py): Resumable chunked file downloader with streaming SHA-1 verification.
-* [`extract.py`](src/orcus/setup/extract.py): Safe in-place archive decompression resilient against Windows Defender file-locking delays, with `.partial` completion markers.
-* [`license.py`](src/orcus/setup/license.py): Enforces Google `android-sdk-license` interactive acceptance in real console sessions (bypassing headless auto-consent).
-* [`whpx.py`](src/orcus/setup/whpx.py): Elevated DISM invocation for enabling the Windows Hypervisor Platform feature with reboot state handling.
-* [`steps.py`](src/orcus/setup/steps.py): Multi-step pipeline coordinator managing the complete 1–8 setup workflow.
-* [`doctor.py`](src/orcus/setup/doctor.py): Read-only diagnostic verification engine reporting hardware virtualization, disk space, and dependency readiness.
+#### 4. APK Lifecycle & Inspection Pipeline (`src/orcus/apk/`)
+* [`intake.py`](src/orcus/apk/intake.py): Safe drag-and-drop file ingestion, ASCII staging path isolation (`D:\OrcusAPK\staging`), and LRU cache eviction.
+* [`inspect.py`](src/orcus/apk/inspect.py): High-performance pure-Python manifest parser (using `apkInspector`), handling UTF-16 string pools, orientation numbers, and component discovery.
+* [`compat.py`](src/orcus/apk/compat.py) / [`eras.py`](src/orcus/apk/eras.py): Pre-flight compatibility diagnostics detecting target SDK mismatches, missing speech recognizers, and permission anomalies.
+* [`install.py`](src/orcus/apk/install.py): Intelligent `adb install -r` coordinator with bypass flags for legacy packages and zero-cost in-epoch installation skips.
+* [`launch.py`](src/orcus/apk/launch.py): Pre-launch automatic screen orientation rotation (`LANDSCAPE`, `REVERSE_LANDSCAPE`) and `am start -W` activity invocation.
+* [`watcher.py`](src/orcus/apk/watcher.py): Real-time crash, ANR, and App Inventor component error detector (harvesting error 1501, 601, 908, 2701, 3806, and SIGTRAP).
+* [`service.py`](src/orcus/apk/service.py): Dedicated `ApkService` thread managing the asynchronous APK lifecycle pipeline.
 
-#### 5. Emulator gRPC Infrastructure & Test Mocking (`src/orcus/emugrpc/`)
-* **Vendored Protobuf Definitions**: Vendored official Google Android Emulator proto contracts (`emulator_controller.proto`, `snapshot.proto`, `snapshot_service.proto`, build 16428233, Apache-2.0).
-* **Compiled Stubs & Manifest Verification**: Precompiled Python protobuf and gRPC stubs with strict `.pyi` type hints and SHA-256 header manifest validation (`MANIFEST.json`).
-* [`channel.py`](src/orcus/emugrpc/channel.py): Security-hardened local gRPC channel factory configured with token interceptors (`emulator_console_auth_token`) and custom message limits (32 MB).
-* [`fake.py`](src/orcus/emugrpc/fake.py): High-fidelity `FakeEmulatorServer` simulating frame streaming, snapshot persistence/restoration, guest clipboard, and multi-touch events for rapid, headless unit testing.
+#### 5. Device gRPC Streaming & Hardware Adapters (`src/orcus/device/`)
+* [`rotation.py`](src/orcus/device/rotation.py): 4-orientation mathematical transform matrix mapping mouse inputs to guest display coordinates.
+* [`frames.py`](src/orcus/device/frames.py): High-throughput RGB888/RGBA8888 frame buffer receiver and viewport sizing adapter.
+* [`input.py`](src/orcus/device/input.py): Touch pointer event normalizer ensuring pointer-release guarantees (preventing stuck touch events) and clipboard text injection.
+* [`controls.py`](src/orcus/device/controls.py): Sensor and device controls supporting 3-level shake sensitivity pulses, 20° tilt pad, mic mute, and GPS coordinate injection.
+* [`logcat.py`](src/orcus/device/logcat.py): Streamlined Logcat monitor utilizing hybrid ADB/gRPC streams to bypass emulator goldfish logcat disconnections.
+* [`session.py`](src/orcus/device/session.py): Integrated `DeviceSession` managing all gRPC stream lifetimes.
 
-#### 6. Core Diagnostics & Self-Test Suite (`src/orcus/engine/`)
-* [`bootcheck.py`](src/orcus/engine/bootcheck.py): Verifies headless WHPX boot readiness (`doctor --boot-check`, testing both `host` and `host_hidden` GPU modes).
-* [`selftest.py`](src/orcus/engine/selftest.py): End-to-end component integrity checker validating dependency pins, gRPC stubs, and UTF-8 clipboard roundtrips (`orcus-cli selftest`, `OrcusAPK.exe --selftest`).
+#### 6. PySide6 Native Desktop GUI Client (`src/orcus/gui/`)
+* [`window.py`](src/orcus/gui/window.py): Native desktop window housing the 9:16 mobile frame (432×768 on primary 1080p displays) with system tray and logoff fast-shutdown handlers.
+* [`phone.py`](src/orcus/gui/phone.py) / [`screen.py`](src/orcus/gui/screen.py) / [`frame_pump.py`](src/orcus/gui/frame_pump.py): 1:1 direct low-latency raster blit rendering viewport, touch input handler, and bezel buttons (Back, Home, Recents).
+* [`keymap.py`](src/orcus/gui/keymap.py): Keyboard navigation mapping (Esc/Right-click = Back, Middle-click = Home, Ctrl+V = Korean text injection).
+* [`panels.py`](src/orcus/gui/panels.py): Collapsible [App Card] (displaying package, launcher, SDK, permissions) and [Diagnostic Logs] inspection drawers.
+* [`overlays.py`](src/orcus/gui/overlays.py): Rich state overlays, non-blocking toast notifications, warning banners, and engine failure recovery cards.
+* [`instance.py`](src/orcus/gui/instance.py): Single-instance enforcement via Win32 Named Mutex and local IPC socket forwarding.
+* [`gpu_dialog.py`](src/orcus/gui/gpu_dialog.py): Interactive GPU fallback and diagnostics dialog.
 
-#### 7. App Inventor Fixture Toolchain (`tools/ai2/`, `tests/fixtures/`)
-* [`blocks.py`](tools/ai2/blocks.py): Pure Python AST DSL synthesizing both visual `.bky` XML and runtime `.yail` Scheme bytecode.
-* [`aia.py`](tools/ai2/aia.py) / [`projects.py`](tools/ai2/projects.py): Complete project package builder generating `.scm` form definitions, `project.properties`, and `.aia` archives matching upstream App Inventor YaVersion specifications (239/40).
-* [`tests/fixtures/`](tests/fixtures/): Pre-generated, validated `.aia` test projects for `HelloPurr`, `TalkToMe`, and `OrcusProbe`.
+#### 7. Session Composition & CLI Runner (`src/orcus/app/`, `src/orcus/cli.py`)
+* [`session.py`](src/orcus/app/session.py): Unifies `EngineManager`, `ApkService`, and `DeviceSession` into the thread-safe `SessionApi` contract.
+* [`smoke.py`](src/orcus/app/smoke.py): 8-step end-to-end automated smoke testing harness validating the entire launch-tap-reset lifecycle.
+* **CLI Commands**:
+  - `orcus-cli run <apk>`: Instantly loads golden snapshot, installs, and launches target APK from console.
+  - `orcus-cli smoke --apk <apk>`: Executes full automated Phase 3a verification suite.
+  - `orcus-cli engine status|shot`: Queries live emulator status and captures headless screenshots.
 
-#### 8. Empirical Spike Measurements & Performance Validation (`docs/spikes.md`, `tools/spikes/`)
-* **A4 (Real App Inventor APK Smoke Test)**: Official `HelloPurr.apk` install completed in **1.8s**, launch completed in **1.0s** (Total: 2.8s, vastly exceeding the 10s budget).
-* **S0b (WHPX Headless Boot)**: Successfully booted under WHPX in headless mode (initial cold boot 103s, subsequent warm-cold boot 27–31s).
-* **S1 (Korean TTS Engine)**: Verified offline Google TTS immediate Korean speech playback ("안녕하세요") with zero downloads or account logins required.
-* **S2 (Host GPU Screen Streaming)**: Verified `-gpu host -no-window` renders directly with host NVIDIA GeForce GTX 1660. Streams 432×768 RGB888 at ~50 fps with only 0.23 host CPU cores, 6 ms frame age, and 46 ms touch-drag-to-frame latency.
-* **S3 (Sound Playback & Hearing Test)**: Verified guest audio engine pipeline. Auditory verification confirmed distinct sound playback (cat purr / meow) and Korean TTS output via `fx_s3_listen.py`.
-* **S4 (Golden Snapshot Instant Boot)**: Achieved **4.8–5.8s boot time** (surpassing the < 10s budget). Designed a 2-phase provisioning routine that eliminates post-restore guest freezing and maintains sub-second clock drift.
-* **S5 (Error, Warning & ANR Telemetry)**: Harvested exact logcat signatures for error 1501 (missing sound file), 601 (unsupported format), 908 (permission denied), 2701 (speech recognizer not found), 3806 (microphone access denied), `RuntimeErrorAlert`, and WindowManager ANR.
-* **S7 (Precise Coordinate Mapping & Motion Sensors)**: Validated normalized 4-orientation touch coordinate transforms with 0–1 px error margin. Calibrated shake acceleration thresholds (25/16/9) across all orientations, tilt angles, and ~60 Hz drag motion streams.
-* **S8 (Comprehensive Korean Text Injection)**: Verified guest `Paste` keycode reliably injects Korean UTF-8 strings into `TextBox`, `MultiLine`, `PasswordTextBox`, and `WebViewer`.
-* **S9 (Private ADB Daemon)**: Verified port 15037 ADB daemon isolation, 0.06s re-registration, shared key authentication, and zero cross-talk with port 5037 or physical devices.
-* **A5 (Teardown Guarantees)**: Kernel Win32 Job Object terminates all child/grandchild emulator daemons in under **0.55s** upon host process kill.
-* **A8 (Packaging Smoke Test)**: Packaged standalone PyInstaller onedir distribution (119 MB) featuring dual executables (`OrcusAPK.exe` & `orcus-cli.exe`), cleanly passing `--selftest` and `--boot-check`.
+#### 8. Automated Setup & Verification Engine (`src/orcus/setup/`, `src/orcus/common/`)
+* Robust Win32 Job Object wrappers (`winjob.py`, `win32.py`) enforcing `KILL_ON_JOB_CLOSE`.
+* Multi-step setup pipeline (`steps.py`, `download.py`, `extract.py`, `license.py`, `whpx.py`).
+* Resilient archive decompression with Windows Defender lock retry logic and `.partial` markers.
 
 #### 9. Developer Toolchain & Testing Infrastructure (`tools/`, `tests/`)
-* [`bootstrap.py`](tools/bootstrap.py): Fully automated environment bootstrapper setting up `D:\OrcusDev\venv` using strict hash-pinned requirements.
-* [`dev.py`](tools/dev.py): Unified development runner directing all build and test caches to D: drive (`check`, `test`, `typecheck`, `cli`).
-* [`build.py`](tools/build.py): PyInstaller onedir automated builder with hidden-import resolution and post-build verification.
-* [`gen_protos.py`](tools/gen_protos.py): Automated protobuf and gRPC stub generator with drive-isolated caching.
-* [`fetch_fixtures.py`](tools/fetch_fixtures.py): Automated fetcher for official MIT App Inventor test APK fixtures.
-* **Spike Harnesses (`tools/spikes/`)**: Comprehensive measurement and diagnostic harnesses (`harness.py`, `viewer.py`, `fx_s3_listen.py`, `fx_*.py`, etc.).
-* **Automated Test Suite**: **140 pytest unit tests** passing with 100% success rate. Zero Pyright type check diagnostics.
+* **AI2 Project Synthesis Engine (`tools/ai2/`)**: Visual `.bky` XML and `.yail` Scheme code generator, producing valid `.aia` project archives (`HelloPurr`, `TalkToMe`, `OrcusProbe`, `PaintPot`, `BallBounce`, `MoleMash`).
+* [`bootstrap.py`](tools/bootstrap.py) / [`dev.py`](tools/dev.py) / [`build.py`](tools/build.py): Hash-pinned environment manager, test runner, and PyInstaller onedir distribution builder.
+* **Automated Test Suite**: **313 pytest unit tests** passing with 100% success rate. Zero Pyright type check diagnostics.
 
 ---
 
@@ -183,33 +178,62 @@ Orcus_APK_Emulator/
 ├── src/
 │   └── orcus/                  # Core package
 │       ├── __init__.py
-│       ├── __main__.py         # Application entry point
-│       ├── cli.py              # orcus-cli setup, doctor, and selftest commands
-│       ├── apk/                # APK staging, inspection, and lifecycle monitoring
-│       ├── app/                # Session composition and application lifecycle
-│       ├── common/             # OS integration, Win32 Jobs, paths, ports, logging
+│       ├── __main__.py         # Application entry point (GUI launcher)
+│       ├── cli.py              # orcus-cli setup, doctor, selftest, run, and smoke commands
+│       ├── apk/                # APK staging, inspection, installation, launch, and error watcher
+│       │   ├── compat.py       # Pre-flight compatibility diagnostics
+│       │   ├── eras.py         # Android API era detection
+│       │   ├── inspect.py      # apkInspector manifest metadata extraction
+│       │   ├── install.py      # ADB package installer with fast in-epoch bypass
+│       │   ├── intake.py       # Safe path staging and LRU cache
+│       │   ├── launch.py       # Activity launcher and orientation synchronizer
+│       │   ├── service.py      # Asynchronous ApkService pipeline
+│       │   └── watcher.py      # Real-time logcat error, crash, and ANR telemetry
+│       ├── app/                # Session composition and smoke validation
+│       │   ├── compose.py      # Application dependency wiring
+│       │   ├── session.py      # Unified SessionApi and HeadlessSession implementation
+│       │   └── smoke.py        # 8-step end-to-end automated verification harness
+│       ├── common/             # OS integration, Win32 Jobs, paths, ports, logging, messages
 │       ├── contracts/          # Strict layer protocols and data models (Qt-independent)
-│       ├── device/             # gRPC streaming adapter, input queue, logcat
+│       ├── device/             # gRPC streaming adapter, touch input, controls, logcat
+│       │   ├── controls.py     # Motion sensors (shake, tilt), mic mute, and GPS injection
+│       │   ├── frames.py       # RGB888 frame buffer queue and format sizing
+│       │   ├── input.py        # Touch pointer event normalizer and clipboard paste
+│       │   ├── logcat.py       # Hybrid ADB/gRPC live logcat consumer
+│       │   ├── rotation.py     # 4-orientation coordinate transformation
+│       │   └── session.py      # DeviceSession stream coordinator
 │       ├── emugrpc/            # Vendored gRPC stubs, token channel factory, and FakeEmulatorServer
-│       │   ├── protos/         # Upstream Google Android Emulator proto definitions (16428233)
-│       │   ├── generated/      # Generated Python protobuf/gRPC modules with .pyi stubs
-│       │   ├── channel.py      # Authenticated gRPC channel builder
-│       │   └── fake.py         # In-memory emulator gRPC mock server
-│       ├── engine/             # Headless emulator process, boot-check, and snapshot controller
+│       ├── engine/             # Headless emulator process, ADB daemon, and golden snapshot controller
+│       │   ├── adb.py          # Private isolated ADB daemon (port 15037) supervisor
 │       │   ├── bootcheck.py    # WHPX headless boot readiness diagnostics
-│       │   └── selftest.py     # Component integrity self-test
+│       │   ├── exitlog.py      # Process exit code and emulator crash log analysis
+│       │   ├── gpu.py          # Host GPU compatibility detection
+│       │   ├── manager.py      # EngineManager supervisor state machine
+│       │   ├── provision.py    # Guest provisioning pipeline and mock location provider
+│       │   ├── readonly.py     # Read-only external VM discovery reader
+│       │   ├── seams.py        # Subprocess and dependency injection seams
+│       │   ├── selftest.py     # Component integrity self-test
+│       │   └── snapshots.py    # Golden snapshot restore and integrity validator
 │       ├── gui/                # PySide6 QtWidgets main window and mobile viewport
+│       │   ├── app.py          # Native GUI application runner
+│       │   ├── bridge.py       # Thread-safe SessionApi event bridge
+│       │   ├── frame_pump.py   # Low-latency frame pump
+│       │   ├── gpu_dialog.py   # Software GPU fallback dialog
+│       │   ├── instance.py     # Single-instance mutex and IPC forwarder
+│       │   ├── keymap.py       # Desktop keyboard shortcuts and bezel key bindings
+│       │   ├── overlays.py     # Progress overlays, error banners, and recovery cards
+│       │   ├── panels.py       # Collapsible [App Card] and [Diagnostic Logs] panels
+│       │   ├── phone.py        # 9:16 mobile frame container with bezel controls
+│       │   ├── screen.py       # Direct raster blit rendering viewport
+│       │   └── window.py       # Top-level application window
 │       └── setup/              # Resumable downloader, safe extractor, WHPX configuration
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   └── unit/                   # 140 unit test suites covering contracts, setup, emugrpc, engine, ai2
+│   ├── unit/                   # 313 unit test suites covering contracts, engine, apk, device, gui, app
+│   └── device/                 # Real emulator device integration test suites
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
-│   │   ├── aia.py              # Archive packaging and manifest construction
-│   │   ├── blocks.py           # .bky XML and .yail Scheme code generator
-│   │   ├── build_fixtures.py   # Fixture bundle builder
-│   │   └── projects.py         # HelloPurr, TalkToMe, OrcusProbe project specifications
 │   ├── bootstrap.py            # Automated venv creation & dependency installation
 │   ├── dev.py                  # Test / typecheck / CLI execution harness
 │   ├── devenv.py               # Development environment path management
@@ -250,31 +274,21 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (140 tests)
+# 4. Run the automated unit test suite (313 tests)
 py -3.14 tools/dev.py check
 ```
 
-### 2. Environment Diagnostics & SDK Installation (`orcus-cli`)
-Because the Google Android SDK license agreement requires explicit interactive user consent, execute the setup command in your interactive terminal:
-
+### 2. Launching the Application
 ```powershell
-# Run the diagnostic health check (read-only, does not modify system state)
-D:\OrcusDev\venv\Scripts\python.exe -X utf8 -m orcus.cli doctor
+# Launch the native PySide6 Desktop GUI (drag-and-drop any .apk onto the window)
+py -3.14 -m orcus
 
-# Run the 8-step setup pipeline (downloads ~2.3 GB SDK assets to D:\OrcusAPK)
-D:\OrcusDev\venv\Scripts\python.exe -X utf8 -m orcus.cli setup
+# Or launch directly with an APK file:
+py -3.14 -m orcus D:\OrcusDev\fixtures\HelloPurr.apk
 
-# Run the self-test verifying gRPC and runtime dependencies
-D:\OrcusDev\venv\Scripts\python.exe -X utf8 -m orcus.cli selftest
+# Run the 8-step automated smoke test suite:
+py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
 ```
-
-The setup pipeline will:
-1. Validate system prerequisites and disk space on drive `D:`.
-2. Present the Google SDK license agreement for interactive acceptance.
-3. Verify and enable the Windows Hypervisor Platform (WHPX) via UAC elevation if needed.
-4. Download the verified Google Emulator, Platform-Tools, and Android 16 system image with SHA-1 checks.
-5. Extract all archives safely and configure the `orcus36` AVD.
-6. Generate isolated private ADB authorization keys.
 
 ---
 
@@ -283,16 +297,16 @@ The setup pipeline will:
 - [x] **Phase 1: Architecture & Technical Foundations** (Completed, 2026-10-30)
 - [x] **Phase 2: Skeleton, Setup Automation & Spikes** (Completed: v0.1.4)
   - [x] Project skeleton, contracts, common utilities, and setup pipeline
-  - [x] 140 automated unit tests and strict Pyright compliance
   - [x] Emulator gRPC protobuf compilation (`orcus.emugrpc`) and FakeEmulatorServer mock
   - [x] App Inventor fixture generator (`tools/ai2/`, HelloPurr, TalkToMe, OrcusProbe)
   - [x] Spike harnesses (`tools/spikes/`) covering S0a–S9 (GPU latency, golden boot, audio, sensors, error telemetry)
-  - [x] Standalone PyInstaller onedir smoke test (A8, 119 MB distribution)
-- [ ] **Phase 3a: Core Execution Runtime & Primary GUI** (Next Milestone)
-  - [ ] `engine`: State machine, private ADB daemon watchdog, golden snapshot restore
-  - [ ] `apk`: Drag-and-drop staging pipeline, `adb install -r`, `am start`, logcat monitors
-  - [ ] `gui`: PySide6 9:16 mobile frame, raster frame blit, [App Card] and [Logs] panels
-- [ ] **Phase 3b: Sensor Integration, IME & Settings**
+- [x] **Phase 3a: Core Execution Runtime & Primary GUI** (Completed: v0.1.5)
+  - [x] `engine`: State machine, private ADB daemon watchdog, golden snapshot restore
+  - [x] `apk`: Drag-and-drop staging pipeline, `adb install -r`, `am start`, logcat monitors
+  - [x] `device`: Low-latency frame streaming, touch pointer normalization, Korean clipboard paste
+  - [x] `gui`: PySide6 9:16 mobile frame, raster frame blit, [App Card] and [Logs] panels
+  - [x] 313 automated unit tests and strict Pyright compliance
+- [ ] **Phase 3b: Sensor Integration, IME & Settings** (Next Milestone)
   - [ ] [Sensors] panel: Shake sensitivity presets, rotation, 20° tilt pad, GPS coordinates
   - [ ] Korean IME text composition input bar with guest clipboard synchronization
 - [ ] **Phase 4: Packaging & Distribution**

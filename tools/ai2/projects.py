@@ -11,6 +11,7 @@ import math
 import struct
 import wave
 import zlib
+from collections.abc import Callable
 
 from ai2 import aia
 from ai2 import blocks as b
@@ -201,7 +202,92 @@ PROBE_HTML = (b'<!doctype html><html><head><meta charset="utf-8">'
               b'<meta name="viewport" content="width=device-width"></head>'
               b'<body><input id="w" placeholder="web input"><textarea id="t"></textarea></body></html>\n')
 
-ALL = {"HelloPurr": hello_purr, "TalkToMe": talk_to_me, "OrcusProbe": orcus_probe}
+# --- 3a acceptance (ARCHITECTURE.md §12.4): the tutorial apps students start with, and three HelloPurr variants ---
+RED, BLUE_PAINT, GREEN = "&HFFFF0000", "&HFF0000FF", "&HFF00FF00"
+
+
+def paint_pot() -> Project:
+    """PaintPot tutorial: touch draws a dot, drag draws a line (B2: lines must not break)."""
+    color = lambda btn, value: click(btn, b.Set("Canvas1", "Canvas", "PaintColor", b.Num(value), "number"))  # noqa: E731
+    s = Screen("Screen1", screen1("PaintPot", Title="PaintPot"), [
+        row("rowColors", button("ButtonRed", "Red"), button("ButtonBlue", "Blue"), button("ButtonGreen", "Green")),
+        component("Canvas", "Canvas1", Width=FILL_PARENT, Height=FILL_PARENT, BackgroundColor=WHITE,
+                  PaintColor=RED, LineWidth="5"),
+        button("ButtonWipe", "Wipe"),
+    ], events=[
+        b.Event("Canvas1", "Canvas", "Touched", ["x", "y", "touchedAnySprite"],
+                [call("Canvas1", "Canvas", "DrawCircle", b.Param("x"), b.Param("y"), b.Num(5), b.Bool(True),
+                      types=("number", "number", "number", "boolean"))]),
+        b.Event("Canvas1", "Canvas", "Dragged",
+                ["startX", "startY", "prevX", "prevY", "currentX", "currentY", "draggedAnySprite"],
+                [call("Canvas1", "Canvas", "DrawLine", b.Param("prevX"), b.Param("prevY"), b.Param("currentX"),
+                      b.Param("currentY"), types=("number", "number", "number", "number"))]),
+        color("ButtonRed", -65536), color("ButtonBlue", -16776961), color("ButtonGreen", -16711936),
+        click("ButtonWipe", call("Canvas1", "Canvas", "Clear")),
+    ])
+    return Project("PaintPot", [s])
+
+
+def ball_bounce() -> Project:
+    """BallBounce tutorial: fling the ball, it bounces off the edges (B2: the fling speed follows the mouse)."""
+    s = Screen("Screen1", screen1("BallBounce", Title="BallBounce"), [
+        component("Canvas", "Canvas1", Width=FILL_PARENT, Height=FILL_PARENT, BackgroundColor=WHITE),
+    ], events=[
+        b.Event("Ball1", "Ball", "Flung", ["x", "y", "speed", "heading", "xvel", "yvel"], [
+            b.Set("Ball1", "Ball", "Heading", b.Param("heading"), "number"),
+            b.Set("Ball1", "Ball", "Speed", b.Param("speed"), "number"),
+        ]),
+        b.Event("Ball1", "Ball", "EdgeReached", ["edge"],
+                [call("Ball1", "Ball", "Bounce", b.Param("edge"), types=("number",))]),
+    ])
+    s.components[0].children.append(component("Ball", "Ball1", Radius="15", PaintColor=BLUE_PAINT, X="150", Y="150",
+                                               Interval="20"))
+    return Project("BallBounce", [s])
+
+
+def mole_mash() -> Project:
+    """MoleMash tutorial (short form): the mole jumps every second; touching it scores."""
+    def move() -> b.Call:
+        span = lambda dim, sprite: b.Sub(b.Get("Canvas1", "Canvas", dim), b.Get("Mole", "ImageSprite", sprite))  # noqa: E731
+        return call("Mole", "ImageSprite", "MoveTo", b.RandomInt(b.Num(0), span("Width", "Width")),
+                    b.RandomInt(b.Num(0), span("Height", "Height")), types=("number", "number"))
+    s = Screen("Screen1", screen1("MoleMash", Title="MoleMash"), [
+        component("Canvas", "Canvas1", Width=FILL_PARENT, Height="320", BackgroundColor=WHITE),
+        label("lblScore", "Score: 0", FontSize="20"),
+        button("btnReset", "Reset"),
+        component("Clock", "Clock1", TimerInterval="1000"),
+    ], globals=[b.GlobalDecl("score", b.Num(0))], events=[
+        b.Event("Clock1", "Clock", "Timer", [], [move()]),
+        b.Event("Mole", "ImageSprite", "Touched", ["x", "y"], [
+            incr("score"), set_text("lblScore", join("Score: ", b.Global("score"))), move()]),
+        click("btnReset", b.SetGlobal("score", b.Num(0)), set_text("lblScore", b.Text("Score: 0"))),
+    ])
+    s.components[0].children.append(component("ImageSprite", "Mole", Picture="mole.png", X="40", Y="40"))
+    return Project("MoleMash", [s], {"mole.png": mole_png()})
+
+
+def hello_purr_variant(name: str, **screen: str) -> Callable[[], Project]:
+    def make() -> Project:
+        p = hello_purr()
+        p.name = name
+        p.screens[0].props = p.screens[0].props | {"AppName": name} | screen
+        return p
+    return make
+
+
+def hello_purr_min36() -> Project:
+    p = hello_purr_variant("HelloPurrMin36")()
+    p.settings = {"androidminsdk": "36"}   # Project Properties > AndroidMinSdk (stored in project.properties)
+    return p
+
+
+ALL: dict[str, Callable[[], Project]] = {
+    "HelloPurr": hello_purr, "TalkToMe": talk_to_me, "OrcusProbe": orcus_probe,
+    "PaintPot": paint_pot, "BallBounce": ball_bounce, "MoleMash": mole_mash,
+    "HelloPurrKo": hello_purr_variant("HelloPurrKo", AppName="고양이 쓰다듬기"),   # Korean label (B8)
+    "HelloPurrMin36": hello_purr_min36,                                          # minSdk 36 installs (B8)
+    "HelloPurrLand": hello_purr_variant("HelloPurrLand", ScreenOrientation="landscape"),   # turned first (B8)
+}
 
 
 # --- media --------------------------------------------------------------------------------------------------
@@ -248,6 +334,37 @@ def kitty_png(size: int = 240) -> bytes:
     ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
             + chunk(b"IEND", b""))
+
+
+def _png(width: int, height: int, pixel: Callable[[float, float], tuple[int, int, int, int]]) -> bytes:
+    rows = []
+    for y in range(height):
+        row = bytearray([0])
+        for x in range(width):
+            row += bytes(pixel(x + 0.5, y + 0.5))
+        rows.append(bytes(row))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+            + chunk(b"IEND", b""))
+
+
+def mole_png(size: int = 64) -> bytes:
+    """A brown mole face with a pink nose (RGBA PNG)."""
+    brown, dark, pink = (121, 85, 61, 255), (30, 30, 30, 255), (232, 122, 144, 255)
+    c = size / 2
+
+    def pixel(x: float, y: float) -> tuple[int, int, int, int]:
+        def disc(cx: float, cy: float, r: float) -> bool:
+            return (x - cx) ** 2 + (y - cy) ** 2 <= r ** 2
+        if disc(c - size * 0.16, c - size * 0.08, size * 0.06) or disc(c + size * 0.16, c - size * 0.08, size * 0.06):
+            return dark
+        if disc(c, c + size * 0.12, size * 0.09):
+            return pink
+        return brown if disc(c, c, size * 0.46) else (0, 0, 0, 0)
+    return _png(size, size, pixel)
 
 
 def meow_wav(rate: int = 22050, seconds: float = 0.7) -> bytes:

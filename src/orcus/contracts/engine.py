@@ -101,6 +101,7 @@ class EngineView(Protocol):
     # reset_device returns the target epoch (= current + 1); in COLD it becomes a rebuild request
     # (the GUI confirms first)
     def rebuild(self, reason: str) -> None: ...          # only after the user confirmed
+    def retry(self) -> None: ...                         # [Retry] on the FAILED panel: also resets the rebuild budget
     def subscribe(self, cb: Callable[[EngineStatus], None]) -> Callable[[], None]: ...
 
 

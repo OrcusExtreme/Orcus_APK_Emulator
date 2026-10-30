@@ -29,10 +29,16 @@ py tools/ai2/build_fixtures.py --build    APK 빌드 → D:\OrcusDev\fixtures\<�
 | `HelloPurr.apk` | 공식 튜토리얼 HelloPurr의 디자인·블록(쓰다듬기 → 소리 + 진동, 흔들기 → 소리) | 스파이크 전(S5) |
 | `TalkToMe.apk` | 공식 튜토리얼 TalkToMe 1·2편(말하기 + 흔들면 말하기) | 스파이크 전(S1·S5·S7) |
 | `OrcusProbe.apk` + `OrcusProbe.aia` | 아래 명세 | **S3·S5 전** |
-| `PaintPot.apk`, `BallBounce.apk`, `MoleMash.apk` | 공식 튜토리얼 그대로 | 3a 수용 시험 전 |
-| `한글이름앱.apk` | HelloPurr의 앱 이름(AppName)만 "안녕 고양이"로 바꿔 빌드 | 3a 수용 시험 전 |
-| `MinSdk36.apk` | HelloPurr의 Screen1 속성 [Android 최소 버전]을 36(Android 16)으로 | 3a 수용 시험 전 |
-| `Landscape.apk` | HelloPurr의 Screen1 ScreenOrientation만 landscape로 | 3a 수용 시험 전 |
+| `PaintPot.apk` | 공식 튜토리얼(터치 → 점, 드래그 → 선, 색 버튼, Wipe). `projects.paint_pot` | 3a 수용 시험 전(B2) |
+| `BallBounce.apk` | 공식 튜토리얼(Flung → Heading·Speed, EdgeReached → Bounce). `projects.ball_bounce` | 3a 수용 시험 전(B2) |
+| `MoleMash.apk` | 공식 튜토리얼 짧은 판(1 s마다 두더지 이동, 맞히면 점수). 두더지 그림은 직접 그림. `projects.mole_mash` | 3a 수용 시험 전 |
+| `HelloPurrKo.apk` | HelloPurr의 앱 이름(AppName)만 "고양이 쓰다듬기" | 3a 수용 시험 전(B8) |
+| `HelloPurrMin36.apk` | HelloPurr + 프로젝트 속성 AndroidMinSdk = 36(`project.properties`의 `androidminsdk`) | 3a 수용 시험 전(B8) |
+| `HelloPurrLand.apk` | HelloPurr의 Screen1 ScreenOrientation만 landscape | 3a 수용 시험 전(B8) |
+
+3a 수용 시험용 6개(위 표의 PaintPot부터)는 `py tools/ai2/build_fixtures.py`가 `D:\OrcusDev\fixtures\src\<이름>.aia`로 만들어 둡니다(2026-10-30 생성).
+웹 IDE에서 각 .aia를 가져와 빌드한 뒤 `D:\OrcusDev\fixtures\<이름>.apk`로 저장하면 됩니다. ARM 전용 APK와 합성 파일(AAB·AIA·AIX
+이름만 바꾼 zip, 잘린 zip)은 시험 코드가 HelloPurr.apk로부터 직접 만듭니다.
 | (있다면) 2018년 이전에 빌드한 APK | 예전에 만든 파일 | 아무 때나. 없으면 '해당 없음' |
 
 `MITAI2Companion` APK(파서 회귀용)는 `tools/fetch_fixtures.py`가 받습니다(Phase 2 후반).

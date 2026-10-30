@@ -459,3 +459,35 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 - **2026-10-30 밤 — S3 사람 확인, A9 승인, Phase 3a 시작**
   - S3: 사용자가 `fx_s3_listen.py`로 고양이 소리와 "안녕하세요"가 PC 스피커로 잘 들리는 것을 확인했다 → 소리 대체 경로(streamAudio + QtMultimedia)는 넣지 않는다.
   - **A9 승인:** 사용자가 고친 Phase 3 계획으로 Phase 3a 시작을 지시했다("이제 Phase3a를 시작"). Phase 2 완료.
+- **Phase 3a 진행 (작업 순서 1–7)**
+  - **1 engine 기반:** `engine/seams.py`(주입 지점, `Seams.real`), `adb.py`(private adb 서버·재등록·RawShell·EpochShell), `provision.py`(준비 11개·flush·session_init·위치 테스트 제공자·기능 탐지), `snapshots.py`(유효성 키·`provision.json`, `PROVISION_V=3`), `gpu.py`, `exitlog.py`.
+  - **2 EngineManager**(`engine/manager.py`): supervisor·worker·procwait·keepalive. 작업이 띄운 VM은 실패·취소 때 그 작업이 정리하고, READY VM만 supervisor가 가진다. 진행 이벤트에 작업 번호를 붙여 오래된 이벤트를 버린다. 가짜 세계(`tests/unit/_engine_fakes.py`: 설정 유지·RAM 속성·골든 복원·빠른 시계)로 18개 시험(첫 준비·검증 부팅, 초기화 epoch +1, epoch에 묶인 셸, 정지·잠금, ENGINE_IN_USE, 미설치, 크래시 1회 재시작, 골든 불일치 재구축 1회, 초기화 실패 복구, 준비 실패·설정 유실 시 저장 안 함, 소프트웨어 GPU COLD).
+  - **실기기**(`tests/device/test_engine_real.py`): 엔진의 `provision.json`이 없어 스스로 재구축 → READY **173.8 s**(원인 REBUILD), 초기화 **8.3 s**(epoch 2, RESET), 정지 5.0 s → 감시 프로세스 대기를 3 s에서 0.5 s로 줄임. 정지 뒤 SDK 프로세스 0개.
+  - **3 device:** `rotation.py`(§9.2 표), `frames.py`(format 크기·회전 기록·재요청), `input.py`(떼기 보장·붙여넣기 순서·ASCII도 붙여넣기·휠 무시), `controls.py`(FIFO·흔들기·회전·기울기·마이크·위치 주입), `logcat.py`(Text 모드·백로그 버리기), `session.py`. FakeEmulatorServer가 Text 모드 logcat을 보내게 고침. 유닛 16개.
+  - 유닛 184개, pyright 0건.
+  - **4 apk:** `intake.py`(내용 판정·SHA 스테이징·LRU), `inspect.py`(방향 숫자 표, 픽스처 4개로 확인), `eras.py`, `compat.py`(사전 점검. 음성 인식 칩은 `<queries>`에 RecognitionService가 있는 앱만, targetSdk ≤ 22는 권한 검토 화면 안내), `install.py`(§7.5 표·재시도, 매니페스트를 못 읽으면 `pm list packages -3 -f` 전후 비교로 패키지 찾기), `launch.py`(실행 전 회전: "landscape"는 LANDSCAPE, "reverseLandscape"는 REVERSE_LANDSCAPE, sensor·user 변형은 지금 가로면 그대로. [화면 방향 맞추기]는 `mCurrentRotation`), `watcher.py`(S5 문자열, 우선순위, FATAL 스택은 끝날 때까지 모아 RECOGNIZE_SPEECH면 음성 인식 없음, 같은 오류 3 s 묶기, 908은 [이 앱 권한 모두 허용]), `service.py`(ApkService).
+    - **ApkService 결정:** 스테이징을 판정보다 먼저 한다(Drive '온라인 전용' 파일은 읽는 순간 내려받으므로 시간 제한이 있는 복사에서만 읽음). logcat은 epoch마다 스트림 하나를 READY 때 열고, 실행 전에 첫 줄을 기다린다(게스트 시계가 늦으면 스트림 앞부분이 잘리므로). `am start`와 PID 사이의 줄은 링 버퍼에서 감시기에 다시 넣는다. 발견은 파이프라인 큐로 돌려보내 RunEvent는 모두 `apk-pipeline` 스레드에서 나간다. 새 epoch의 자세는 골든의 세로로 본다(3a에는 회전 버튼이 없음 → 3b에서 회전 버튼을 넣을 때 자세 공유 방법을 정한다).
+    - **미룬 것(3b):** COLD에서 FRESH_PHONE을 FRESH_APP으로 바꿀 때 사용자 알림(지금은 로그만), 앱별 마이크 동의 재적용.
+    - 유닛 95개 추가(`test_apk.py`, `test_apk_service.py` + `_apk_fakes.py`). 전체 279개, pyright 0건.
+  - **5 app:** `app/session.py`(Session = SessionApi + HeadlessSession: EngineManager + `device.connect`(위치는 adb 테스트 제공자로 보내는 싱크) + ApkService, 설정 미리보기·저장, [보고서 복사], `open_paths`는 마지막 파일만, `shutdown`은 §4 순서), `engine/readonly.py`(다른 프로세스의 VM을 소유자 기록 + discovery로 읽기만), `app/smoke.py`(§12.5 3a: 시작→화면→Home 키→설치·실행→탭(HelloPurr 진동 기록으로 확인)→붙여넣기→초기화→정지, `logs\smoke-*.txt`), CLI `run | smoke | engine status|shot`.
+    - **실기기 `orcus-cli run HelloPurr.apk`:** 골든 부팅 10.1 s → 설치 2.8 s → 드롭 후 18.4 s에 실행. 실행 단계에서 logcat 첫 줄을 3 s 기다린 것을 찾아, 스트림을 READY 직후(설치 전)에 열도록 고침.
+    - **apkInspector 1.3.7이 import 때 `logging.basicConfig(level=DEBUG)`를 부른다** → 모든 라이브러리의 디버그 로그가 콘솔로 나옴. import 직후 루트 로거를 되돌림(`apk/inspect.py`).
+    - **감시기 변경:** `Bind to system recognition service failed with error 10`은 `DeviceCaps`와 상관없이 음성 인식 없음(캐시된 기능 탐지는 골든 기준이라 실행 중에 꺼진 제공자를 모름). 그 뒤의 errorNumber 0은 같은 카드로 묶음.
+    - 유닛 6개 추가(`test_app_session.py`: 가짜 엔진 세계에서 조립·위치 싱크·설정·보고서·읽기 전용 접속). 전체 285개, pyright 0건.
+  - **6 기기 통합 시험**(`tests/device/test_apk_real.py`): ① 설치·같은 파일 빠른 경로·초기화 뒤 재설치(epoch +1, RESET), ② OrcusProbe 오류 카드(1501·601·908→[이 앱 권한 모두 허용]·3806·블록 실행 오류·ANR·`am crash`), ③ TTS·음성 인식 제공자를 끈 상태(legacy·error 10 모두 음성 인식 없음, 2701, TTS 없음) → [휴대폰 초기화]로 복구.
+    - **발견 1 — gRPC logcat의 `contents`에는 줄바꿈이 없다**(메시지 하나 = 항목 하나). 줄바꿈으로 나누던 구현은 줄을 하나도 내보내지 않고 버퍼만 키웠다(6 s에 1.2 MB). 다음 타임스탬프에서 나누도록 고침(`common/logtext.py`).
+    - **발견 2 — 스냅샷 로드([휴대폰 초기화]) 뒤 gRPC `streamLogcat`은 아무것도 보내지 않는다.** 게스트 `goldfish-logcat`(`logcat -f /dev/hvc1`)을 다시 시작해도 돌아오지 않았다(호스트 쪽 경로가 끊김). → logcat 원천을 **`adb logcat -v threadtime -T 1`**(engine이 epoch마다 자식 프로세스로)로 바꾸고 app이 DeviceSession에 주입한다. 실패하면 gRPC로 대체. ARCHITECTURE §1.2·§4·§7.8 갱신.
+    - 결과: 드롭→실행(엔진 예열) 설치 7.3 s, 같은 파일 1.3 s, 초기화 뒤 재설치 3.4 s(B1 ≤ 10 s). ①·③ 통과.
+    - 시험 도우미 수정: uiautomator가 내비 바 아래로 반쯤 숨은 버튼을 13 px 조각으로 보고해 빗나간 탭 → 50 px 이상 보이는 버튼만 누름. 스와이프 직후의 관성 스크롤로 위치가 바뀌지 않았는지 다시 덤프해 확인.
+    - **발견 3 — 네이티브 크래시:** WebViewer가 있는 앱(OrcusProbe)은 렌더러가 죽으면 `chromium: … crash wasn't handled by all associated webviews, triggering application crash` → `F libc: Fatal signal 5 (SIGTRAP)`로 끝난다. `am crash`도 렌더러를 먼저 죽여 이 경로가 된다. → 앱 PID의 `Fatal signal`도 `APP_CRASH`.
+    - **발견 4 — Java 크래시 뒤 App Inventor Form이 `Uncaught Exception` + `errorNumber = 909`를 남긴다**(HelloPurr). 크래시 카드가 실행을 끝내므로 909 카드는 없다(시험으로 고정).
+    - **발견 5 — 3806(No Match)까지 걸리는 시간이 일정하지 않다:** S5 5.5 s, 단독 6 s, 908 직후 26 s.
+    - **발견 6 — App Inventor Form은 `onGlobalLayout()`·`keyboard hidden!` D 줄을 초당 여러 번 남긴다** → [보고서 복사]의 앱 로그는 I 이상 50줄 + 경고·오류 30줄로 바꿈.
+    - 최종: 기기 시험 3개 모두 통과(4분). 3806은 Google 인식기가 NO_SPEECH 없이 끝나는 실행이 있어, 앱이 3806을 남겼을 때만 카드를 확인한다(앞선 실행 2회에서 카드 확인).
+  - **7 gui**(`gui/`: keymap·bridge·frame_pump·screen·phone·overlays·panels·gpu_dialog·window·instance·app, `__main__`): 9:16 크기 계산(이 PC 주 모니터 432×768), 1:1 그리기, 정규 좌표 입력과 떼기 보장, Esc·오른쪽 클릭=뒤로, 가운데 클릭=홈, Ctrl+V=호스트 클립보드 붙여넣기, 베젤 키(길게 누르기), 진행 오버레이·토스트·배너·엔진 실패 패널, [앱]·[로그] 패널, 코드→채널 표대로 문제 표시, `RemedyAction`마다 처리기, GPU 모드 대화상자, 단일 인스턴스(named mutex + 사용자 SID 이름의 QLocalServer), 로그오프 빠른 정지. EngineView 계약에 `retry()` 추가(엔진 실패 패널 [다시 시도] = 재구축 한도 초기화).
+    - 실기기: 창을 띄워 READY 10.7 s → HelloPurr 드롭 5.7 s 뒤 실행 → 창의 폰 화면을 마우스로 탭 → HelloPurr 진동 기록 확인(GUI→입력→gRPC→게스트 전체 경로). Windows 다크 테마에서 베젤 아이콘이 안 보여 팔레트 글자색으로 그림.
+    - `python -m orcus`: 두 번째 실행(.apk 인자)이 0.7 s에 넘겨주고 끝남 → 첫 창에서 실행(B15 3 s 기준). GUI 프로세스를 강제 종료하면 3 s 안에 SDK 프로세스 0개(B7 일부).
+    - **3a 스모크**(`orcus-cli smoke --apk HelloPurr.apk`): 8단계 모두 PASS(시작 10.7 s, 설치·실행 2.9 s, 탭→진동, 초기화 7.1 s, 정지 3.5 s 뒤 SDK 프로세스 0개). 탭 대상은 앱의 가장 큰 Button(처음엔 액션 바 ⋮를 눌러 실패).
+    - 유닛 295개, pyright 0건.
+  - **8 준비:** §12.4의 "3a 수용 시험 전" 픽스처 6개(PaintPot, BallBounce, MoleMash, HelloPurrKo, HelloPurrMin36, HelloPurrLand)를 `tools/ai2/projects.py`에 추가하고(빼기·무작위 정수 블록, Ball·ImageSprite·Clock 추가) `.aia`를 `D:\OrcusDev\fixtures\src`에 만들었다. minSdk는 `project.properties`의 `androidminsdk`(appinventor-sources Form.AndroidMinSdk). 유닛 313개, pyright 0건.
+  - **남은 것(8 수용 시험):** 사용자가 위 6개 .aia를 웹 IDE에서 빌드해 `D:\OrcusDev\fixtures\<이름>.apk`로 저장해야 한다. 그다음 B1(5회 p95)·B2(드래그 밀도·프레임 나이)·B4·B7(드래그 중 강제 종료)·B8·B9(CPU·fps·메모리)·B11(ENGINE_IN_USE·크래시 재시작·GPU software)·B12·B15(로그오프) 측정과 패키징 스모크(`tools/build.py`, GUI 포함).

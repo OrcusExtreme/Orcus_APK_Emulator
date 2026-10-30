@@ -112,3 +112,42 @@ def reset_dll_directory() -> None:
 def close_handle(handle: int | None) -> None:
     if handle and handle != INVALID_HANDLE_VALUE:
         kernel32.CloseHandle(handle)
+
+
+kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.CreateMutexW.restype = wintypes.HANDLE
+advapi32.ConvertSidToStringSidW.argtypes = [wintypes.LPVOID, ctypes.POINTER(wintypes.LPWSTR)]
+advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+kernel32.LocalFree.restype = wintypes.HLOCAL
+ERROR_ALREADY_EXISTS = 183
+TokenUser = 1
+
+
+def named_mutex(name: str) -> tuple[int, bool]:
+    """(handle, already existed). Keep the handle for the life of the process; the OS frees it at exit."""
+    handle = kernel32.CreateMutexW(None, False, name)
+    return int(handle or 0), ctypes.get_last_error() == ERROR_ALREADY_EXISTS
+
+
+def user_sid() -> str:
+    """S-1-5-21-... of this process's user (names per-user IPC endpoints, §1.3); '' if unavailable."""
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)):
+        return ""
+    try:
+        size = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, TokenUser, None, 0, ctypes.byref(size))
+        buf = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(token, TokenUser, buf, size, ctypes.byref(size)):
+            return ""
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(wintypes.LPVOID))[0]   # TOKEN_USER.User.Sid
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(text)):
+            return ""
+        try:
+            return text.value or ""
+        finally:
+            kernel32.LocalFree(ctypes.cast(text, wintypes.HLOCAL))
+    finally:
+        close_handle(token.value)

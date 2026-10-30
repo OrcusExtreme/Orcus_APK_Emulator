@@ -61,6 +61,7 @@
 | `emulator.exe` → `qemu-system-x86_64-headless.exe` | engine | 엔진 세션 | 정상 정지 → (시간 초과 시) qemu → emulator 순 TerminateProcess → 최후에 Job |
 | (U) `netsimd.exe`, `crashpad_handler.exe` | emulator | 엔진 세션(netsimd는 유휴 15 s 뒤 스스로 종료한다는 기록이 있다) | Job 소속인지 S4/S6/S9에서 확인한다. 정지 후 남으면 우리 SDK 경로의 이미지만 종료한다 |
 | 단발 `adb.exe` 클라이언트, `emulator-check.exe`, `powershell.exe`(WHPX 상태 조회) | 작업 스레드 | 수 초 | 호출마다 타임아웃(§5.5 실행기), 넘으면 TerminateProcess |
+| `adb.exe logcat -v threadtime -T 1` (§7.8) | engine(`EngineManager.logcat()`), apk가 epoch마다 하나 | epoch | Job 소속. DeviceSession을 닫을 때(SESSION_INIT·STOPPING·FAILED) 종료 |
 | `dism.exe` (WHPX 켜기, 1회) | setup, `ShellExecuteExW` runas | 1회 | 핸들로 기다린 뒤 종료 코드를 읽는다. **권한 상승한 dism도 호출자의 Job을 물려받는다**(S0a 실측: `IsProcessInJob`=true, 2026-10-30). CLI setup은 첫 SDK 자식을 띄우는 7단계에서야 우리 Job을 만들므로 3단계의 dism은 우리 KILL_ON_JOB_CLOSE와 무관하다(개발 중에는 venv 런처의 Job 안이다). [P4] GUI 마법사는 Job 안에서 dism을 띄우게 되므로, GUI가 죽으면 dism도 죽는다 → BREAKAWAY 도우미 프로세스로 띄우거나, dism이 끝날 때까지 창을 닫지 못하게 한다 |
 
 **Job Object 규칙**
@@ -245,6 +246,7 @@ class EngineView(Protocol):              # GUI가 보는 표면. 모든 메서�
     def stop(self, *, fast: bool = False) -> None: ...      # 완료는 EngineStatus(STOPPED)로 알 수 있다
     def reset_device(self) -> int: ...                      # 목표 epoch(= 현재 + 1). COLD에서는 재구축 요청(GUI가 미리 확인)
     def rebuild(self, reason: str) -> None: ...             # 사용자 확인 뒤에만 호출
+    def retry(self) -> None: ...                            # 엔진 실패 패널의 [다시 시도]. 실패 재구축 한도도 초기화(§5.1) [P3a 추가]
     def subscribe(self, cb: Callable[[EngineStatus], None]) -> Callable[[], None]: ...
 
 class EngineControl(EngineView, Protocol):   # apk·app·cli만 사용
@@ -452,7 +454,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 | `frames` | device (콜백은 gui.frame_pump) | `streamScreenshot` 수신. 크기는 `Image.format.width/height`에서 읽는다(37.2.12는 `Image.width/height`를 항상 0으로 보낸다, S2). 데이터 길이가 크기와 맞지 않는 프레임만 버린다. QImage로 감싸고 필요하면 RGB32로 바꾼다. 1칸 우편함에 최신 프레임만 두고, 페인트가 대기 중이면 신호를 생략한다 |
 | `grpc-input` | device | `streamInputEvent`의 요청 제너레이터가 큐를 소비한다. 붙여넣기 순서(setClipboard → 대기 → Paste)도 여기서 보장한다 |
 | `device-controls` | device | 센서 명령을 FIFO로 처리한다. 회전·기울기 상태의 원본을 가진다. 흔들기 파형(약 310 ms)은 끊지 않고 실행하며, 그동안 들어온 기울기 갱신은 합쳐서 뒤에 적용한다 |
-| `logcat` | device(스트림) → apk.watcher | `streamLogcat`. watcher가 앱 PID·태그로 걸러 분류한다 |
+| `apk-logcat` | device(스트림) → apk.service·watcher | epoch마다 logcat 스트림 하나(READY 때 연다. 원천은 engine의 `adb logcat` 자식 프로세스, §7.8). 줄을 링 버퍼(4,000줄)에 넣고, 지금 실행의 watcher가 앱 PID·태그로 걸러 분류한다. 발견은 `apk-pipeline` 큐로 보내므로 RunEvent는 모두 파이프라인 스레드에서 나간다 |
 | `apk-pipeline` | apk.service | 실행 작업을 하나씩 처리한다. 기다릴 때는 cancel Event를 쓴다. 새 드롭이 오면 대기 중인 작업과 진행 중인 대기를 취소한다 |
 | `device-io` | device | 서로 독립인 단발 읽기 호출만 처리한다(스크린샷용 `getScreenshot` 등). 센서·클립보드·스냅샷 호출은 여기서 하지 않는다 |
 
@@ -915,13 +917,13 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
   - NFC / Bluetooth / USB Serial → "PC 휴대폰에서는 동작하지 않습니다".
   - RECORD_AUDIO → 마이크 토글 안내.
   - `<queries>`에 zxing SCAN → `SCANNER`: "PC 휴대폰 카메라는 가짜 영상이라 실제 바코드를 비출 수 없습니다. UseExternalScanner를 끄면 오류 1501 없이 스캐너 화면은 열리지만 인식은 되지 않습니다."
-  - targetSdk < 24 → 레거시 모드(우회 플래그를 자동으로 붙임).
+  - targetSdk < 24 → 레거시 모드(우회 플래그를 자동으로 붙임). targetSdk ≤ 22이면 같은 칩에 §7.6의 권한 검토 화면 안내를 넣는다.
   - ARM 번역 → "느릴 수 있음".
   - 가로 고정 launcher → `ORIENTATION_LOCKED`(실행 전에 기기를 돌림, §7.6).
 - **INFO:**
   - VIBRATE → "진동은 PC에서 느낄 수 없습니다(진동 표시는 나중에 추가)". Sound·Player 컴포넌트는 항상 이 권한을 넣는다.
   - 위치 권한 → `LOCATION` 힌트(§9.7).
-  - TTS·음성 인식 상태 칩. **TTS는 매니페스트로 알 수 없다.** 모든 AI2 APK에 모든 컴포넌트 클래스가 들어 있기 때문이다(P). 그래서 `DeviceCaps`와 런타임 로그(§7.8)로만 판단한다.
+  - TTS·음성 인식 상태 칩. **TTS는 매니페스트로 알 수 없다.** 모든 AI2 APK에 모든 컴포넌트 클래스가 들어 있기 때문이다(P). 그래서 `DeviceCaps`와 런타임 로그(§7.8)로만 판단한다. 음성 인식 칩은 `<queries>`에 `android.speech.RecognitionService`가 있는 앱(SpeechRecognizer를 쓰는 앱, 픽스처 확인)에만 붙인다.
 
 ### 7.5 설치
 
@@ -943,6 +945,8 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 
 1. 이전 앱에 `am force-stop`을 보낸다.
 2. **방향 맞추기:** launcher의 `screenOrientation`이 landscape / sensorLandscape / reverseLandscape / userLandscape이면 실행 **전에** `DeviceControls.rotate()`로 가상 기기를 가로로 돌린다(방향 부호는 S7 표). portrait 고정인데 기기가 가로면 세로로 돌린다.
+   - "landscape"는 표시 `ROTATION_90`으로 그려지므로 자세 LANDSCAPE(z=90)로, "reverseLandscape"는 REVERSE_LANDSCAPE로 돌린다(S7). sensor·user 변형은 기기가 이미 그쪽 축이면 그대로 둔다.
+   - ApkService는 자기가 돌린 자세를 epoch마다 기억하고, 새 epoch는 골든의 세로 자세로 본다. **[P3b]** 회전 버튼이 생기면 자세를 `DeviceControls`와 공유하는 방법을 정한다.
 3. `am start -W -n <pkg>/<launcher>`를 실행하고 `Status: ok`를 확인한다.
    - Activity를 찾지 못하면 `resolve-activity`로 찾아 다시 시도한다. 그래도 없으면 `APP_LAUNCH_NOT_FOUND`다.
    - targetSdk ≤ 22이면 힌트를 보여준다: "옛 앱은 먼저 권한 검토 화면이 나옵니다. [계속]을 누르세요."
@@ -956,7 +960,12 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 - **위치 권한 대화상자:** '대략적인 위치'를 고르면 coarse 권한만 받는다. 그러면 갱신이 10분에 한 번으로 제한된다(P). 위치 힌트에 이 점을 적는다.
 - **설정 "권한 자동 허용(-g)":** 옵트인이다.
 
-### 7.8 감시 (`streamLogcat`, 패턴은 S5에서 실제 출력으로 고정)
+### 7.8 감시 (`adb logcat`, 패턴은 S5에서 실제 출력으로 고정)
+
+- **원천은 `adb logcat -v threadtime -T 1`이다(Phase 3a 기기 시험에서 변경).** gRPC `streamLogcat`은 `LoadSnapshot`([휴대폰 초기화]) 뒤 **아무것도 보내지 않았다**(5 s·20 s 모두 0개, 같은 시각의 표식 줄은 adb logcat에 있음). 게스트의 `goldfish-logcat`(`logcat -f /dev/hvc1`)을 다시 시작해도 돌아오지 않아 호스트 쪽 경로가 끊긴 것으로 본다. 앱 시작 때의 골든 부팅 뒤에는 동작한다.
+  - engine이 epoch에 묶인 `adb logcat` 자식 프로세스를 만들고(`EngineManager.logcat()`), app이 그것을 DeviceSession의 logcat 원천으로 주입한다. 원천을 만들지 못하면 gRPC로 대체한다. DeviceSession을 닫으면 자식 프로세스도 끝난다.
+  - `-T 1`은 "지금부터"라서 백로그(골든 부팅 이후 약 3.4만 줄)와 게스트 시계 비교가 필요 없다.
+  - gRPC Text 모드의 `contents`는 메시지 하나에 항목 하나이고 **줄바꿈이 없다**(9,667개 메시지에 `\n` 0개). 메시지를 이어 붙이지 않고, 한 메시지에 여러 항목이 있으면 다음 타임스탬프에서 나눈다(`common/logtext.py`).
 
 App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - **번호 있는 컴포넌트 오류:** `Form.ErrorOccurred`가 처리한다. 항상 `E/Form: Form <name> ErrorOccurred, errorNumber = N, …`를 기록한다. 학생이 처리기를 두지 않았으면 토스트(또는 대화상자 변형)를 띄운다.
@@ -966,7 +975,7 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 
 | 분류 | 신호 | 표시 |
 |---|---|---|
-| `APP_SPEECH_MISSING` | 앱 PID의 어떤 줄이든(`AndroidRuntime` FATAL 스택, `W/System.err`, RuntimeErrorAlert 메시지) `ActivityNotFoundException` 또는 `No Activity found to handle Intent`와 `RECOGNIZE_SPEECH`가 함께 있음(S5 실측: `W System.err` + RuntimeErrorAlert "Runtime Error"). 또는(UseLegacy 끔) `E SpeechRecognizer: Bind to system recognition service failed with error 10` 줄이나 그 뒤의 `E/Form … errorNumber = 0, componentType = SpeechRecognizer, functionName = GetText, messages = Try Again.`이 있고 `DeviceCaps.speech_recognizer`가 거짓 | "이 PC 휴대폰에는 음성 인식 앱이 없어 오류가 났습니다. 음성 인식은 실제 휴대폰이나 Companion으로 시험하세요. (SpeechRecognizer의 UseLegacy를 끄면 오류 창 대신 ErrorOccurred로 받습니다.)" |
+| `APP_SPEECH_MISSING` | 앱 PID의 어떤 줄이든(`AndroidRuntime` FATAL 스택, `W/System.err`, RuntimeErrorAlert 메시지) `ActivityNotFoundException` 또는 `No Activity found to handle Intent`와 `RECOGNIZE_SPEECH`가 함께 있음(S5 실측: `W System.err` + RuntimeErrorAlert "Runtime Error"). 또는(UseLegacy 끔) `E SpeechRecognizer: Bind to system recognition service failed with error 10` 줄(`DeviceCaps`와 무관, 아래 구현 메모), 또는 `DeviceCaps.speech_recognizer`가 거짓일 때 `E/Form … errorNumber = 0, componentType = SpeechRecognizer, functionName = GetText, messages = Try Again.` | "이 PC 휴대폰에는 음성 인식 앱이 없어 오류가 났습니다. 음성 인식은 실제 휴대폰이나 Companion으로 시험하세요. (SpeechRecognizer의 UseLegacy를 끄면 오류 창 대신 ErrorOccurred로 받습니다.)" |
 | `APP_CRASH` | `FATAL EXCEPTION` + `Process: <pkg>` (AndroidRuntime) | 빨간 배너 "○○가 예기치 않게 종료되었습니다" + 예외 첫 줄, [자세히] [다시 실행] [보고서 복사] |
 | `APP_AI_RUNTIME_ERROR` | `E/RuntimeErrorAlert` `alert(` | 카드: 블록 실행 오류 메시지를 한국어 설명과 함께 보여준다. [다시 실행] 포함. `System.err` 스택만으로는 크래시로 보지 않는다 |
 | `APP_AI_COMPONENT_ERROR` | `E/Form … ErrorOccurred, errorNumber = N` | 정보 카드(앱이 처리했을 수 있음). 번호별 한국어 설명은 아래 목록 |
@@ -979,7 +988,7 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - 2701 → `AvailableLanguages`/`AvailableCountries`에서만 발생하는 TTS 준비 오류다.
 - 908 → "권한이 거부되었습니다" + [이 앱 권한 모두 허용].
 - 601 → ActivityStarter.
-- 3806 → SpeechRecognizer 'No Match'. 마이크가 꺼져 있으면(기본) 인식 서비스가 있어도 약 5 s 뒤 항상 이 번호다 → "마이크를 켜면 말소리를 인식할 수 있습니다" + [마이크 켜기]([P3b]).
+- 3806 → SpeechRecognizer 'No Match'. 마이크가 꺼져 있으면(기본) 인식 서비스가 있어도 항상 이 번호다 → "마이크를 켜면 말소리를 인식할 수 있습니다" + [마이크 켜기]([P3b]). 걸리는 시간은 일정하지 않다: S5 5.5 s, Phase 3a 단독 6 s, 다른 오류 경로 직후 26 s(온라인 인식기 대기로 추정).
 - 0 → SpeechRecognizer 'Try Again.'(서비스 연결 실패). `APP_SPEECH_MISSING` 규칙으로 처리한다.
 - 3802 → SpeechRecognizer 'Client Side Error'(Phase 2에서는 보지 못함).
 - 그 외 번호는 원문을 보여준다.
@@ -987,6 +996,14 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - **처리하지 않은 컴포넌트 오류는 토스트다**(`Notifier.ShowAlert`). uiautomator dump에는 나오지 않고, logcat에 `E Toast: getXOffset()/getYOffset()/setGravity() shouldn't be called on text toasts…` 3줄이 따라붙는다 → 감시에서 무시한다.
 - **S5 결과:** `streamLogcat`은 D 수준 줄도 전달한다(`InternalTTS` 26줄). 2701은 AvailableLanguages 뒤 12.4 s에 온다. 이 이미지는 한국어 음성이 내장되어 "ko-KR 음성만 없는 경우"는 생기지 않는다(엔진을 끈 경우만 `APP_TTS_MISSING`).
 - **App Inventor 자체 오류 대화상자는 크래시로 취급하지 않는다.**
+- **구현 메모(`apk/watcher.py`):**
+  - `FATAL EXCEPTION`은 같은 PID의 AndroidRuntime 줄이 끝날 때까지(0.5 s, 다른 태그 줄, `has died`, 스트림 끝) 모은 뒤 판정한다. 그래야 첫 줄만 보고 크래시로 정하지 않고 RECOGNIZE_SPEECH를 찾을 수 있다.
+  - 같은 오류(코드 + 내용)는 3 s 안에 한 카드로 묶는다(Clock 타이머가 같은 오류를 반복하는 경우). ANR은 10 s, TTS·음성 인식 없음은 실행마다 한 번이다.
+  - 음성 인식 없음 카드 뒤 3 s 안의 RuntimeErrorAlert는 같은 원인이므로 버린다.
+  - `Bind to system recognition service failed with error 10`은 `DeviceCaps`와 상관없이 음성 인식 없음이다. 캐시된 기능 탐지는 골든 기준이라 실행 중에 꺼진 제공자를 모르고, error 10(바인드 불가)은 그 자체가 제공자가 없다는 증거다. `DeviceCaps.speech_recognizer`는 이 줄 없이 errorNumber 0만 올 때만 본다.
+  - `am start`와 PID 사이에 온 줄은 링 버퍼에서 다시 넣는다. 5 s 안에 PID가 없고 crash 버퍼에도 흔적이 없으면 `APP_DIED`다.
+  - **네이티브 크래시도 `APP_CRASH`다**: 앱 PID의 `F libc: Fatal signal N (SIG…)`. WebViewer가 있는 앱은 렌더러 프로세스가 죽으면 `chromium: … Render process … crash wasn't handled by all associated webviews, triggering application crash` 뒤 SIGTRAP으로 끝난다(Phase 3a: OrcusProbe에 `am crash`를 보내면 렌더러가 먼저 죽어 이 경로가 된다. ANR 반복 중에도 한 번 일어났다).
+  - Java 크래시 뒤에는 App Inventor Form이 `E Form: Uncaught Exception` + 스택 + `errorNumber = 909`를 남긴다(Phase 3a, HelloPurr). 크래시 카드가 실행을 끝내므로 909 카드는 따로 만들지 않는다.
 
 ### 7.9 세션 동작
 
@@ -996,7 +1013,7 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - [제거]: 빠른 경로 기록을 지운다.
 - [권한 모두 허용]
 - **[P3b]** [화면 방향 맞추기]: §9.7
-- [보고서 복사]: APK 정보, `DeviceCaps`, Orcus·에뮬레이터 build, 관련 로그 최근 50줄을 텍스트로 모은다.
+- [보고서 복사]: APK 정보, `DeviceCaps`, Orcus·에뮬레이터 build, 관련 로그를 텍스트로 모은다. 로그는 앱의 경고·오류(W/E/F) 최근 30줄과 I 이상 최근 50줄이다. App Inventor의 Form은 `onGlobalLayout()`·`keyboard hidden!` D 줄을 초당 여러 번 남겨, D를 넣으면 50줄이 그것으로 채워진다(Phase 3a 기기 시험).
 
 ---
 

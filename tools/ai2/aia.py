@@ -27,21 +27,23 @@ RUNTIME_PKG = "com.google.appinventor.components.runtime"
 KEYSTORE = "android.keystore"    # YoungAndroidConstants.PROJECT_KEYSTORE_LOCATION
 
 COMPONENT_VERSIONS = {           # YaVersion.<TYPE>_COMPONENT_VERSION
-    "AccelerometerSensor": 6, "ActivityStarter": 6, "BarcodeScanner": 2, "Button": 8, "Canvas": 15,
-    "Form": 32, "HorizontalArrangement": 4, "Label": 6, "LocationSensor": 5, "OrientationSensor": 2,
-    "PasswordTextBox": 8, "Player": 8, "Sound": 4, "SoundRecorder": 2, "SpeechRecognizer": 4, "TextBox": 15,
-    "TextToSpeech": 6, "VerticalArrangement": 4, "WebViewer": 11,
+    "AccelerometerSensor": 6, "ActivityStarter": 6, "Ball": 8, "BarcodeScanner": 2, "Button": 8, "Canvas": 15,
+    "Clock": 4, "Form": 32, "HorizontalArrangement": 4, "ImageSprite": 11, "Label": 6, "LocationSensor": 5,
+    "OrientationSensor": 2, "PasswordTextBox": 8, "Player": 8, "Sound": 4, "SoundRecorder": 2, "SpeechRecognizer": 4,
+    "TextBox": 15, "TextToSpeech": 6, "VerticalArrangement": 4, "WebViewer": 11,
 }
 
 # YAIL type of every designer property used here (the Java setter's type via ComponentProcessor.javaTypeToYailType).
 PROP_TYPES = {
     **dict.fromkeys(("AppName", "Title", "Theme", "ScreenOrientation", "Sizing", "VersionName", "Text", "Image",
-                     "Source", "Hint", "HomeUrl", "Language", "Action"), "text"),
+                     "Source", "Hint", "HomeUrl", "Language", "Action", "Picture"), "text"),
     **dict.fromkeys(("ActionBar", "Scrollable", "ShowListsAsJson", "MultiLine", "NumbersOnly", "UseLegacy"),
                     "boolean"),
     **dict.fromkeys(("Width", "Height", "FontSize", "BackgroundColor", "TextColor", "VersionCode", "TimeInterval",
-                     "DistanceInterval", "Sensitivity", "AlignHorizontal"), "number"),
+                     "DistanceInterval", "Sensitivity", "AlignHorizontal", "PaintColor", "LineWidth", "Radius",
+                     "X", "Y", "TimerInterval", "Interval"), "number"),
 }
+ASSET_PROPS = ("Image", "Source", "Picture")
 # @DesignerProperty(alwaysSend = true): the YAIL sets these even when the .scm leaves them at the default.
 ALWAYS_SEND = {"Form": {"ScreenOrientation": "unspecified", "Sizing": "Responsive", "ShowListsAsJson": "True"}}
 
@@ -245,7 +247,7 @@ def problems(p: Project) -> list[str]:
         json.loads(scm(s).split("\n")[2])
     names = {s.name for s in p.screens}
     errs += [f"assets: {a} is referenced but missing" for s in p.screens for c in s.form().walk()
-             for k, a in c.props.items() if k in ("Image", "Source") and a not in p.assets]
+             for k, a in c.props.items() if k in ASSET_PROPS and a not in p.assets]
     if "Screen1" not in names:
         errs.append("no Screen1")
     return errs

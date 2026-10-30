@@ -190,6 +190,33 @@ class Add(Expr):
 
 
 @dataclass
+class Sub(Expr):
+    a: Expr
+    b: Expr
+
+    def yail(self) -> str:
+        return f"(call-yail-primitive - (*list-for-runtime* {self.a.yail()} {self.b.yail()}) '(number number) \"-\")"
+
+    def bky(self) -> str:
+        return (f'<block type="math_subtract" id="{_bid()}"><value name="A">{self.a.bky()}</value>'
+                f'<value name="B">{self.b.bky()}</value></block>')
+
+
+@dataclass
+class RandomInt(Expr):
+    lo: Expr
+    hi: Expr
+
+    def yail(self) -> str:
+        return (f"(call-yail-primitive random-integer (*list-for-runtime* {self.lo.yail()} {self.hi.yail()}) "
+                f"'(number number) \"random integer\")")
+
+    def bky(self) -> str:
+        return (f'<block type="math_random_int" id="{_bid()}"><value name="FROM">{self.lo.bky()}</value>'
+                f'<value name="TO">{self.hi.bky()}</value></block>')
+
+
+@dataclass
 class Decimal(Expr):
     x: Expr
     places: int

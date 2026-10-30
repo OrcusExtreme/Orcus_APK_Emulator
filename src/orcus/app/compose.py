@@ -14,7 +14,7 @@ from orcus.common import accel, childenv, config, hostinfo, log, paths, proc, wi
 from orcus.common.paths import OrcusPaths
 from orcus.common.pins import REPO_INDEX_URLS, SYSIMG_INDEX_URLS
 from orcus.contracts import CmdResult, GpuMode, Settings
-from orcus.engine import bootcheck
+from orcus.engine import bootcheck, readonly
 from orcus.engine import selftest as selftest_mod
 from orcus.setup import doctor as doctor_mod
 from orcus.setup import download, extract, repo_index, whpx
@@ -111,6 +111,11 @@ def boot_check(p: OrcusPaths, settings: Settings, *, gpus: tuple[GpuMode, ...] =
     """Real cold boots inside our KILL_ON_JOB_CLOSE job (`--boot-check`)."""
     ensure_job()
     return bootcheck.boot_check(p, settings, gpus=gpus, full_boot=full_boot, job=_job, on_report=on_report)
+
+
+def attach_readonly(p: OrcusPaths) -> readonly.ReadOnlyVm | None:
+    """`orcus-cli engine status|shot`: the phone another Orcus owns, read-only (§1.3). No engine of our own."""
+    return readonly.attach(p)
 
 
 def selftest() -> selftest_mod.SelfTestReport:
