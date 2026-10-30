@@ -449,7 +449,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 | `proc-wait` ×N | engine | `emulator.exe`·qemu 핸들을 기다리다 종료되면 supervisor 큐로 이벤트를 보낸다(직접 아무것도 바꾸지 않음) |
 | `adb-server-wait` | engine | adb 서버 핸들을 기다리다 종료되면 supervisor 큐로 이벤트를 보낸다. 재시작은 supervisor가 결정한다 |
 | `grpc-notify` | engine | `streamNotification`(부팅 완료, 화면 전원)을 받아 supervisor 큐로 보낸다 |
-| `frames` | device (콜백은 gui.frame_pump) | `streamScreenshot` 수신. 0×0 프레임은 버린다. QImage로 감싸고 필요하면 RGB32로 바꾼다. 1칸 우편함에 최신 프레임만 두고, 페인트가 대기 중이면 신호를 생략한다 |
+| `frames` | device (콜백은 gui.frame_pump) | `streamScreenshot` 수신. 크기는 `Image.format.width/height`에서 읽는다(37.2.12는 `Image.width/height`를 항상 0으로 보낸다, S2). 데이터 길이가 크기와 맞지 않는 프레임만 버린다. QImage로 감싸고 필요하면 RGB32로 바꾼다. 1칸 우편함에 최신 프레임만 두고, 페인트가 대기 중이면 신호를 생략한다 |
 | `grpc-input` | device | `streamInputEvent`의 요청 제너레이터가 큐를 소비한다. 붙여넣기 순서(setClipboard → 대기 → Paste)도 여기서 보장한다 |
 | `device-controls` | device | 센서 명령을 FIFO로 처리한다. 회전·기울기 상태의 원본을 가진다. 흔들기 파형(약 310 ms)은 끊지 않고 실행하며, 그동안 들어온 기울기 갱신은 합쳐서 뒤에 적용한다 |
 | `logcat` | device(스트림) → apk.watcher | `streamLogcat`. watcher가 앱 PID·태그로 걸러 분류한다 |
@@ -482,9 +482,10 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 - **`stop`:** 진행 중인 단계를 cancel하고 STOPPING(의도 = stop)으로 간다. 준비를 중단할 때는 `provision.json`을 쓰지 않는다. CONNECTING 이전이면 프로세스를 바로 종료한다.
 - **요청하지 않은 종료**(§5.7에서 크래시로 분류된 경우):
   1. 먼저 로그 끝부분을 아래 **조기 종료 분류** 표로 분류하고, 그 행의 대응을 따른다. 재시도 행이면 재시도하고, 한도를 넘었거나 `PRE_*` 행이면 그 코드로 FAILED로 간다.
-  2. **골든 로드 실패**로 보는 경우는 둘뿐이다. 이때는 STOPPING(의도 = rebuild)으로 가고, 실패 재구축 한도를 적용한다.
+  2. **골든 로드 실패**로 보는 경우는 셋이다. 이때는 STOPPING(의도 = rebuild)으로 가고, 실패 재구축 한도를 적용한다.
      - 표의 스냅샷 행에 맞는 경우.
-     - GOLDEN 모드의 LAUNCHING·CONNECTING·BOOTING에서 분류되지 않은 종료가 났고, `avd\orcus36.avd\snapshots\orcus_golden`이 사라진 경우. 강제 로드 실패는 스냅샷을 지우므로 확실한 신호다.
+     - GOLDEN 모드의 LAUNCHING·CONNECTING·BOOTING에서 분류되지 않은 종료가 났고, `avd\orcus36.avd\snapshots\orcus_golden`이 사라진 경우. 강제 로드 실패는 스냅샷을 지우므로 확실한 신호다(36.1 소스).
+     - **GOLDEN 모드의 BOOTING이 한도(30 s)를 넘긴 경우.** S4에서 `ram.bin`이 망가진 골든을 강제 로드하자 에뮬레이터는 종료도 삭제도 하지 않고 gRPC만 연 채 멈췄다(96 s 동안 부팅 완료 없음, 로그에 오류 없음). 정상 골든 부팅은 5–6 s라 30 s 초과는 이상이다.
   3. 그 밖의 경우는 FAILED(`ENGINE_EXIT`).
 - **게스트 전원 끄기**(전원 메뉴의 종료 등)는 크래시가 아니다. READY → STOPPING(의도 = stop)으로 가고, 프로세스가 이미 없으므로 SHUTDOWN은 건너뛴다. 감지 신호(종료 직전의 VM 상태·알림·로그 줄)는 S4·S6에서 정한다.
 - **STOPPING은 의도에 따라 나간다:**
@@ -518,8 +519,8 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 | adb 상태가 `device` | 재등록(§5.5) 후 10 s 동안 재시도 → FAILED(`ENGINE_ADB_LOST`) |
 | GOLDEN: `debug.orcus.golden` = provision id | 골든이 로드되지 않음 → STOPPING(rebuild, 한도 적용). 한도를 넘으면 FAILED(`ENGINE_GOLDEN_LOAD_FAILED`) |
 | host 모드: 렌더러가 host GPU | READY + 경고 `ENGINE_GPU_SOFTWARE`(배너 + [GPU 모드 바꾸기]) |
-| `getStatus.vmConfig.hypervisorType` = WHPX | FAILED(`PRE_WHPX_OFF`) |
-| 10 s 안에 0×0이 아닌 프레임이 옴 | FAILED(`ENGINE_NO_FRAMES`) |
+| 에뮬레이터 로그에 `Windows Hypervisor Platform accelerator is operational`이 있음. `getStatus.vmConfig.hypervisorType`은 37.2.12에서 항상 UNKNOWN이라 쓰지 않는다(S0b) | FAILED(`PRE_WHPX_OFF`) |
+| 10 s 안에 크기(`format.width×height`)와 길이가 맞는 프레임이 옴. 스트림은 시작하자마자 현재 화면 1장을 보낸다(S2) | FAILED(`ENGINE_NO_FRAMES`) |
 
 COLD 모드에서는 소프트웨어 렌더러가 정상이다. 그래서 항상 READY로 가고 `ENGINE_GPU_SOFTWARE` 배너("느린 그래픽 모드")와 COLD 칩을 보여준다.
 
@@ -594,7 +595,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
 | 구분 | 내용 |
 |---|---|
 | 설정(공통) | `ANDROID_HOME` = `ANDROID_SDK_ROOT` = `D:\OrcusAPK\sdk` · `ANDROID_AVD_HOME` = `D:\OrcusAPK\avd`(미리 생성, 없으면 Git Bash의 `HOME\.android\avd`가 이길 수 있다) · `ANDROID_EMULATOR_HOME` = `ANDROID_USER_HOME` = `D:\OrcusAPK\home` · `TMP` = `TEMP` = `D:\OrcusAPK\tmp` · `ANDROID_ADB_SERVER_PORT=15037`(에뮬레이터의 자기 등록용) |
-| 설정(adb 서버만) | `ADB_USB=0`(학생의 USB 휴대폰을 잡지 않는다. aiStarter의 USB 테스트와 충돌 방지) · `ADB_LOCAL_TRANSPORT_MAX_PORT=5553`(시작 스캔을 끔. 등록은 재등록 메시지로, §5.5) · `ADB_VENDOR_KEYS=D:\OrcusAPK\home\adbkey`(공유 adb 키, §6.4) |
+| 설정(adb 서버만) | `ADB_USB=0`(학생의 USB 휴대폰을 잡지 않는다. aiStarter의 USB 테스트와 충돌 방지) · `ADB_LOCAL_TRANSPORT_MAX_PORT=5553`(시작 스캔을 끔. 등록은 재등록 메시지로, §5.5) · `ADB_VENDOR_KEYS=D:\OrcusAPK\home\adbkey`(공유 adb 키, §6.4) · `ADB_MDNS_AUTO_CONNECT=0`(mDNS 탐색은 기본으로 켜져 있다. 페어링된 무선 디버깅 휴대폰에 자동으로 붙지 않게 한다, S9) |
 | 제거 | `ANDROID_SERIAL`, `ADB_SERVER_SOCKET`(포트 변수보다 우선해 private 서버를 무력화함), `ANDROID_ADB_SERVER_ADDRESS`, `ANDROID_SDK_HOME`, `ANDROID_PREFS_ROOT`, `HOME`(Git Bash), 상속된 `ANDROID_EMULATOR_*`(예: `ANDROID_EMULATOR_FEATURES`, `-feature`와 같은 효과), `QEMU_*`, `QT_*`, `QML_IMPORT_PATH`, `QML2_IMPORT_PATH` |
 | PATH 정리 | `sys._MEIPASS`, PySide6 패키지 폴더, venv 아래의 항목을 뺀다. PySide6는 import할 때 자기 폴더를 PATH 앞에 넣고, PyInstaller 런타임 훅도 PATH를 바꾼다(P) |
 | 로더 위생(패키징본) | 시작 import가 끝난 뒤, 첫 자식을 만들기 전에 `kernel32.SetDllDirectoryW(None)`을 한 번 부른다. PyInstaller 부트로더의 DLL 디렉터리는 자식에게 상속된다(P) |
@@ -624,7 +625,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - `-s`는 `-H`와 상관없이 동작한다. `adb emu …`는 콘솔에 직접 붙는다.
 - **서버 재시작**(supervisor가 결정):
   - 재시작 중에는 `DeviceShell` 호출이 즉시 `ENGINE_ADB_LOST`로 실패한다.
-  - 15037을 이미 같은 버전(41)의 adb가 우리 Job 안에서 쓰고 있으면 그것을 채택하고 재등록 요청을 보낸다.
+  - 15037을 우리가 띄우지 않은 adb가 쓰고 있으면 채택하지 않는다. 우리 서버가 없을 때 에뮬레이터 쪽에서 adb 서버를 스스로 띄우는데(S6 실측), 이 서버에는 `ADB_USB=0`·스캔 끄기·공유 키가 없다. 우리 Job 안의 그런 adb는 종료하고 우리 서버를 다시 띄운 뒤 재등록한다. Job 밖이면 다음 포트로 간다.
   - 재시작은 5분에 3회까지다. 넘으면 FAILED.
   - 최후 수단은 `adb connect 127.0.0.1:5641`이다. serial이 바뀌므로 `DeviceShell`을 갱신한다.
 - **격리 테스트(양방향):**
@@ -670,7 +671,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 죽은 PID의 discovery 파일은 지운다.
   - AVD의 `*.lock`은 우리 AVD의 qemu가 하나도 없을 때만 지운다.
   - 다른 경로의 에뮬레이터(Android Studio 등)는 절대 건드리지 않는다.
-- **discovery 위치:** `%LOCALAPPDATA%\Temp\avd\running\pid_*.ini`(P). 우리가 TMP를 바꿨으므로 `<TMP>\avd\running`도 본다(S6). 일치 기준은 `port.serial`이다(PID는 qemu 자식일 수 있다, P).
+- **discovery 위치:** `%LOCALAPPDATA%\Temp\avd\running\pid_*.ini`(P). TMP를 바꿔도 이 위치만 쓰인다(S6 실측. `<TMP>\avd\running`은 비어 있음). 파일 이름의 PID는 qemu다. 일치 기준은 `port.serial`과 `avd.dir`이다.
 - **프로세스 점검(S4/S6/S9, 정지 후 매번):**
   - READY 직후와 정지 후에 `JobObjectBasicProcessIdList`와 "이미지가 `D:\OrcusAPK\sdk` 아래인 모든 프로세스"를 비교한다.
   - Job 밖으로 빠져나간 프로세스가 있으면 경고하고 종료한다.
@@ -771,7 +772,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
 - **키로 알 수 없는 변화**(NVIDIA 드라이버 문자열, 에뮬레이터 내부 호환성)는 `-force-snapshot-load` 실패로 드러난다.
   - 실패한 골든은 에뮬레이터가 지우므로, 재시도 없이 재구축한다(실패 재구축 한도 §5.1).
 
-### 6.5 준비(provisioning): GOLDEN은 1–10단계, COLD는 1–7단계 (2–4분, U)
+### 6.5 준비(provisioning): GOLDEN은 1–10단계(7a 포함), COLD는 1–7단계 (S4 실측 약 90 s)
 
 PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과 같은 준비(private adb 서버 확인·재등록, 소유자 기록)를 한다. 실행·연결·부팅 대기도 안에서 하며, 전체 한도는 600 s다.
 
@@ -780,11 +781,11 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    1. `sys.boot_completed=1`이 될 때까지 기다린다.
    2. 다음 두 조건이 될 때까지 최대 120 s 폴링한다.
       - `persist.sys.locale`이 `ko-KR`이다.
-      - 프레임워크 재시작을 관찰했다. 재시작 신호는 `sys.system_server.start_count` 증가(I) 또는 BootCompleted 재발생이다.
-   3. 다시 `sys.boot_completed=1`과 `pm path android` 응답을 확인한다.
-   - 재시작 신호가 끝내 오지 않아도 로케일이 맞으면 진행한다.
+      - 프레임워크 재시작을 관찰했다. 재시작 신호는 `sys.system_server.start_count` 증가다(S4 실측: 부팅 완료 약 5 s 뒤 1→2, 그동안 `settings`·`lock_settings`·`location` 서비스가 사라져 명령이 `DeadObjectException`/`Can't find service`로 실패).
+   3. `service check`로 `settings, lock_settings, location, package, activity, input_method`가 **5회 연속** 응답할 때까지 기다린다(S4: 부팅 뒤 6.6–7.6 s).
+   - 재시작 신호가 끝내 오지 않아도 로케일이 맞고 서비스가 응답하면 진행한다.
 3. **렌더러 확인:** GOLDEN인데 소프트웨어 렌더러면 `ENGINE_PROVISION_FAILED`(단계 "renderer", 해결: [GPU 모드 바꾸기])로 중단한다.
-4. **1회성 기기 설정**(`engine/provision.py`, 명령은 S4·S5의 첫 부팅에서 확정):
+4. **1회성 기기 설정**(`engine/provision.py`. S4에서 아래 7개를 모두 적용하고 다시 읽어 확인함, 초안 `tools/spikes/provision_draft.py`). 명령마다 읽기 확인이 맞을 때까지 최대 30 s 재시도한다:
    - 자동 회전 켜기: `settings put system accelerometer_rotation 1`
    - 화면 꺼짐 시간 최대: `settings put system screen_off_timeout 2147483647`, `svc power stayon true`
    - 잠금 화면 끄기: `locksettings set-disabled true`
@@ -804,12 +805,15 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    - 렌더러, `getStatus`의 hypervisorType·hardwareConfig(패널 크기)
 7. **관찰값 검증:** `persist.sys.locale` = `ko-KR`, `persist.sys.timezone` = `Asia/Seoul`인지 본다. 다르면 단계 이름과 함께 실패로 끝낸다. 관찰값은 `provision.json`과 `device_caps.json`에 기록한다.
    - **COLD는 여기서 끝난다.** `provision.json`(mode: COLD)을 쓰고, 이 부팅이 그대로 SESSION_INIT → READY로 이어진다.
+7a. **(GOLDEN) 준비 세션을 끄고, 깨끗한 세션에서 저장한다.** `setVmState(SHUTDOWN)` → `-change-locale` 없이 COLD 플래그로 다시 부팅 → 10 s 안정 → 4단계 설정과 로캘·시간대가 남아 있는지 읽어 확인 → `setprop debug.wm.disable_deprecated_target_sdk_dialog true`(RAM 속성) → 8·9단계.
+   - **이유(S4 실측):** 준비 세션(로캘 변경 → 프레임워크 재시작 직후)에서 저장한 골든은 로드할 때 게스트 시계가 저장 시각에 멈춰 있고, **로드 약 21 s 뒤 게스트 전체가 멈췄다**(adb·화면·logcat 모두. 3회 재현). 일반 세션에서 저장한 스냅샷은 4분 뒤 로드해도 시계가 맞고(−0.1 s) 90 s 넘게 멀쩡했다. 저장 방식(gRPC·콘솔)과 GPU 모드(host·host_hidden·software)는 원인이 아니었다.
+   - 비용: 콜드 부팅 1회(약 25 s). 1회성 준비 전체는 약 90 s.
 8. **표식:**
    - `setprop debug.orcus.session ''`로 세션 nonce를 비운다(§6.7). `DeviceShell`이 argv 요소마다 따옴표 처리를 하므로 빈 값이 그대로 전달된다. 종료 코드도 확인한다.
    - `setprop debug.orcus.golden <provision_id>`를 설정한다.
    - 둘 다 RAM에만 있는 값이라, 골든에서 부팅하면 그대로 남아 있고 콜드 부팅하면 없다.
 9. **저장:**
-   1. 재구축이면 `DeleteSnapshot("orcus_golden")` 후 `ListSnapshots(All)`로 없어졌는지 확인한다. gRPC 저장은 이미 있는 이름을 거부할 수 있다(§6.3).
+   1. 재구축이면 `DeleteSnapshot("orcus_golden")` 후 `ListSnapshots(All)`로 없어졌는지 확인한다. 37.2.12의 gRPC 저장은 이미 있는 이름을 **덮어쓰고 성공**을 돌려주었다(S4. 36.1 소스로 예상한 거부는 일어나지 않음). 그래도 먼저 지워 이전 골든의 파일이 섞이지 않게 한다.
    2. `SnapshotService.SaveSnapshot("orcus_golden")`을 부르고 **응답의 `success`와 `err`를 확인한다.** 실패도 정상 응답으로 오기 때문이다(P).
    3. 실패하면 `adb -H 127.0.0.1 -P 15037 -s emulator-5640 emu avd snapshot save orcus_golden`로 저장한다.
    4. `ListSnapshots`에서 Compatible 또는 Loaded인지 확인한다.
@@ -826,7 +830,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 - `setMicrophoneState(realAudioEnabled=false)`. 앱별 동의가 있으면 **[P3b]** ApkService가 실행할 때 다시 켠다.
 - `setprop debug.orcus.session <새 uuid>`: 세션 nonce(§6.7). engine이 이 값을 기억한다.
 - `setGps(37.5665, 126.9780)`(서울시청): 앱이 에뮬레이터 기본 위치가 아니라 서울에서 시작하게 한다.
-- 게스트 시계 확인: 오래된 골든을 로드한 뒤 시계가 맞는지는 S4에서 본다. 틀리면 동기화 단계를 추가한다. TLS를 쓰는 Web 컴포넌트와 Clock 수업에 영향이 있다.
+- **게스트 시계 확인(보험):** 깨끗한 세션에서 저장한 골든은 로드할 때 에뮬레이터가 시계를 맞춘다(S4: 1–4분 뒤 로드에서 오차 −0.1…−1.2 s). 준비 세션에서 저장한 골든만 시계가 저장 시각에 멈췄다(§6.5 7a로 막음). 그래도 오차가 5 s를 넘으면 `su 0 date -u MMDDhhmmYYYY.ss`로 맞춘다(userdebug 이미지, S4에서 동작 확인). TLS를 쓰는 Web 컴포넌트와 Clock 수업 때문에 필요하다.
 - 렌더러 확인, `DeviceCaps` 캐시 읽기.
 
 ### 6.7 초기화 검증
@@ -846,7 +850,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 | 에뮬레이터 | 1.07 GiB |
 | 이미지 | 4.37 GiB |
 | userdata | 최대 6 GiB(희소 파일인지는 S4에서 확인) |
-| 골든 | RAM 크기 파일 약 2 GiB + 디스크 변경분 |
+| 골든 | RAM 크기 파일 약 2.5 GiB + 디스크 변경분 |
 | 합계 | **약 13–14 GiB** |
 | [P4] keep-state | +2 GiB(전환 중에는 +4 GiB) |
 | 설치 중 임시 파일 | +2.4 GB |
@@ -1037,7 +1041,9 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
    - 서버가 비율을 유지하며 줄여 준다(P). 432×768이면 프레임당 약 1 MB다.
 2. **채널 옵션:** `grpc.max_receive_message_length = 16 MiB`, `grpc.enable_http_proxy = 0`.
 3. **`frames` 스레드:**
-   - 0×0 프레임은 버린다(첫 프레임이 0×0일 수 있다, P). 길이가 `w*h*3`인지 확인한다.
+   - **크기는 `Image.format.width/height`에서 읽는다.** 37.2.12는 `Image.width/height`를 모든 프레임에서 0으로 보낸다(S2 실측: `image` 995,328 B, `format` 432×768). `Image.width==0`을 "빈 프레임"으로 보고 버리면 화면이 영영 나오지 않는다(첫 스파이크가 이 판정 때문에 멈췄다).
+   - 길이가 `format.width*format.height*3`과 다른 프레임만 버린다. 회전은 `format.rotation`, 순번은 `seq`, 시각은 `timestampUs`(벽시계 µs)다.
+   - 스트림은 시작하자마자 현재 화면 1장을 보내고, 그 뒤로는 화면이 바뀔 때만 보낸다(S2).
    - `QImage(data, w, h, w*3, Format_RGB888)`로 감싼다(zero-copy, GIL 안전). S2 결과에 따라 `Format_RGB32`로 한 번 변환한다.
      - 이 작업은 `gui.frame_pump`가 넘겨준 프레임 콜백 안에서 한다. 콜백 규칙의 유일한 예외다(§3).
    - 1칸 우편함에 넣는다. 그리기가 대기 중이면 신호를 보내지 않고, 오래된 프레임은 버린다.
@@ -1340,7 +1346,7 @@ tag.id=google_apis
 hw.lcd.width=720
 hw.lcd.height=1280
 hw.lcd.density=320
-hw.ramSize=2048
+hw.ramSize=2560
 hw.cpu.ncore=4
 disk.dataPartition.size=6G
 hw.keyboard=yes
@@ -1357,17 +1363,19 @@ firstboot.saveToLocalSnapshot=no
 firstboot.bootFromLocalSnapshot=no
 ```
 - `hw.cpu.arch=x86_64`는 필수다. 기본값이 arm이다(P).
+- `hw.ramSize=2560`: 37.2.12는 이 이미지(API 36)를 2560 MB 아래로 띄우지 않는다. 2048을 주면 "Increasing RAM size to 2560MB"를 남기고 `hardware-qemu.ini`만 2560으로 쓴다(S6 실측). 숨은 보정이 없도록 처음부터 2560으로 둔다. 에뮬레이터는 `config.ini`를 고치지 않았다(첫 부팅 전후 해시 같음).
 - AVD 이름에는 `[A-Za-z0-9_.-]`만 쓸 수 있다(P).
-- `hw.mainKeys=yes`가 이 키의 기본값이다(P). 이렇게 하면 게스트 내비 바가 숨는다(D7, API 36에서의 동작은 S7에서 확인).
-  - 이유: 마우스로는 제스처 내비를 쓸 수 없고, 가장자리 제스처가 PaintPot 같은 Canvas 드래그를 가로챌 수 있다.
-  - Back/Home/Recents는 베젤 버튼이 키 이벤트로 보낸다. 대안은 `hw.mainKeys=no` + 준비 단계에서 3버튼 내비를 강제하는 것이다.
+- `hw.mainKeys=yes`가 이 키의 기본값이다(P). **그러나 API 36에서는 게스트 내비게이션이 숨지 않는다**(S7 실측: 제스처 내비 `navigation_mode=2`).
+  - 문제: 마우스로는 제스처 내비를 쓸 수 없고, 가장자리 제스처가 PaintPot 같은 Canvas 드래그를 가로챌 수 있다.
+  - **대응(S7에서 확인):** 준비 단계에서 `cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton` → `navigation_mode=0`(3버튼 내비). 가장자리 제스처가 없어지고, 게스트 화면 아래에 ◁ ○ ▢ 바가 보인다(베젤 버튼과 중복이지만 해롭지 않다). 설정은 userdata에 남아 골든에 들어간다.
+  - Back/Home/Recents는 베젤 버튼이 `GoBack`/`GoHome`/`AppSwitch` keypress로 보낸다(S7: 셋 다 동작).
 - 키가 하나라도 바뀌면 `config.ini` 해시가 달라져 골든을 재구축한다.
 
 ### 11.3 설정 파일
 
 - **우선순위:** 명령줄 > `ORCUS_*` 환경변수 > `state\settings.json`(GUI가 원자적으로 기록) > 프로그램에 포함된 `defaults.toml`(`tomllib`으로 읽음).
 - **기본값:**
-  - **엔진:** `engine.ram_mb=2048`, `engine.cores=4`, `engine.gpu_mode="host"`(S2 결과에 따라 `"host_hidden"`, **`"auto"`라는 값은 없음**), `engine.idle_grpc_timeout_s=120`, `engine.keepalive_s=30`, `engine.ports={console 5640, grpc 8640, adb_server 15037}`, `engine.locale="ko-KR"`, `engine.timezone="Asia/Seoul"`
+  - **엔진:** `engine.ram_mb=2560`(이미지 최소값, §11.2), `engine.cores=4`, `engine.gpu_mode="host"`(S2 결과에 따라 `"host_hidden"`, **`"auto"`라는 값은 없음**), `engine.idle_grpc_timeout_s=120`, `engine.keepalive_s=30`, `engine.ports={console 5640, grpc 8640, adb_server 15037}`, `engine.locale="ko-KR"`, `engine.timezone="Asia/Seoul"`
   - **실행:** `apk.grant_all=false`, `apk.reset_before_each_run=false`, `apk.staging_keep=20`, `session.keep_state=false`([P4]), `ui.confirm_close_data=true`
   - **입력:** `input.paste_method="paste_key"`, `input.esc_is_back=true`, `input.right_click_back=true`
   - **화면:** `frame.flip_rows=false`, `frame.max_fps=60`

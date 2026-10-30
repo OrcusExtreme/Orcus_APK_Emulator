@@ -7,14 +7,16 @@ Exit codes: 0 done, 1 failed, 2 waiting for a Windows restart, 3 stopped by the 
 """
 
 import argparse
+import json
 import queue
 import sys
+import time
 
 from orcus.app import compose
 from orcus.common import hostinfo, messages_ko, win32
 from orcus.common.messages_ko import text
 from orcus.common.pins import EMULATOR, EMULATOR_BUILD
-from orcus.contracts import ErrorCode, RemedyAction, SetupEvent, SetupStep
+from orcus.contracts import ErrorCode, GpuMode, RemedyAction, SetupEvent, SetupStep
 
 T = messages_ko
 STEPS = [s for s in SetupStep if s not in (SetupStep.PROVISION, SetupStep.DONE)]
@@ -194,7 +196,39 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for line in lines:
         mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL", "info": "    "}[line.status]
         _out(f"{mark} {line.name:<20} {line.detail}")
-    return 1 if any(line.status == "fail" for line in lines) else 0
+    failed = any(line.status == "fail" for line in lines)
+    if args.boot_check:
+        gpus = tuple(GpuMode(g) for g in args.gpu) if args.gpu else (GpuMode.HOST, GpuMode.HOST_HIDDEN)
+        _out(f"\n부팅 확인: {', '.join(gpus)} ({'부팅 완료까지' if args.full else 'getStatus까지'})")
+
+        def show(r: object) -> None:
+            d = r.to_dict()   # type: ignore[attr-defined]
+            mark = "OK  " if d["ok"] else "FAIL"
+            _out(f"{mark} boot.{d['gpu']:<15} hypervisor={d['hypervisor']} discovery={d['t_discovery_s']}s "
+                 f"status={d['t_status_s']}s booted={d['t_booted_s']}s stop={d['stop_s']}s ({d['stop_method']})")
+            if d["error"]:
+                _out(f"     error: {d['error']}")
+            _out(f"     processes: {', '.join(d['sdk_processes'])}")
+            for line in d["command_lines"]:
+                _out(f"       {line[:200]}")
+            _out(f"     listening: {', '.join(d['listening'])}")
+            _out(f"     leftovers after stop: {d['leftovers'] or 'none'}")
+            for line in d["leftover_command_lines"]:
+                _out(f"       {line[:200]}")
+            _out(f"     log: {d['log_file']}")
+        reports = compose.boot_check(p, settings, gpus=gpus, full_boot=args.full, on_report=show)
+        failed = failed or not all(r.ok for r in reports)
+        out = p.logs / f"bootcheck-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        out.write_text(json.dumps([r.to_dict() for r in reports], ensure_ascii=False, indent=2), encoding="utf-8")
+        _out(f"     report: {out}")
+    return 1 if failed else 0
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    report = compose.selftest()
+    for name, ok, detail in report.lines:
+        _out(f"{'OK  ' if ok else 'FAIL'} {name:<32} {detail}")
+    return 0 if report.ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -206,10 +240,14 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("setup", help="install steps 1-8")
     s.add_argument("--home", help=r"runtime folder (default D:\OrcusAPK)")
     s.add_argument("--resume", action="store_true", help="started by RunOnce after the reboot")
-    d = sub.add_parser("doctor", help="read-only health report")
+    d = sub.add_parser("doctor", help="health report; --boot-check also boots the phone cold")
     d.add_argument("--home")
+    d.add_argument("--boot-check", action="store_true", help="cold-boot the AVD per GPU mode, then stop it")
+    d.add_argument("--full", action="store_true", help="with --boot-check: wait until Android finished booting")
+    d.add_argument("--gpu", action="append", choices=[g.value for g in GpuMode], help="GPU mode(s) to try")
+    sub.add_parser("selftest", help="built-in checks of this build (no device needed)")
     args = parser.parse_args(argv)
-    return {"setup": cmd_setup, "doctor": cmd_doctor}[args.cmd](args)
+    return {"setup": cmd_setup, "doctor": cmd_doctor, "selftest": cmd_selftest}[args.cmd](args)
 
 
 if __name__ == "__main__":

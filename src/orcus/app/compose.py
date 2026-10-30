@@ -7,12 +7,15 @@ directly (layering rule in ARCHITECTURE.md §2).
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from orcus.common import accel, childenv, config, hostinfo, log, paths, proc, win32, winjob
 from orcus.common.paths import OrcusPaths
 from orcus.common.pins import REPO_INDEX_URLS, SYSIMG_INDEX_URLS
-from orcus.contracts import CmdResult, Settings
+from orcus.contracts import CmdResult, GpuMode, Settings
+from orcus.engine import bootcheck
+from orcus.engine import selftest as selftest_mod
 from orcus.setup import doctor as doctor_mod
 from orcus.setup import download, extract, repo_index, whpx
 from orcus.setup.steps import SetupDeps, SetupService
@@ -100,6 +103,19 @@ def build_setup(p: OrcusPaths, settings: Settings) -> SetupService:
         check_interpreter=not getattr(sys, "frozen", False),
     )
     return SetupService(deps)
+
+
+def boot_check(p: OrcusPaths, settings: Settings, *, gpus: tuple[GpuMode, ...] = (GpuMode.HOST, GpuMode.HOST_HIDDEN),
+               full_boot: bool = False,
+               on_report: Callable[[bootcheck.BootReport], None] | None = None) -> list[bootcheck.BootReport]:
+    """Real cold boots inside our KILL_ON_JOB_CLOSE job (`--boot-check`)."""
+    ensure_job()
+    return bootcheck.boot_check(p, settings, gpus=gpus, full_boot=full_boot, job=_job, on_report=on_report)
+
+
+def selftest() -> selftest_mod.SelfTestReport:
+    """`--selftest`: imports, versions against the lock, stub descriptors, FakeEmulatorServer round trip."""
+    return selftest_mod.run()
 
 
 def doctor(p: OrcusPaths, settings: Settings) -> list[doctor_mod.DoctorLine]:

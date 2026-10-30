@@ -49,6 +49,31 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+def remove_tree(path: Path, timeout_s: float = 60.0) -> None:
+    """shutil.rmtree that waits out virus-scanner locks on freshly written files (Defender + V3 here)."""
+    import shutil
+    import stat
+    import time
+
+    def onexc(func: object, p: str, exc: BaseException) -> None:
+        if isinstance(exc, PermissionError):
+            os.chmod(p, stat.S_IWRITE)
+            func(p)   # type: ignore[operator]
+            return
+        raise exc
+
+    deadline = time.monotonic() + timeout_s
+    delay = 0.25
+    while path.exists():
+        try:
+            shutil.rmtree(path, onexc=onexc)
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 3.0)
+
+
 def run(argv: Sequence[str | os.PathLike[str]], *, cwd: Path | None = None) -> int:
     print("$", " ".join(str(a) for a in argv), flush=True)
     return subprocess.call([str(a) for a in argv], env=dev_env(), cwd=cwd or REPO)

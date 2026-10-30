@@ -21,7 +21,7 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 ### 1.1 한 문단 요약
 
 **Python 3.14 + PySide6** 프로그램 하나가 Google **Android Emulator 37.2.12**를 **WHPX**(Windows 하이퍼바이저 플랫폼) 위에서 창 없이(`-no-window -gpu host`) 띄운다. 화면은 에뮬레이터의 **토큰 보호 gRPC API**로 받고, 입력과 센서 값도 같은 API로 보낸다.
-- **휴대폰:** API 36(Android 16) google_apis x86_64 이미지로 만든 AVD 하나. 해상도 720×1280, RAM 2 GB.
+- **휴대폰:** API 36(Android 16) google_apis x86_64 이미지로 만든 AVD 하나. 해상도 720×1280, RAM 2.5 GB(에뮬레이터가 이 이미지에 요구하는 최소값, S6 실측).
 - **빠른 시작:** 처음 한 번 준비해 둔 **골든 스냅샷**에서 매 세션 부팅한다. 목표는 10초 이내이고, Phase 2에서 측정한다.
 - **설치·실행:** 드롭한 APK를 ASCII 경로로 복사하고 매니페스트를 읽은 뒤 `adb install`과 `am start`로 실행한다. 엔진이 켜져 있으면 드롭부터 화면까지 **10초 이내**가 목표다.
 - **규모:** 상주 프로세스 4개(GUI, private adb, emulator, qemu — 부가 프로세스는 S4에서 확인), 런타임 의존성 4개(PySide6-Essentials, grpcio, protobuf, apkInspector).
@@ -123,7 +123,7 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 | 항목 | Orcus (목표·추정) | BlueStacks 5 (공식 최소 사양) |
 |---|---|---|
 | 시작 | 골든 부팅 ≤ 10 s 목표, 드롭 → 실행 ≤ 10 s | 공개 수치 없음 |
-| 메모리 | VM에 2 GB 할당, 실제 약 2.5–3.5 GB + GUI ≤ 250 MB (추론) | 최소 RAM 4 GB |
+| 메모리 | VM에 2.5 GB 할당(이미지 최소값), 실제 사용량은 S4에서 측정 + GUI ≤ 250 MB | 최소 RAM 4 GB |
 | 디스크 | **약 13–14 GiB** (에뮬레이터 1.07 + Google 이미지 4.37 + userdata 최대 6 + 골든 2) + 설치 중 임시 2.4 GB | 최소 여유 5 GB |
 | 상주 프로세스 | 4개 (+netsimd 등은 S4에서 확인) | 공개 수치 없음 |
 | 우리 프로그램 크기 | 설치 파일 20–30 MB, 설치 후 55–70 MB (SDK 제외) | — |
@@ -157,7 +157,7 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
 | ★D4 | **버전 관리** | **Phase 2 시작부터 추적**: 기존 `D:\Project_Lab` 저장소에서(지금 이 폴더는 미추적). 커밋은 요청할 때만, 단계 승인마다 태그를 제안 | 단계별 변경을 diff로 검토하고 되돌릴 수 있다. 참고: `D:\Project_Lab`의 `.git`도 Drive가 동기화한다. 더 안전한 대안은 Drive 밖 별도 저장소 |
 | D5 | 권한 대화상자 | **실제 휴대폰처럼 표시** + [이 앱 권한 모두 허용] 버튼. 자동 허용(`-g`)은 옵트인 | 학생이 권한 요청 흐름(거부 시 오류 908 등)을 그대로 겪는다. 반대안: 편의를 위해 `-g` 기본 |
 | D6 | 세션 모델 | **매 세션 깨끗한 골든 휴대폰** + 닫을 때 "저장 데이터가 지워집니다" 안내(골든 모드에서만). 세션 간 유지(keep-state)는 **Phase 4** 선택 기능 | 빠르고 예측 가능하고 크래시에 안전하다. keep-state도 그래픽 드라이버·에뮬레이터를 업데이트하면 보관 상태가 초기화된다 |
-| D7 | 내비게이션 | **게스트 내비 바 숨김**(`hw.mainKeys=yes`) + 베젤의 ◁ ○ ▢ 버튼 | 마우스로는 제스처 내비가 안 되고, Canvas 가장자리 드래그와 충돌한다. 대안: 화면 속 3버튼 내비 강제 |
+| D7 | 내비게이션 | ~~게스트 내비 바 숨김(`hw.mainKeys=yes`)~~ → **S7 결과로 변경: 준비 단계에서 3버튼 내비 강제** + 베젤의 ◁ ○ ▢ 버튼 | API 36은 `hw.mainKeys=yes`여도 제스처 내비로 동작했다. 마우스로는 제스처 내비가 안 되고 Canvas 가장자리 드래그와 충돌하므로 3버튼으로 바꾼다(게스트 화면 아래 바가 보임) |
 | D8 | 시스템 이미지 | google_apis API 36 x86_64, **S1 후 확정**. 개인 Google 계정은 골든에 넣지 않음 | TTS(TalkToMe)와 root. TTS가 playstore에만 있으면 playstore 36 |
 | D9 | 폴더 | 런타임 `D:\OrcusAPK`(공유 adb 키 포함), 개발 `D:\OrcusDev` | ASCII·Drive 밖·C: 밖이어야 한다. 약 14 GiB. 공유 키가 S9에서 안 되면 Windows 계정이 바뀔 때마다 재구축(약 3분) |
 | D10 | 게스트 언어·시간대 | ko-KR, Asia/Seoul | 한국어 UI·TTS. 바꾸면 골든을 다시 만든다(약 3분) |
@@ -399,3 +399,24 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
   - 다시 실행(라이선스·UAC는 이미 끝나 사람이 결정할 단계 없음): 5,707 MB를 32 s에 풀었고 재부팅 관문에서 RunOnce를 등록했다.
   - 새로 안 것: `emulator-check accel`은 **재부팅 전에도** 'WHPX usable'을 보고한다. 가속을 실제로 증명하는 것은 에뮬레이터 부팅(boot-check·S4)이다. setup은 재부팅 관문이 가속 확인보다 앞이라 영향이 없다.
   - 다음: 사용자 재부팅 → RunOnce가 7–8단계(가속 확인, AVD·공유 adb 키) 실행 → `orcus.emugrpc` → 스파이크.
+- **2026-10-30 오후 — 설치 완료, gRPC 모듈, 스파이크 S0b·S6·S9·S2·S1·S4 (상세는 `docs/spikes.md`)**
+  - 재부팅 뒤 RunOnce가 설치 7–8단계를 마쳤다(13:06). `orcus.emugrpc`: proto 3개(Apache-2.0 확인) vendoring, 스텁(gencode protobuf 7.35.1), 토큰 채널, FakeEmulatorServer. `engine/bootcheck.py`(`doctor --boot-check`), `engine/selftest.py`(`orcus-cli selftest`, `OrcusAPK.exe --selftest`). 스파이크 하네스 `tools/spikes/`.
+  - **S0b:** WHPX로 실제 부팅 성공(첫 부팅 103 s, 이후 콜드 27–31 s). `host`·`host_hidden` 모두 통과.
+  - **S2:** 게스트가 창 없이도 호스트 GPU(GTX 1660)로 그린다 → 기본 GPU 모드 `host`. 432×768 RGB888 약 50 fps에 우리 CPU 0.23 코어, 프레임 나이 6 ms, 드래그→프레임 46 ms, 행 순서 위→아래.
+  - **S9:** private adb 서버 설계가 그대로 맞았다(Job 소속, 자동 등록, 공유 키, 몰래 서버 안 띄움, 재등록 0.06 s, 5037과 격리).
+  - **S4:** 골든 부팅 4.8–5.8 s(목표 10 s), 실행 중 초기화 2.9 s + adb 0.6 s, nonce 검증 동작.
+  - **설계가 실측과 달라 고친 것:**
+    - 프레임 크기는 `Image.format.width/height`에 있다(`Image.width/height`는 항상 0). 원래 설계("0×0 프레임은 버린다")대로 만들면 화면이 나오지 않는다. 이 판정 때문에 측정 스크립트가 12분 멈췄고, py-spy로 원인을 찾았다.
+    - WHPX 확인은 에뮬레이터 로그 줄로 한다(`getStatus.vmConfig.hypervisorType`은 항상 UNKNOWN).
+    - RAM 기본값 2560 MB(에뮬레이터가 이 이미지를 2560 아래로 띄우지 않음).
+    - gRPC `SaveSnapshot`은 같은 이름을 거부하지 않고 덮어쓴다.
+    - 망가진 골든은 종료·삭제 없이 멈출 수 있다 → GOLDEN BOOTING 시간 초과도 골든 로드 실패로 보고 재구축.
+    - 골든을 로드하면 게스트 시계가 저장 시각으로 돌아간다 → `session_init`에 시계 맞추기 추가.
+    - 로캘 변경 직후 프레임워크가 재시작되므로 준비 명령은 서비스가 돌아온 뒤에 실행한다.
+    - adb 서버 환경에 `ADB_MDNS_AUTO_CONNECT=0`을 추가했다. 15037을 차지한 낯선 adb는 채택하지 않는다.
+    - 정지 직후 남는 `emulator -kill … -sleep 20` 감시 프로세스는 바로 정리한다.
+    - discovery 위치는 `%LOCALAPPDATA%\Temp\avd\running` 고정이고, 파일 이름의 PID는 qemu다.
+  - **A5 사전 확인:** 하네스 프로세스를 강제 종료하자 0.55 s 안에 SDK 프로세스가 0개가 됐다(KILL_ON_JOB_CLOSE).
+  - **S5·S8·S7 일부(사용자 픽스처 없이):** App Inventor Companion APK로 설치 5–7 s·실행 1.5 s(드롭→실행 10 s 목표 안), 크래시 로그 문자열 확보, gRPC logcat은 Text 모드만 동작. 한글은 Paste 키로 정확히 들어가고 Ctrl+V는 실패(`ㅍ` 입력) → Paste 키 확정, ASCII도 붙여넣기로. 골든 로드 직후 Bluetooth 프로세스 크래시(3a 준비 단계에서 BT 끄기 시험). 3버튼 내비 강제(D7 변경), 베젤 키 3개 동작, 회전 시 프레임이 LANDSCAPE로 옴.
+  - **패키징 스모크(A8) 통과:** 창 EXE·콘솔 EXE의 `--selftest`, 창 EXE의 `--boot-check`(host·host_hidden). 첫 빌드에서 selftest가 PySide6 누락을 잡아냈다. 앱 폴더 119 MB(Qt 정리는 Phase 4).
+  - **S4 골든 멈춤과 해결:** 준비 세션에서 저장한 골든은 로드 약 21 s 뒤 게스트 전체가 멈췄다(adb·화면·logcat. 3회 재현, 처음 S4는 세션을 20 s 안에 끝내 못 봤다). 변형 4개(저장 방식·GPU 모드)와 "저장 4분 뒤 로드" 실험으로 원인을 "로캘 변경으로 프레임워크가 재시작된 준비 세션에서 저장한 것"으로 좁혔다. 준비 부팅에서는 설정만 적용하고 끈 뒤, 깨끗한 콜드 부팅에서 골든을 저장하자 로드 뒤 90 s 동안 멀쩡하고 시계도 맞았다(−1.2 s). §6.5에 7a단계로 반영, 1회성 준비는 약 90 s.

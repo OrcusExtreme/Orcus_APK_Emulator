@@ -88,6 +88,7 @@ def adb_server_env(paths: OrcusPaths, source: Mapping[str, str], *, adb_server_p
         "ADB_USB": "0",
         "ADB_LOCAL_TRANSPORT_MAX_PORT": str(ADB_LOCAL_TRANSPORT_MAX_PORT),
         "ADB_VENDOR_KEYS": str(paths.adbkey),
+        "ADB_MDNS_AUTO_CONNECT": "0",   # mDNS discovery is on by default; never auto-connect to Wi-Fi phones (S9)
     })
     return env
 

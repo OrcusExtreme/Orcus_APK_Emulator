@@ -25,7 +25,7 @@ class PortSettings:
 
 @dataclass(frozen=True)
 class EngineSettings:
-    ram_mb: int = 2048
+    ram_mb: int = 2560   # the emulator raises API 36 images to 2560 MB anyway (S6, 2026-10-30)
     cores: int = 4
     gpu_mode: GpuMode = GpuMode.HOST   # there is no "auto"
     idle_grpc_timeout_s: int = 120

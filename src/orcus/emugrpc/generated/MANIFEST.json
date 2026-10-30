@@ -16,5 +16,10 @@
     "snapshot_service_pb2.py": "e2e4049e7371c066d8c95ae7e2f6ae2150a9a6bb82e8fa2a8622b1bc9960a99a",
     "snapshot_service_pb2.pyi": "0adfe4a4fd8c3322772a5ad3a20c2ff327288a553b376543240ac6492790bf2f",
     "snapshot_service_pb2_grpc.py": "99c2dc1d43ca2e8f10f92d5cfc15091a5de84d330d46fc6d3293cfebaf5c888a"
+  },
+  "descriptors": {
+    "emulator_controller_pb2": "1040bd3d66722cf59683fc2f39fb1213ae7d87d0ba61768b8f32097198c74009",
+    "snapshot_service_pb2": "ca505c50d1e6b61ebeb361230d24458c003abb1dc04f34e5c0efd342897a6587",
+    "snapshot_pb2": "00a2607b8c4b34023f91ebdb033751bc6819f174a62b768fba67776afc2db1f3"
   }
 }

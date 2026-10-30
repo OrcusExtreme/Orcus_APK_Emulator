@@ -6,6 +6,7 @@
     py tools/dev.py cli [orcus-cli args]   e.g. `cli doctor`
     py tools/dev.py lock                   regenerate the hash locks
     py tools/dev.py genprotos [dir]        vendor emulator protos + generate stubs
+    py tools/dev.py build [--boot-check]   packaging smoke: PyInstaller onedir + packaged self-checks
 """
 
 import sys
@@ -44,6 +45,8 @@ def main() -> int:
             return devenv.run([devenv.BASE_PY, devenv.REPO / "tools" / "lock.py"])
         case "genprotos":
             return devenv.run([devenv.require_venv(), devenv.REPO / "tools" / "gen_protos.py", *args])
+        case "build":
+            return devenv.run([devenv.BASE_PY, devenv.REPO / "tools" / "build.py", *args])
         case _:
             print(__doc__)
             return 2

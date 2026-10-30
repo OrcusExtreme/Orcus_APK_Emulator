@@ -43,6 +43,7 @@ def test_adb_server_env() -> None:
     assert env["ADB_USB"] == "0"
     assert env["ADB_LOCAL_TRANSPORT_MAX_PORT"] == "5553"
     assert env["ADB_VENDOR_KEYS"] == r"D:\OrcusAPK\home\adbkey"
+    assert env["ADB_MDNS_AUTO_CONNECT"] == "0"
     assert "ADB_EMU" not in env
 
 

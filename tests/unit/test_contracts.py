@@ -34,7 +34,7 @@ def test_dataclasses_are_frozen() -> None:
 def test_settings_defaults_follow_section_11_3() -> None:
     s = c.Settings()
     assert s.engine.gpu_mode is c.GpuMode.HOST
-    assert (s.engine.ram_mb, s.engine.cores, s.engine.idle_grpc_timeout_s, s.engine.keepalive_s) == (2048, 4, 120, 30)
+    assert (s.engine.ram_mb, s.engine.cores, s.engine.idle_grpc_timeout_s, s.engine.keepalive_s) == (2560, 4, 120, 30)
     assert (s.engine.ports.console, s.engine.ports.grpc, s.engine.ports.adb_server) == (5640, 8640, 15037)
     assert (s.engine.locale, s.engine.timezone) == ("ko-KR", "Asia/Seoul")
     assert (s.apk.grant_all, s.apk.reset_before_each_run, s.apk.staging_keep) == (False, False, 20)
