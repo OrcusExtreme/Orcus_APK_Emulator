@@ -34,6 +34,7 @@ C = Channel
 
 ERRORS: dict[ErrorCode, MessageSpec] = {
     # 설치
+    E.SETUP_PERMISSIONS: MessageSpec("설치 폴더를 이 계정 전용으로 잠그지 못했습니다. 다른 계정이 만든 폴더라면 다른 폴더(예: D:\\OrcusAPK2)를 쓰세요.", C.SETUP_LINE, R.RETRY),
     E.SETUP_PATH: MessageSpec("이 폴더에는 설치할 수 없습니다. 영문 짧은 경로(예: D:\\OrcusAPK)를 쓰세요.", C.SETUP_LINE, None),
     E.SETUP_DISK: MessageSpec("D: 드라이브 공간이 부족합니다. 24 GB 이상 비운 뒤 다시 실행하세요.", C.SETUP_LINE, R.FREE_DISK),
     E.SETUP_NETWORK: MessageSpec("내려받기가 끊겼습니다. 인터넷 연결을 확인하고 다시 실행하면 이어서 받습니다.", C.SETUP_LINE, R.RETRY),
@@ -53,6 +54,7 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.PRE_DISK: MessageSpec("D: 드라이브 공간이 부족해 휴대폰을 켤 수 없습니다. 공간을 비운 뒤 다시 시도하세요.", C.ENGINE_PANEL, R.FREE_DISK),
     E.PRE_PATH: MessageSpec("설치 폴더 경로에 문제가 있습니다. 설치를 복구하세요.", C.ENGINE_PANEL, R.REPAIR_SETUP),
     E.PRE_PORTS: MessageSpec("필요한 통신 포트를 다른 프로그램이 쓰고 있습니다. 잠시 뒤 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
+    E.PRE_NO_DISPLAY: MessageSpec("화면 장치가 보이지 않아(원격 데스크톱 연결이 끊긴 경우 등) 휴대폰을 준비하지 않았습니다. 다시 연결한 뒤 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     # 엔진
     E.ENGINE_IN_USE: MessageSpec("다른 Orcus가 휴대폰을 사용 중입니다. 그 창을 닫은 뒤 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     E.ENGINE_EXIT: MessageSpec("휴대폰이 예기치 않게 꺼졌습니다. 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
@@ -68,7 +70,9 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.ENGINE_UNAVAILABLE: MessageSpec("휴대폰 엔진을 사용할 수 없습니다. 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     E.ENGINE_NO_FRAMES: MessageSpec("휴대폰 화면을 받지 못했습니다. 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     E.ENGINE_DISK_LOW: MessageSpec("D: 드라이브 공간이 3 GB보다 적습니다. 공간을 비워 주세요.", C.BANNER, R.FREE_DISK),
+    E.ENGINE_NO_DISPLAY: MessageSpec("화면 장치가 보이지 않을 때 켜져서(원격 데스크톱 연결이 끊긴 경우 등) 이번만 느린 시작으로 켰습니다. 휴대폰 초기화를 하면 저장된 깨끗한 휴대폰으로 돌아옵니다.", C.BANNER, None),
     # 드롭한 파일
+    E.STAGE_UNEXPECTED: MessageSpec("앱을 준비하다 예기치 않은 문제가 생겼습니다. 다시 넣어 보고, 계속되면 [로그 보기]로 로그를 확인하세요.", C.MODAL, None),
     E.FILE_NOT_ANDROID: MessageSpec("Android 앱(APK) 파일이 아닙니다. App Inventor에서 [빌드] → [Android 앱 (.apk)]로 받은 파일을 넣으세요.", C.MODAL, None),
     E.FILE_IS_AAB: MessageSpec("AAB 파일은 바로 실행할 수 없습니다. App Inventor에서 APK로 다시 빌드하세요.", C.MODAL, None),
     E.FILE_IS_AIA: MessageSpec("AIA는 App Inventor 프로젝트 파일입니다. App Inventor에서 APK로 빌드한 뒤 넣으세요.", C.MODAL, None),
@@ -165,6 +169,7 @@ TEXT: dict[str, str] = {
     "engine.state.resetting": "휴대폰을 처음 상태로 되돌리는 중…",
     "engine.state.provisioning": "휴대폰 처음 준비 중 (약 5분) — 한 번만 합니다",
     "engine.state.provisioning_rebuild": "휴대폰을 다시 준비하는 중 (약 5분)",
+    "engine.state.provisioning_gpu": "그래픽 장치가 바뀌어 휴대폰을 다시 준비하는 중 (약 5분)",
     "engine.state.provisioning_save": "휴대폰 상태를 저장하는 중…",
     "engine.state.stopping": "휴대폰 끄는 중…",
     "engine.state.failed": "휴대폰을 켜지 못했습니다",

@@ -9,6 +9,7 @@ import pytest
 
 from conftest import REPO
 from orcus.apk import compat, eras, install, intake, launch, watcher
+from orcus.apk import inspect as inspect_mod
 from orcus.apk.inspect import inspect
 from orcus.common import messages_ko
 from orcus.contracts import (
@@ -82,6 +83,47 @@ def test_stage_names_by_sha_from_a_korean_path_and_prunes(tmp_path: Path) -> Non
     assert len(list(staging.glob("*.apk"))) == 3 and not list(staging.glob("*.part"))
     again, _ = intake.stage(src_dir / "고양이3.apk", staging, keep=3)
     assert again == shas[3]
+
+
+def test_stage_keeps_what_it_just_staged_and_leaves_no_temp_file(tmp_path: Path) -> None:
+    src = _zip(tmp_path / "a.apk", ["AndroidManifest.xml"])
+    _, staged = intake.stage(src, tmp_path / "staging", keep=0)   # a bad staging_keep (3a review)
+    assert staged.exists() and not list((tmp_path / "staging").glob(".incoming-*"))
+
+
+def test_a_zip_claiming_too_many_entries_is_not_android(tmp_path: Path) -> None:
+    """zipfile would build an object per claimed entry: millions of tiny ones exhaust memory (3a review)."""
+    z = _zip(tmp_path / "a.apk", ["AndroidManifest.xml", "classes.dex"])
+    assert intake.entry_count(z) == 2 and intake.classify(z) is FileKind.APK
+    raw = bytearray(z.read_bytes())
+    i = raw.rfind(b"PK\x05\x06")
+    raw[i + 8:i + 12] = (60_000).to_bytes(2, "little") * 2
+    z.write_bytes(bytes(raw))
+    assert intake.entry_count(z) == 60_000 and intake.classify(z) is FileKind.NOT_ANDROID
+    assert intake.entry_count(tmp_path / "missing.apk") is None
+
+
+def test_a_zip_bomb_manifest_is_not_inflated_in_full(tmp_path: Path) -> None:
+    bomb = tmp_path / "bomb.apk"
+    with zipfile.ZipFile(bomb, "w") as z:   # 4 MiB of zeros deflate to a few KB
+        z.writestr("AndroidManifest.xml", b"\0" * (inspect_mod.MANIFEST_MAX + 1), zipfile.ZIP_DEFLATED)
+    with pytest.raises(ValueError):
+        inspect(bomb, "sha")
+
+
+@pytest.mark.skipif(not (FIXTURES / "HelloPurr.apk").exists(), reason="needs D:\\OrcusDev\\fixtures\\HelloPurr.apk")
+def test_inspect_reads_only_bounded_entries_and_real_abis(tmp_path: Path) -> None:
+    """bzip2/LZMA entries are never inflated (Android reads only stored/deflated); only lib/<abi>/*.so is an ABI."""
+    with zipfile.ZipFile(FIXTURES / "HelloPurr.apk") as src:
+        manifest = src.read("AndroidManifest.xml")
+    apk = tmp_path / "x.apk"
+    with zipfile.ZipFile(apk, "w") as z:
+        z.writestr("AndroidManifest.xml", manifest, zipfile.ZIP_DEFLATED)
+        z.writestr("assets/x", b"\x7fELF" + bytes(60), zipfile.ZIP_BZIP2)
+        z.writestr("lib/foo/notes.txt", b"x")
+        z.writestr("lib/arm64-v8a/libx.so", b"\x7fELF")
+    info = inspect(apk, "sha")
+    assert not info.asset_elf and info.native_abis == frozenset({"arm64-v8a"})
 
 
 def test_stage_copy_failure_is_an_orcus_failure(tmp_path: Path) -> None:
@@ -265,6 +307,16 @@ def test_install_incompatible_asks_and_offline_retries_once() -> None:
     assert install.install(sh, Path("a.apk"), grant_all=False, target_sdk=36).ok
     sh.install_results = [(1, "adb: device offline", False)]
     sh.state = "offline"
+    assert install.install(sh, Path("a.apk"), grant_all=False, target_sdk=36).code is ErrorCode.ENGINE_ADB_LOST
+
+
+def test_install_failure_is_read_from_its_code_only() -> None:
+    """adb's output can echo manifest text: a crafted sharedUserId must not fake 'replace?' (3a review)."""
+    sh = ScriptShell()
+    sh.install_results = [(1, "Failure [INSTALL_PARSE_FAILED_BAD_SHARED_USER_ID: bad sharedUserId x "
+                              "INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.victim signatures]", False)]
+    assert not install.install(sh, Path("a.apk"), grant_all=False, target_sdk=36).needs_uninstall_prompt
+    sh.install_results = [(1, "", True), (1, "", True)]   # timed out, the device answers, timed out again
     assert install.install(sh, Path("a.apk"), grant_all=False, target_sdk=36).code is ErrorCode.ENGINE_ADB_LOST
 
 

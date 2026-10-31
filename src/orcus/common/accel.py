@@ -87,14 +87,19 @@ def run_emulator_check(check_exe: str, env: Mapping[str, str], run: Runner = pro
 
 
 def classify_accel_failure(*, reboot_is_pending: bool, dism_succeeded_at_boot: float | None,
-                           current_boot: float) -> ErrorCode:
+                           current_boot: float, dism_boot_id: int | None = None,
+                           current_boot_id: int | None = None) -> ErrorCode:
     """Why the final accel check failed (§11.6 step 7)."""
     if reboot_is_pending:
         return ErrorCode.SETUP_REBOOT_PENDING
-    if dism_succeeded_at_boot is not None and not same_boot(dism_succeeded_at_boot, current_boot):
+    if dism_succeeded_at_boot is not None and not same_boot(dism_succeeded_at_boot, current_boot,
+                                                            dism_boot_id, current_boot_id):
         return ErrorCode.SETUP_WHPX_REVERTED   # enabled, rebooted, and it is off again
     return ErrorCode.SETUP_ACCEL_FAILED
 
 
-def same_boot(a: float, b: float) -> bool:
+def same_boot(a: float, b: float, a_id: int | None = None, b_id: int | None = None) -> bool:
+    """Boot ids decide when both are known (win32.boot_id); boot times (±30 s) are the fallback."""
+    if a_id is not None and b_id is not None:
+        return a_id == b_id
     return abs(a - b) <= BOOT_TIME_TOLERANCE_S

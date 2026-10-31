@@ -11,6 +11,7 @@ class ExitClass:
     code: ErrorCode | None          # None: the golden did not load (rebuild instead of failing)
     golden_load_failed: bool = False
     retry: bool = False             # AVD lock / ports: one more try after cleanup or other ports
+    gpu_changed: bool = False       # the emulator found another host GPU and deleted the golden (3a finding 18)
 
 
 _RULES: tuple[tuple[str, ExitClass], ...] = (
@@ -30,7 +31,7 @@ def classify(log_tail: str, *, golden: bool) -> ExitClass:
         if re.search(pattern, log_tail):
             return result
     if golden and _GOLDEN.search(log_tail):
-        return ExitClass(None, golden_load_failed=True)
+        return ExitClass(None, golden_load_failed=True, gpu_changed="host GPU has changed" in log_tail)
     return ExitClass(ErrorCode.ENGINE_EXIT)
 
 

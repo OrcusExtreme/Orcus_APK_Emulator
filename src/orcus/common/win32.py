@@ -2,11 +2,13 @@
 
 import ctypes
 import time
+import winreg
 from ctypes import wintypes
 from pathlib import Path
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 STD_INPUT_HANDLE = -10
@@ -32,6 +34,19 @@ kernel32.CloseHandle.restype = wintypes.BOOL
 shell32.IsUserAnAdmin.argtypes = []
 shell32.IsUserAnAdmin.restype = wintypes.BOOL
 
+
+class _DisplayDevice(ctypes.Structure):
+    _fields_ = [("cb", wintypes.DWORD), ("DeviceName", wintypes.WCHAR * 32), ("DeviceString", wintypes.WCHAR * 128),
+                ("StateFlags", wintypes.DWORD), ("DeviceID", wintypes.WCHAR * 128), ("DeviceKey", wintypes.WCHAR * 128)]
+
+
+user32.EnumDisplayDevicesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(_DisplayDevice),
+                                       wintypes.DWORD]
+user32.EnumDisplayDevicesW.restype = wintypes.BOOL
+user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+user32.MessageBoxW.restype = ctypes.c_int
+MB_ICONERROR = 0x10
+
 PF_VIRT_FIRMWARE_ENABLED = 21
 
 
@@ -42,6 +57,37 @@ def system_dir() -> Path:
     if n == 0 or n >= len(buf):
         raise ctypes.WinError(ctypes.get_last_error())
     return Path(buf.value)
+
+
+def display_device_count() -> int:
+    """Display devices this session sees (EnumDisplayDevices). None in a disconnected Remote Desktop session, while
+    WMI still lists the GPU; the emulator takes its host GPU from these (3a finding 18)."""
+    n = 0
+    while True:
+        dev = _DisplayDevice()
+        dev.cb = ctypes.sizeof(_DisplayDevice)
+        if not user32.EnumDisplayDevicesW(None, n, ctypes.byref(dev), 0):
+            return n
+        n += 1
+
+
+def message_box(title: str, text: str) -> None:
+    """A plain Windows error box, for failures before Qt (the windowed EXE has no console)."""
+    user32.MessageBoxW(None, text, title, MB_ICONERROR)
+
+
+BOOT_ID_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
+
+
+def boot_id() -> int | None:
+    """Windows' boot counter (BootId, one more on every boot). Unlike boot_time() it does not move when the
+    clock is corrected, so 'same boot' cannot be fooled by a time sync during a long download (3a review)."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, BOOT_ID_KEY) as key:
+            value, kind = winreg.QueryValueEx(key, "BootId")
+    except OSError:
+        return None
+    return int(value) if kind == winreg.REG_DWORD else None
 
 
 def boot_time() -> float:

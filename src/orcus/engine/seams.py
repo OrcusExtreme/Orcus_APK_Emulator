@@ -14,7 +14,7 @@ from typing import Protocol
 
 import grpc
 
-from orcus.common import accel, childenv, hostinfo, ports, proc, winjob
+from orcus.common import accel, childenv, hostinfo, ports, proc, win32, winjob
 from orcus.common import paths as paths_mod
 from orcus.common.clock import Clock, SystemClock
 from orcus.common.paths import OrcusPaths
@@ -85,6 +85,7 @@ class Seams:
     env: Callable[[int], dict[str, str]]  # child environment for an adb server port
     home_problems: Callable[[Path], list[str]] = paths_mod.home_problems   # root guard (§11.4)
     adb_lines: AdbLines | None = None     # `adb logcat` for the app; None: the session's gRPC stream only
+    displays: Callable[[], int] = win32.display_device_count   # 0 in a disconnected Remote Desktop session
 
     @staticmethod
     def real(paths: OrcusPaths) -> "Seams":
@@ -151,12 +152,17 @@ class _RealProcesses:
 class _RealDiscovery:
     def __init__(self, paths: OrcusPaths) -> None:
         self._paths = paths
-        self._dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
-                                               "TMP": str(paths.tmp)})
+        # only the per-user folder the emulator really writes (S6): <home>\tmp is shared by every account (3a review)
+        self._dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", "")})
 
     def find(self, serial_port: int) -> DiscoveryRecord | None:
-        return discovery.find(self._dirs, serial_port=serial_port, avd_dir=self._paths.avd_data,
-                              alive=winjob.pid_alive)
+        return discovery.find(self._dirs, serial_port=serial_port, avd_dir=self._paths.avd_data, alive=self._ours)
+
+    def _ours(self, pid: int) -> bool:
+        """A record counts only while its pid is a qemu under our SDK: PIDs are reused (3a review)."""
+        image = winjob.image_path(pid)
+        sdk = str(self._paths.sdk).rstrip("\\").lower() + "\\"
+        return image is not None and image.lower().startswith(sdk) and "qemu-system" in image.lower()
 
     def ours(self) -> list[DiscoveryRecord]:
         return discovery.ours(self._dirs, avd_dir=self._paths.avd_data)
@@ -171,7 +177,7 @@ class _RealAdb:
         port = int(argv[argv.index("-P") + 1]) if "-P" in argv else 15037
         try:
             return proc.run([str(self._paths.adb_exe), *argv], timeout_s=timeout_s, env=self._env(port))
-        except OSError as e:   # adb.exe missing or blocked: same shape as a failed call
+        except (OSError, ValueError) as e:   # adb.exe missing or blocked, or a NUL in an argument (3a review)
             return CmdResult(tuple(argv), -1, "", f"{type(e).__name__}: {e}", 0.0, False)
 
 

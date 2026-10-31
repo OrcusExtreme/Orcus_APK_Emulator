@@ -104,6 +104,7 @@ class Service:
         self._q: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._lock = threading.Lock()            # submit/cancel/answer/subscribe vs the pipeline
         self._latest: str | None = None
+        self._submits = 0   # drops so far: [Run again] pressed before a newer drop must not cancel it
         self._active: _Run | None = None
         self._cancelled: set[str] = set()
         self._prompts: dict[str, _Slot] = {}
@@ -141,6 +142,7 @@ class Service:
             policy = RunPolicy.FRESH_PHONE if self._settings().reset_before_each_run else RunPolicy.KEEP_DATA
         run = _Run(uuid.uuid4().hex[:12], Path(path), policy, time.monotonic())
         with self._lock:
+            self._submits += 1
             self._latest = run.run_id
             if self._active is not None:
                 self._active.cancel.set()   # the newest drop wins
@@ -161,13 +163,15 @@ class Service:
                 self._active.cancel.set()
 
     def rerun(self) -> None:
-        self._q.put(("rerun", None))
+        with self._lock:
+            self._q.put(("rerun", self._submits))
 
     def stop_app(self) -> None:
         self._q.put(("stop_app", None))
 
     def clear_data(self) -> None:
-        self._q.put(("clear_data", None))
+        with self._lock:
+            self._q.put(("clear_data", self._submits))
 
     def uninstall(self) -> None:
         self._q.put(("uninstall", None))
@@ -220,15 +224,16 @@ class Service:
         return [*lines, f"--- 앱 경고·오류 최근 {len(warn_lines)}줄 ---", *warn_lines,
                 f"--- 앱 로그 최근 {len(log_lines)}줄 (I 이상) ---", *log_lines]
 
-    def close(self) -> None:
-        """Shutdown step 2 (§4): cancel the pipeline and the log stream."""
+    def close(self, *, fast: bool = False) -> None:
+        """Shutdown step 2 (§4): cancel the pipeline and the log stream. Fast (logoff): do not wait for an install
+        or launch in flight; the thread is a daemon and the engine's stop ends its adb calls (3a review)."""
         self._unsubscribe()
         with self._lock:
             self._latest = None
             if self._active is not None:
                 self._active.cancel.set()
         self._q.put(("close", None))
-        self._thread.join(5)
+        self._thread.join(0.2 if fast else 5)
         with self._watch_lock:
             stream, self._stream = self._stream, None
         if stream is not None:
@@ -255,7 +260,7 @@ class Service:
                     case "finding":
                         self._on_finding(*arg)
                     case _:
-                        self._app_command(cmd)
+                        self._app_command(cmd, arg)
             except Exception:
                 _log.exception("%s failed", cmd)
 
@@ -274,6 +279,9 @@ class Service:
             self._emit(run, RunStage.CANCELLED)
         except OrcusFailure as f:
             self._emit(run, RunStage.FAILED, problem=f.error)
+        except Exception as e:   # any other error still ends the run: the GUI's busy overlay waits for it (3a review)
+            _log.exception("run %s", run.run_id)
+            self._emit(run, RunStage.FAILED, problem=messages_ko.error(ErrorCode.STAGE_UNEXPECTED, repr(e)[:300]))
         finally:
             with self._lock:
                 self._active = None
@@ -371,7 +379,8 @@ class Service:
         grant = self._settings().grant_all
         out = install.install(shell, run.staged, grant_all=grant, target_sdk=target)
         if out.needs_uninstall_prompt:
-            pkg = run.package or install.incompatible_package(out.detail)
+            # only the package we parsed ourselves: adb's output can echo text a crafted manifest put there (3a)
+            pkg = run.package
             if pkg is None:
                 raise OrcusFailure(messages_ko.error(ErrorCode.INSTALL_INCOMPATIBLE, out.detail))
             if self._ask(run, "error.install_incompatible", ("replace", "cancel")) != "replace":
@@ -485,11 +494,11 @@ class Service:
     def _again(self, run: _Run, *, clear: bool = False) -> None:
         """[Run again], [Clear data and run], crash-restart reinstall: KEEP_DATA, reinstalling only when this
         epoch has not got the file (after [Reset phone], say)."""
+        run.cancel = threading.Event()   # before it is published: a cancel in between must not be lost
+        run.t0 = time.monotonic()
         with self._lock:
             self._latest = run.run_id
             self._active = run
-        run.cancel = threading.Event()
-        run.t0 = time.monotonic()
         try:
             shell = self._engine.shell()
             run.epoch = shell.epoch
@@ -501,15 +510,23 @@ class Service:
             self._emit(run, RunStage.CANCELLED)
         except OrcusFailure as f:
             self._emit(run, RunStage.FAILED, problem=f.error)
+        except Exception as e:   # as in _job: the run must reach a final stage
+            _log.exception("run again %s", run.run_id)
+            self._emit(run, RunStage.FAILED, problem=messages_ko.error(ErrorCode.STAGE_UNEXPECTED, repr(e)[:300]))
         finally:
             with self._lock:
                 self._active = None
 
-    def _app_command(self, cmd: str) -> None:
+    def _app_command(self, cmd: str, submits: int | None = None) -> None:
         run = self._current
         if run is None or run.staged is None:
             return
         if cmd in ("rerun", "clear_data"):
+            with self._lock:
+                newer = submits is not None and submits != self._submits
+            if newer:   # a file dropped after this press wins; running the old app now would cancel it (3a review)
+                _log.info("%s skipped: a newer drop is queued", cmd)
+                return
             self._again(run, clear=cmd == "clear_data")
             return
         if run.package is None:

@@ -105,6 +105,7 @@ def download(url: str, dest: Path, *, size: int, sha1: str, progress: Progress |
         if done > size:
             part.unlink()
             done = 0
+        before = done   # an attempt that got further starts a fresh retry budget (Wi-Fi drops over 1.9 GB)
         h = _sha1_of(part) if done else hashlib.sha1()
         if done < size:
             req = urllib.request.Request(url, headers={"Range": f"bytes={done}-"} if done else {})
@@ -117,14 +118,17 @@ def download(url: str, dest: Path, *, size: int, sha1: str, progress: Progress |
             except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
                 if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500 and e.code != 416:
                     raise OrcusFailure(messages_ko.error(ErrorCode.SETUP_NETWORK, f"{url}: HTTP {e.code}")) from e
-                attempt += 1
+                if isinstance(e, urllib.error.HTTPError) and e.code == 416:   # the .part no longer fits the file
+                    part.unlink(missing_ok=True)
+                grown = (part.stat().st_size if part.exists() else 0) > before
+                attempt = 1 if grown else attempt + 1
                 _log.warning("download %s failed at %d bytes (attempt %d): %s", url, done, attempt, e)
                 if attempt > retries:
                     raise OrcusFailure(messages_ko.error(ErrorCode.SETUP_NETWORK, f"{url}: {e}")) from e
                 time.sleep(backoff_s * attempt)
                 continue
         if done < size:
-            attempt += 1   # connection closed early; resume
+            attempt = 1 if done > before else attempt + 1   # connection closed early; resume
             if attempt > retries:
                 raise OrcusFailure(messages_ko.error(ErrorCode.SETUP_NETWORK, f"{url}: stopped at {done}/{size}"))
             continue

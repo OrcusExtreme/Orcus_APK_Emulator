@@ -8,7 +8,7 @@ from orcus.common.messages_ko import ERRORS, REMEDY_LABELS, TEXT, Channel
 from orcus.contracts import ErrorCode, RemedyAction
 
 BANNER_CODES = {ErrorCode.ENGINE_GPU_SOFTWARE, ErrorCode.ENGINE_ADB_LOST, ErrorCode.ENGINE_RESET_FAILED,
-                ErrorCode.ENGINE_DISK_LOW}
+                ErrorCode.ENGINE_DISK_LOW, ErrorCode.ENGINE_NO_DISPLAY}
 
 
 def expected_channel(code: ErrorCode) -> Channel:

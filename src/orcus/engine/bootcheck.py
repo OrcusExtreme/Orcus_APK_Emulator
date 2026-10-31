@@ -17,7 +17,7 @@ from pathlib import Path
 import grpc
 from google.protobuf import empty_pb2
 
-from orcus.common import childenv, log, ports, proc, winjob
+from orcus.common import childenv, log, ports, proc, win32, winjob
 from orcus.common.paths import OrcusPaths
 from orcus.contracts import GpuMode, Settings
 from orcus.emugrpc import channel as grpc_channel
@@ -80,17 +80,21 @@ def accelerator_from_log(text: str) -> str | None:
 
 def command_lines(root: Path) -> list[str]:
     """Command lines of processes whose image is under `root` (for S6: who starts what)."""
-    script = ("Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '" + str(root) + "\\*' } | "
+    # the path goes in through the environment, never into the script text: a home like D:\x';calc;' ran code (3a)
+    script = ("$r = $env:ORCUS_SCAN_ROOT.TrimEnd('\\') + '\\'; Get-CimInstance Win32_Process | Where-Object { "
+              "$_.ExecutablePath -and $_.ExecutablePath.StartsWith($r, 'OrdinalIgnoreCase') } | "
               "ForEach-Object { \"$($_.ProcessId) parent=$($_.ParentProcessId) $($_.CommandLine)\" }")
     from orcus.common.accel import powershell_exe
-    result = proc.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script], timeout_s=30)
+    result = proc.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script], timeout_s=30,
+                      env={**os.environ, "ORCUS_SCAN_ROOT": str(root)})
     return [line.strip() for line in result.out.splitlines() if line.strip()]
 
 
 def _listening(pids: set[int]) -> list[str]:
     """`netstat -ano` lines in LISTENING state owned by our SDK processes (bind addresses for S6)."""
-    result = proc.run(["netstat", "-ano", "-p", "TCP"], timeout_s=15)
-    result6 = proc.run(["netstat", "-ano", "-p", "TCPv6"], timeout_s=15)
+    netstat = str(win32.system_dir() / "NETSTAT.EXE")   # by full path, never one in the current folder (3a review)
+    result = proc.run([netstat, "-ano", "-p", "TCP"], timeout_s=15)
+    result6 = proc.run([netstat, "-ano", "-p", "TCPv6"], timeout_s=15)
     out: list[str] = []
     for line in (result.out + "\n" + result6.out).splitlines():
         parts = line.split()
@@ -99,25 +103,27 @@ def _listening(pids: set[int]) -> list[str]:
     return sorted(set(out))
 
 
-def _stop(emulator: subprocess.Popen[bytes], stub: object | None, paths: OrcusPaths, report: BootReport,
-          grace_s: float = 15.0) -> None:
+def _stop(emulator: subprocess.Popen[bytes], stub: object | None, rec: discovery.DiscoveryRecord | None,
+          paths: OrcusPaths, report: BootReport) -> None:
+    """Pause, then end qemu, as the engine does (§5.1 STOPPING): qemu's own exit can fail fast in combase.dll and
+    leave a crash report under C:\\ProgramData."""
     start = time.monotonic()
-    method = "terminate"
+    method = "TerminateProcess"
     if stub is not None:
         try:
-            stub.setVmState(ec.VmRunState(state=ec.VmRunState.SHUTDOWN), timeout=5)   # type: ignore[attr-defined]
-            method = "setVmState(SHUTDOWN)"
+            stub.setVmState(ec.VmRunState(state=ec.VmRunState.PAUSED), timeout=5)   # type: ignore[attr-defined]
+            method = "setVmState(PAUSED) -> TerminateProcess"
         except grpc.RpcError as e:
-            _log.warning("SHUTDOWN failed: %s", e)
-    try:
-        emulator.wait(timeout=grace_s)
-    except subprocess.TimeoutExpired:
-        method += " -> TerminateProcess"
+            _log.warning("PAUSED failed: %s", e)
+    if emulator.poll() is None:
         for pid, image in winjob.processes_under(paths.sdk):   # qemu first, then emulator.exe
-            if "qemu-system" in image.lower():
+            qemu = pid == rec.pid if rec is not None else "qemu-system" in image.lower()
+            if qemu:
                 winjob.terminate_pid(pid)
         emulator.kill()
         emulator.wait(timeout=10)
+    if rec is not None:   # the emulator removes its discovery file only when it exits by itself
+        rec.source.unlink(missing_ok=True)
     report.stop_s = round(time.monotonic() - start, 2)
     report.stop_method = method
 
@@ -125,8 +131,8 @@ def _stop(emulator: subprocess.Popen[bytes], stub: object | None, paths: OrcusPa
 def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot: bool,
               discovery_timeout_s: float = 60.0, boot_timeout_s: float = 300.0,
               job: winjob.Job | None = None, leftover_wait_s: float = 3.0) -> BootReport:
-    # leftover_wait_s: after a stop only `emulator -kill <qemu> -sleep 20` watchdogs remain (S6); they are
-    # safe to end at once, so A5's N can stay around 5 s
+    # leftover_wait_s: after a stop only crashpad_handler (gone in ~0.1 s, 3a) or, after a graceful exit, the
+    # `emulator -kill <qemu> -sleep 20` watchdog remain (S6); they are safe to end at once, so A5's N stays near 5 s
     report = BootReport(gpu=str(gpu))
     chosen = ports.choose(settings.engine.ports, ports.load_saved(paths))
     proxy = childenv.decide_proxy(os.environ)
@@ -138,14 +144,14 @@ def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot:
                             strip_dirs=childenv.app_dirs_to_strip())
     log_path = paths.logs / f"emulator-bootcheck-{gpu}-{time.strftime('%Y%m%d-%H%M%S')}.log"
     report.log_file = str(log_path)
-    dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""), "TMP": str(paths.tmp)})
+    dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", "")})   # not the shared <home>\tmp
     start = time.monotonic()
     emulator = proc.spawn(argv, env=env, log_path=log_path)
     report.emulator_pid = emulator.pid
     channel: grpc.Channel | None = None
     stub = None
+    rec = None
     try:
-        rec = None
         while time.monotonic() - start < discovery_timeout_s:
             if emulator.poll() is not None:
                 raise RuntimeError(f"emulator exited with {emulator.returncode} before discovery")
@@ -202,7 +208,7 @@ def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot:
         report.error = f"{type(e).__name__}: {e}"
         report.ok = False
     finally:
-        _stop(emulator, stub, paths, report)
+        _stop(emulator, stub, rec, paths, report)
         if channel is not None:
             channel.close()
         deadline = time.monotonic() + leftover_wait_s
@@ -213,8 +219,9 @@ def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot:
         report.leftovers = sorted(f"{Path(image).name} pid={pid}" for pid, image in left)
         if left:
             report.leftover_command_lines = command_lines(paths.sdk)
-        for pid, _ in left:   # A5: nothing of ours may survive a stop
-            winjob.terminate_pid(pid)
+        for pid, image in left:   # A5: nothing of ours may survive a stop (never another adb, 3a review)
+            if Path(image).name.lower() in discovery.EMULATOR_IMAGES:
+                winjob.terminate_pid(pid)
         report.log_tail = _tail(log_path)
     return report
 

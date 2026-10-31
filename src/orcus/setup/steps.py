@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orcus.common import accel, hostinfo, jsonio, log, messages_ko, pins, win32
+from orcus.common import accel, acl, hostinfo, jsonio, log, messages_ko, pins, win32
 from orcus.common.avd import USERDATA_GIB, write_avd
 from orcus.common.paths import OrcusPaths, home_problems, interpreter_problems
 from orcus.contracts import CmdResult, ErrorCode, LicenseText, OrcusError, OrcusFailure, Settings, SetupEvent, SetupStep
@@ -64,6 +64,9 @@ class SetupDeps:
     check_interpreter: bool = True
     check_home: Callable[[Path], list[str]] = home_problems
     archives: Sequence[pins.Archive] = field(default=pins.ARCHIVES)
+    boot_id: Callable[[], int | None] = win32.boot_id   # None: compare boot times instead
+    lock_root: Callable[[Path, str], CmdResult] = acl.lock_to_user   # the root becomes this account's only
+    verify_zip: Callable[[Path, pins.Archive], bool] = lambda zip_path, a: dl.verified(zip_path, a.size, a.sha1)
 
 
 @dataclass(frozen=True)
@@ -196,8 +199,12 @@ class SetupService:
         return data if isinstance(data, dict) else {"version": 1}
 
     def _save_state(self) -> None:
+        """Never fatal: with D: full the worker must still report the failing step (the next run redoes it)."""
         self._state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        jsonio.write_json_atomic(self._paths.state_file("setup.json"), self._state)
+        try:
+            jsonio.write_json_atomic(self._paths.state_file("setup.json"), self._state)
+        except OSError as e:
+            _log.error("setup.json not saved: %s", e)
 
     def _mark(self, step: SetupStep, status: str) -> None:
         self._state.setdefault("steps", {})[str(step)] = status
@@ -259,6 +266,14 @@ class SetupService:
             detail = " ".join(messages_ko.text(r) for r in reasons)
             return _Failed(messages_ko.error(ErrorCode.SETUP_PATH, f"{self._paths.root}: {detail}"))
         self._paths.ensure()
+        sid = win32.user_sid()
+        if sid and self._state.get("root_locked_to") != sid:   # once per account (common/acl.py)
+            locked = self._d.lock_root(self._paths.root, sid)
+            if locked.code != 0:
+                detail = (locked.err or locked.out).strip()[-300:]
+                return _Failed(messages_ko.error(ErrorCode.SETUP_PERMISSIONS, f"{self._paths.root}: {detail}"))
+            self._state["root_locked_to"] = sid
+            _log.info("%s is now this account's only (SYSTEM and Administrators keep access)", self._paths.root)
         missing = self._missing_archives()
         free = self._d.disk_free()
         av = hostinfo.antivirus()
@@ -282,9 +297,10 @@ class SetupService:
         if self._resolved is None:
             repo = self._d.fetch_repo_index()
             sysimg = self._d.fetch_sysimg_index()
-            self._resolved = [repo_index.resolve(a, sysimg if a is pins.SYSTEM_IMAGE else repo)
-                              for a in self._d.archives]
-            self._license_texts = repo_index.license_texts(self._resolved, (repo, sysimg))
+            resolved = [repo_index.resolve(a, sysimg if a is pins.SYSTEM_IMAGE else repo) for a in self._d.archives]
+            texts = repo_index.license_texts(resolved, (repo, sysimg))   # may raise SETUP_LICENSE_NOT_STABLE
+            # cache only both together: a retry with the list but no texts would pass LICENSE unasked (3a review)
+            self._resolved, self._license_texts = resolved, texts
             self._state["resolved"] = [{"key": r.archive.key, "url": r.url, "in_index": r.in_index,
                                         "license": r.license_id} for r in self._resolved]
             for r in self._resolved:
@@ -321,7 +337,8 @@ class SetupService:
 
     def _dism_ok_this_boot(self) -> bool:
         dism = self._state.get("dism") or {}
-        return bool(dism.get("ok")) and accel.same_boot(float(dism.get("boot_time", 0)), self._d.boot_time())
+        return bool(dism.get("ok")) and accel.same_boot(float(dism.get("boot_time", 0)), self._d.boot_time(),
+                                                        dism.get("boot_id"), self._d.boot_id())
 
     def _whpx(self) -> _Outcome:
         state = self._d.query_whpx()
@@ -345,6 +362,7 @@ class SetupService:
         verdict = whpx.classify(outcome)
         self._state["dism"] = asdict(outcome) | {
             "ok": verdict.ok, "reboot_needed": verdict.reboot_needed, "boot_time": self._d.boot_time(),
+            "boot_id": self._d.boot_id(),
             "install_state_before": int(state) if state is not None else None,
             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
         self._save_state()
@@ -405,6 +423,9 @@ class SetupService:
             zip_path = self._paths.downloads / archive.filename
             if not zip_path.exists():
                 return _Failed(messages_ko.error(ErrorCode.SETUP_CHECKSUM, f"{zip_path.name} not downloaded"))
+            if not self._d.verify_zip(zip_path, archive):   # checked at download; it may have changed since
+                zip_path.unlink(missing_ok=True)
+                return _Failed(messages_ko.error(ErrorCode.SETUP_CHECKSUM, f"{zip_path.name} changed after download"))
             todo.append((archive, zip_path, self._zip_size(zip_path, archive.zip_top)))
         grand_total = sum(size for _, _, size in todo)   # one progress bar for all archives
         base = 0
@@ -441,13 +462,14 @@ class SetupService:
         return _Done()
 
     def _accel(self) -> _Outcome:
-        now = self._d.boot_time()
+        now, now_id = self._d.boot_time(), self._d.boot_id()
         cached = self._state.get("accel") or {}
-        if cached.get("usable") and accel.same_boot(float(cached.get("boot_time", 0)), now):
+        if cached.get("usable") and accel.same_boot(float(cached.get("boot_time", 0)), now, cached.get("boot_id"),
+                                                    now_id):
             return _Done()
         self._d.ensure_job()   # the first SDK child starts here (§1.2)
         report = self._d.emulator_check()
-        self._state["accel"] = asdict(report) | {"boot_time": now}
+        self._state["accel"] = asdict(report) | {"boot_time": now, "boot_id": now_id}
         self._save_state()
         _log.info("emulator-check accel: code=%s usable=%s\n%s", report.code, report.usable, report.text)
         if report.usable:
@@ -456,7 +478,7 @@ class SetupService:
         code = accel.classify_accel_failure(
             reboot_is_pending=self._d.reboot_pending(),
             dism_succeeded_at_boot=float(dism["boot_time"]) if dism.get("ok") else None,
-            current_boot=now)
+            current_boot=now, dism_boot_id=dism.get("boot_id"), current_boot_id=now_id)
         return _Failed(messages_ko.error(code, report.text[-600:]))
 
     def _avd(self) -> _Outcome:

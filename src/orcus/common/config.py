@@ -159,7 +159,7 @@ def load(paths: OrcusPaths, *, env: Mapping[str, str] | None = None,
         for key, value in layer.items():
             try:
                 settings = apply(settings, {key: value})
-            except (ValueError, TypeError, json.JSONDecodeError) as e:
+            except (ValueError, TypeError, OverflowError) as e:   # JSONDecodeError is a ValueError; "ram_mb": Infinity
                 if warnings is not None:
                     warnings.append(str(e))
     return settings

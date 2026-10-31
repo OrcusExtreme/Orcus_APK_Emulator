@@ -81,11 +81,11 @@
 
 - **엔진 소유권 잠금(GUI·CLI·테스트 공통).**
   - VM을 띄우는 프로세스는 `D:\OrcusAPK\state\engine.lock`을 배타적으로 열어 VM 수명 동안 쥔다. 프로세스가 죽으면 OS가 풀어 준다.
-  - 같은 프로세스가 `state\engine_owner.json`(pid, 시작 시각, 종류 gui|cli|detached, 포트, adb 서버 pid)을 쓴다.
+  - 같은 프로세스가 `state\engine_owner.json`(pid, 시작 시각, 종류 gui|cli|detached, 포트, adb 서버 pid)을 쓴다. **[3a 추가]** 상태가 바뀔 때마다 소유자 자신의 상태·문구 키·epoch·모드도 함께 쓴다. 대기 중인 쪽을 깨우기 전에 쓰므로, 기록보다 앞선 상태를 보는 사람이 없다.
   - 파일 잠금이라 Windows 계정이 달라도 동작한다. `D:\OrcusAPK`는 모든 계정이 공유한다.
 - **잠금을 얻지 못하면:** 다른 Orcus나 orcus-cli가 VM을 쓰고 있는 것이다.
   - GUI와 `run`/`smoke`/기기 테스트는 `ENGINE_IN_USE`("다른 Orcus가 휴대폰을 사용 중입니다")로 멈춘다.
-  - `orcus-cli engine status`/`shot`만 소유자 기록으로 읽기 전용 접속을 한다.
+  - `orcus-cli engine status`/`shot`만 소유자 기록으로 읽기 전용 접속을 한다. **[3a 추가]** 보여 주는 상태는 소유자 기록의 상태다(부를 때마다 다시 읽는다). 게스트의 `booted`는 소유자의 SESSION_INIT 확인이 끝나기 약 4 s 전에 참이 되므로 쓰지 않는다. 상태가 없는 예전 기록만 `booted`로 판단한다. 실측: SESSION_INIT 동안 "휴대폰 마무리 준비 중…", 소유자가 READY가 된 0.1 s 뒤 "준비됨".
 - **고아의 정의:** 우리가 잠금을 쥐었는데도 우리 AVD의 VM이 살아 있으면 그것이 고아다. 예외는 소유자 기록이 `detached`인 경우다(**[P4]** 개발용 detached 모드 → attach). 이 판정 규칙 덕분에 GUI와 CLI가 서로의 VM을 죽이지 않는다.
 - **외부 정지:** 소유자가 요청하지 않은 종료라도 게스트 전원 끄기(전원 메뉴의 종료)는 크래시가 아니라 STOPPED로 분류한다(§5.7). **[P4]** detached VM을 `orcus-cli engine stop`이 끌 때는 소유자 기록에 `external_stop`을 남기고, 소유자도 이것을 STOPPED로 분류한다.
 - **GUI 단일 인스턴스.**
@@ -173,13 +173,13 @@ class ErrorCode(StrEnum):
     SETUP_WHPX_REVERTED = auto(); SETUP_QUARANTINE = auto(); SETUP_ACCEL_FAILED = auto()
     # PRE_ 실행 전 점검
     PRE_NOT_INSTALLED = auto(); PRE_WHPX_OFF = auto(); PRE_SDK_MISSING = auto()
-    PRE_DISK = auto(); PRE_PATH = auto(); PRE_PORTS = auto()
+    PRE_DISK = auto(); PRE_PATH = auto(); PRE_PORTS = auto(); PRE_NO_DISPLAY = auto()   # [3a]
     # ENGINE_ 에뮬레이터
     ENGINE_IN_USE = auto(); ENGINE_EXIT = auto(); ENGINE_AVD_LOCKED = auto()
     ENGINE_CONNECT_TIMEOUT = auto(); ENGINE_BOOT_TIMEOUT = auto(); ENGINE_GOLDEN_LOAD_FAILED = auto()
     ENGINE_RESET_FAILED = auto(); ENGINE_PROVISION_FAILED = auto(); ENGINE_GPU_SOFTWARE = auto()
     ENGINE_ADB_LOST = auto(); ENGINE_CRASHED = auto(); ENGINE_UNAVAILABLE = auto(); ENGINE_NO_FRAMES = auto()
-    ENGINE_DISK_LOW = auto()
+    ENGINE_DISK_LOW = auto(); ENGINE_NO_DISPLAY = auto()   # [3a] 발견 18
     # FILE_ / STAGE_ 드롭한 파일
     FILE_NOT_ANDROID = auto(); FILE_IS_AAB = auto(); FILE_IS_AIA = auto(); FILE_IS_AIX = auto()
     STAGE_DRIVE_TIMEOUT = auto(); STAGE_COPY_FAILED = auto(); APK_PARSE = auto()
@@ -467,7 +467,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
   1. GUI가 구독을 해제하고 프레임 펌프를 멈춘다.
   2. apk-pipeline을 취소한다(실행 중인 adb 클라이언트는 종료).
   3. 입력에 `release_all`을 보내고 닫는다.
-  4. engine을 정지한다(DeviceSession.close → SHUTDOWN → 시간 초과 시 강제 종료).
+  4. engine을 정지한다(DeviceSession.close → 일시정지 → qemu 종료, §5.1 STOPPING).
   5. adb 서버를 종료한다.
   6. 이름 있는 스레드를 타임아웃을 두고 join한다.
   7. bridge와 QApplication을 정리한다.
@@ -489,7 +489,12 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
      - GOLDEN 모드의 LAUNCHING·CONNECTING·BOOTING에서 분류되지 않은 종료가 났고, `avd\orcus36.avd\snapshots\orcus_golden`이 사라진 경우. 강제 로드 실패는 스냅샷을 지우므로 확실한 신호다(36.1 소스).
      - **GOLDEN 모드의 BOOTING이 한도(30 s)를 넘긴 경우.** S4에서 `ram.bin`이 망가진 골든을 강제 로드하자 에뮬레이터는 종료도 삭제도 하지 않고 gRPC만 연 채 멈췄다(96 s 동안 부팅 완료 없음, 로그에 오류 없음). 정상 골든 부팅은 5–6 s라 30 s 초과는 이상이다.
   3. 그 밖의 경우는 FAILED(`ENGINE_EXIT`).
-- **게스트 전원 끄기**(전원 메뉴의 종료 등)는 크래시가 아니다. READY → STOPPING(의도 = stop)으로 가고, 프로세스가 이미 없으므로 SHUTDOWN은 건너뛴다. 감지 신호(종료 직전의 VM 상태·알림·로그 줄)는 S4·S6에서 정한다.
+  - **[3a 발견 18] 호스트 GPU 검사:** 에뮬레이터는 골든을 저장할 때의 호스트 GPU 문자열(`snapshot.pb`의 `host.gpu_driver`, 예: `10de-NVIDIA GeForce GTX 1660-`)을 지금 값과 비교한다. 다르면 "host GPU has changed"로 골든을 **스스로 지우고** 끝난다(위 둘째 경우 → 재구축 약 5분). 이 값은 세션의 디스플레이 장치(`EnumDisplayDevices`)에서 온다. 그래서 원격 데스크톱 연결이 끊긴 세션에서는 장치가 0개라 빈 문자열이 되고(WMI에는 GPU가 그대로 보임), 그 상태로 켜면 골든이 지워진다. 그때 다시 만든 골든은 빈 문자열을 담으므로, 연결된 뒤 처음 켤 때 또 지워진다.
+    - **대책(3a 구현):**
+      - **(A) 사전 점검:** PREFLIGHT에서 화면 장치가 0개이고 골든의 `gpu_driver`가 빈 값이 아니면(모르면 포함) 골든을 로드하지 않는다. 이번만 COLD로 켜고 경고 배너 `ENGINE_NO_DISPLAY`와 칩 "이번만 느린 시작"을 보인다. 이 세션의 초기화는 재구축이 아니라 재시작이고, 화면 장치가 돌아왔으면 골든을 로드한다. 단, 준비 직후의 검증 부팅은 이렇게 바꾸지 않고 `PRE_NO_DISPLAY`로 끝낸다(검증 없이 `provision.json`을 쓰지 않으려고).
+      - **(A) 재구축 문구:** 에뮬레이터 로그에 "host GPU has changed"가 있으면 재구축 문구를 "그래픽 장치가 바뀌어 휴대폰을 다시 준비하는 중 (약 5분)"으로 바꾼다.
+      - **(B) 저장 거부:** GOLDEN 준비는 시작할 때와 깨끗한 부팅(이 부팅의 GPU가 골든에 기록됨) 직전에 화면 장치를 확인한다. 0개면 아무것도 지우지 않고 `PRE_NO_DISPLAY`로 끝낸다.
+- **게스트 전원 끄기**(전원 메뉴의 종료 등)는 크래시가 아니다. READY → STOPPING(의도 = stop)으로 가고, 프로세스가 이미 없으므로 일시정지·종료는 건너뛴다. 감지 신호(종료 직전의 VM 상태·알림·로그 줄)는 S4·S6에서 정한다.
 - **STOPPING은 의도에 따라 나간다:**
   - stop → STOPPED(잠금·소유자 기록 해제)
   - rebuild → PROVISIONING(REBUILD)
@@ -511,7 +516,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 | READY | 상태 공개, 감시 | `stop` → STOPPING(stop), `reset` → RESETTING, `rebuild` → STOPPING(rebuild) | 크래시 → STOPPING(restart, 원인 CRASH_RESTART). 5분에 1회까지이고, 두 번째는 FAILED(`ENGINE_CRASHED`) |
 | RESETTING | **GOLDEN:** `release_all` → `LoadSnapshot("orcus_golden")` → adb `device` 대기(10 s, 재등록 §5.5. 시간 초과면 `ENGINE_ADB_LOST`) → 결과 검증(§6.7). **COLD:** `reset_device()`가 재구축 요청이 된다(GUI가 미리 "수 분 걸림" 확인을 받는다) → STOPPING(rebuild) | → SESSION_INIT(원인 RESET) | 검증 실패 → 경고 `ENGINE_RESET_FAILED` + STOPPING(restart, 원인 RESET_RECOVERY) |
 | PROVISIONING | LAUNCHING과 같은 준비(private adb 서버 확인·재등록, 소유자 기록)를 한 뒤 §6.5를 스스로 실행한다. 실행 → 연결 → 부팅 대기도 안에서 하며, 자체 한도는 600 s다 | GOLDEN → 검증 부팅을 위해 STOPPING(restart) → LAUNCHING(GOLDEN). COLD → 그 부팅 그대로 SESSION_INIT | FAILED(`ENGINE_PROVISION_FAILED`: 단계 이름 + 출력) |
-| STOPPING | `DeviceSession.close()` → (**[P4]** keep-state 정상 정지면 저장, §6.3) → `setVmState(SHUTDOWN)` 후 대기 5 s(빠른 정지는 2 s) → 남은 우리 SDK 프로세스 정리(private adb 서버는 제외. 앱이 끝날 때만 끈다) | 의도대로: STOPPED / PROVISIONING(REBUILD) / LAUNCHING | 시간 초과 → qemu → emulator 순 TerminateProcess 후 의도대로 |
+| STOPPING | `DeviceSession.close()` → (**[P4]** keep-state 정상 정지면 저장, §6.3) → `setVmState(PAUSED)`(시간 제한 3 s, 빠른 정지는 1 s) → qemu → emulator 순 TerminateProcess → 디스커버리 파일 삭제 → 0.5 s 뒤 남은 우리 SDK 프로세스 정리(private adb 서버는 제외. 앱이 끝날 때만 끈다). **[3a 변경]** 예전에는 `setVmState(SHUTDOWN)` 뒤 5 s(빠른 정지 2 s) 기다렸다. 그런데 qemu가 스스로 끝나는 과정에서 `combase.dll` fail-fast(0xc0000602)로 자주 죽었고, 그때마다 Windows가 몇 초 동안 프로세스를 붙잡고 `C:\ProgramData\Microsoft\Windows\WER\ReportArchive`에 충돌 보고서를 남겼다(10-30 13:32부터 이틀 동안 같은 서명으로 31개, §11.5 위반). 일시정지하면 QEMU가 디스크를 비우고 기록을 마치며(`vm_stop`), 종료 때 저장할 것도 없다(`-no-snapshot-save`). 정지 0.7–0.9 s, netsimd는 qemu와 함께 끝나며 `netsim.ini`를 지우고 crashpad_handler는 약 0.1 s 뒤 끝난다 | 의도대로: STOPPED / PROVISIONING(REBUILD) / LAUNCHING | PAUSED가 실패해도 그대로 종료한다(이때는 디스크 비우기가 보장되지 않지만, 다음 시작은 골든을 로드한다) |
 | FAILED | **잠금을 쥔 경우에만** DeviceSession을 닫고, 남은 우리 VM·SDK 프로세스를 정리한 뒤(private adb 서버는 유지) 잠금·소유자 기록을 해제한다. 잠금 없이 들어온 경우(`ENGINE_IN_USE`, `PRE_NOT_INSTALLED`)에는 어떤 프로세스도 건드리지 않고, 다른 소유자의 잠금·기록도 그대로 둔다. 그다음 `OrcusError`(코드, 해결책)와 진단 로그를 알린다 | 사용자 "다시 시도" → PREFLIGHT(재구축 한도 초기화) | `stop` → STOPPED, `rebuild` → PREFLIGHT(재구축 표시) |
 
 **SESSION_INIT 검증**
@@ -631,7 +636,10 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 15037을 우리가 띄우지 않은 adb가 쓰고 있으면 채택하지 않는다. 우리 서버가 없을 때 에뮬레이터 쪽에서 adb 서버를 스스로 띄우는데(S6 실측), 이 서버에는 `ADB_USB=0`·스캔 끄기·공유 키가 없다. 우리 Job 안의 그런 adb는 종료하고 우리 서버를 다시 띄운 뒤 재등록한다. Job 밖이면 다음 포트로 간다.
   - 재시작은 5분에 3회까지다. 넘으면 FAILED.
   - 최후 수단은 `adb connect 127.0.0.1:5641`이다. serial이 바뀌므로 `DeviceShell`을 갱신한다.
-  - **구현(3a):** READY 동안 `engine-adbwait`가 서버 핸들을 기다린다. 서버가 끝나면 supervisor가 경고 `ENGINE_ADB_LOST`를 알리고, worker 작업으로 서버를 다시 띄워 재등록한다. 돌아오면 경고를 거둔다. 실측: 서버를 죽이고 0.6 s 뒤 `emulator-5640`이 다시 `device`(§12.3 11). 최후 수단(`adb connect`)은 넣지 않았다.
+  - **구현(3a):** READY 동안 `engine-adbwait`가 서버 핸들을 기다린다. 서버가 끝나면 supervisor가 경고 `ENGINE_ADB_LOST`를 알리고, worker 작업으로 서버를 다시 띄워 재등록한다. 돌아오면 경고를 거둔다. 실측: 서버를 죽이고 0.6 s 뒤 `emulator-5640`이 다시 `device`(§12.3 11). 최후 수단(`adb connect`)은 넣지 않았다. **필요성 검토(2026-10-31): 넣지 않는다.**
+    - **근거:** 지금까지 서버를 잃은 3번(모두 §12.3 11 시험)이 모두 0.65–0.72 s에 재등록으로 돌아왔고 실패는 0번이다. 재등록이 실패해도 지금 FAILED(`ENGINE_ADB_LOST`)로 끝나 사용자가 다시 켤 수 있다.
+    - **비용:** `adb connect`를 쓰면 serial이 `127.0.0.1:5641`로 바뀐다. DeviceShell·logcat·설치·격리 검사(§12.3 11)에 모두 파급되고, 뒤늦은 재등록과 겹치면 같은 VM이 두 serial로 보인다.
+    - **다시 볼 조건:** 로그에 "private adb server ended" 뒤 FAILED(`ENGINE_ADB_LOST`)가 나오면 다시 본다.
 - **격리 테스트(양방향):**
   - 외부 5037 서버 목록에 `emulator-5640`이 보이지 않아야 한다.
   - 우리 서버 목록에는 USB 기기와 다른 에뮬레이터가 보이지 않아야 한다.
@@ -681,6 +689,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - Job 밖으로 빠져나간 프로세스가 있으면 경고하고 종료한다.
   - 정지 후 N s(S4에서 정함) 뒤에도 남은 우리 SDK 프로세스(예: netsimd)는 종료한다. private adb 서버는 앱이 사는 동안 유지하므로 앱이 끝날 때만 끈다. 이 점검과 정리는 엔진 잠금을 쥔 프로세스만 한다.
   - 소유권 잠금 때문에 SDK 하나에는 VM이 하나뿐이므로, 다른 사용자의 프로세스를 죽일 일은 없다.
+  - **[3a 결정, 2026-10-31] 설치는 계정 하나의 것이다.** 설치 폴더는 설치한 계정·SYSTEM·Administrators만 접근한다(§11.4). 다른 계정은 자기 폴더에 따로 설치한다. 정리 대상 PID는 우리 SDK 아래 qemu일 때만 끝낸다(PID 재사용, 3a 리뷰).
 
 ---
 
@@ -799,7 +808,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    - **스타일러스 필기 끄기:** `settings put secure stylus_handwriting_enabled 0`. 가상 터치 장치가 `TOUCHSCREEN | STYLUS`를 알려, 끄지 않으면 세션마다 첫 텍스트 상자 탭에서 Gboard의 전체 화면 "스타일러스 사용해 보기" 시트가 앱을 가린다(S8 사전 확인)
    - **Bluetooth 끄기:** `cmd bluetooth_manager disable`. 켜진 채 저장하면 골든을 로드할 때마다 netsim Bluetooth 스택이 크래시한다(S5)
    - **클립보드 접근 토스트 끄기:** `settings put secure clipboard_show_access_notifications 0`. 한글 입력은 붙여넣기라서, 켜져 있으면 확정할 때마다 토스트가 앱 아래쪽을 가린다(S8. 세션에서 확인했고 골든 재구축으로는 아직 확인하지 않음)
-   - **마지막에 3 s 기다린 뒤 `sync`한다.** SettingsProvider는 값을 최대 약 2 s 뒤에 파일로 쓰고 `setVmState(SHUTDOWN)`은 전원 끄기라서, 그대로 끄면 마지막 설정이 사라진다(Phase 2에서 두 번 겪음)
+   - **마지막에 3 s 기다린 뒤 `sync`한다.** SettingsProvider는 값을 최대 약 2 s 뒤에 파일로 쓰고 정지(§5.1 STOPPING. 3a 전에는 `setVmState(SHUTDOWN)`)는 게스트에게 전원 끄기라서, 그대로 끄면 마지막 설정이 사라진다(Phase 2에서 두 번 겪음)
 5. **이미지별 단계 — 없음(S1 결과).** Google TTS에 내장된 한국어 음성(`ko-kr-x-ism-seanet-embedded`)으로 기기 안에서 바로 말한다. 내려받기·로그인이 필요 없다.
    - **개인 Google 계정을 골든에 로그인하지 않는다.** 로그인하면 그 PC의 모든 학생이 계정을 공유하게 되고, 토큰이 스냅샷에 남는다.
 6. **`session_init()`(§6.6)과 기능 탐지** → `state\device_caps.json`:
@@ -812,7 +821,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    - 렌더러, `getStatus`의 hypervisorType·hardwareConfig(패널 크기)
 7. **관찰값 검증:** `persist.sys.locale` = `ko-KR`, `persist.sys.timezone` = `Asia/Seoul`인지 본다. 다르면 단계 이름과 함께 실패로 끝낸다. 관찰값은 `provision.json`과 `device_caps.json`에 기록한다.
    - **COLD는 여기서 끝난다.** `provision.json`(mode: COLD)을 쓰고, 이 부팅이 그대로 SESSION_INIT → READY로 이어진다.
-7a. **(GOLDEN) 준비 세션을 끄고, 깨끗한 세션에서 저장한다.** `setVmState(SHUTDOWN)` → `-change-locale` 없이 COLD 플래그로 다시 부팅 → 10 s 안정 → 4단계 설정과 로캘·시간대가 남아 있는지 읽어 확인 → `setprop debug.wm.disable_deprecated_target_sdk_dialog true`(RAM 속성) → 8·9단계.
+7a. **(GOLDEN) 준비 세션을 끄고, 깨끗한 세션에서 저장한다.** 정지(§5.1 STOPPING) → `-change-locale` 없이 COLD 플래그로 다시 부팅 → 10 s 안정 → 4단계 설정과 로캘·시간대가 남아 있는지 읽어 확인 → `setprop debug.wm.disable_deprecated_target_sdk_dialog true`(RAM 속성) → 8·9단계.
    - **4단계 명령이 하나라도 실패했거나 이 확인에서 하나라도 빠지면 저장하지 않고 실패로 끝낸다.** 기존 골든도 지우지 않는다. Phase 2에서 준비 세션이 부팅 7 s 뒤 사라졌는데 스크립트가 다음 세션에서 저장해, 로드 뒤 adb가 붙지 않는 골든이 생긴 적이 있다.
    - **이유(S4 실측):** 준비 세션(로캘 변경 → 프레임워크 재시작 직후)에서 저장한 골든은 로드할 때 게스트 시계가 저장 시각에 멈춰 있고, **로드 약 21 s 뒤 게스트 전체가 멈췄다**(adb·화면·logcat 모두. 3회 재현). 일반 세션에서 저장한 스냅샷은 4분 뒤 로드해도 시계가 맞고(−0.1 s) 90 s 넘게 멀쩡했다. 저장 방식(gRPC·콘솔)과 GPU 모드(host·host_hidden·software)는 원인이 아니었다.
    - 비용: 콜드 부팅 1회(약 25 s). 1회성 준비 전체는 약 90 s.
@@ -827,7 +836,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    2. `SnapshotService.SaveSnapshot("orcus_golden")`을 부르고 **응답의 `success`와 `err`를 확인한다.** 실패도 정상 응답으로 오기 때문이다(P).
    3. 실패하면 `adb -H 127.0.0.1 -P 15037 -s emulator-5640 emu avd snapshot save orcus_golden`로 저장한다.
    4. `ListSnapshots`에서 Compatible 또는 Loaded인지 확인한다.
-10. **검증 부팅:** `setVmState(SHUTDOWN)` → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식·프레임워크와 4단계 설정 확인 → **로드 60 s 뒤에도 adb가 답하고 `framework_problem`이 없는지 확인**(S4의 "로드 20–25 s 뒤 멈춤"과 system_server Watchdog의 60 s를 지나서. 3a에서 30 s → 60 s) → `provision.json` 기록 → READY. 실패하면 골든을 지우고 `ENGINE_PROVISION_FAILED`로 끝낸다.
+10. **검증 부팅:** 정지(§5.1 STOPPING) → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식·프레임워크와 4단계 설정 확인 → **로드 60 s 뒤에도 adb가 답하고 `framework_problem`이 없는지 확인**(S4의 "로드 20–25 s 뒤 멈춤"과 system_server Watchdog의 60 s를 지나서. 3a에서 30 s → 60 s) → `provision.json` 기록 → READY. 실패하면 골든을 지우고 `ENGINE_PROVISION_FAILED`로 끝낸다.
     - 실측(Phase 2, `-wipe-data`부터): 첫 부팅 92 s, 재시작 대기 9 s, 설정 약 10 s, 콜드 부팅 22 s, 저장 2 s, 검증 부팅 6 s → 약 3분 30초. 3a에서 7a 대기(약 70 s)와 검증 60 s가 더해져 **약 5분**(실측 294 s).
     - UI 문구: "처음 준비하는 중 (약 5분) — 한 번만 합니다".
     - 재구축이면 이유를 보여준다. 예: "그래픽 드라이버가 바뀌어 휴대폰을 다시 준비합니다 (약 5분)".
@@ -1297,7 +1306,7 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
 |---|---|
 | `SETUP_*` | 설치 진행 화면(CLI 터미널 / [P4] 마법사)의 실패 줄 + IT 요청문 |
 | `PRE_*`, `ENGINE_*`(아래 넷 제외) | 엔진 실패 패널 |
-| `ENGINE_GPU_SOFTWARE`, `ENGINE_ADB_LOST`, `ENGINE_RESET_FAILED`, `ENGINE_DISK_LOW` | 지속 경고 배너 |
+| `ENGINE_GPU_SOFTWARE`, `ENGINE_ADB_LOST`, `ENGINE_RESET_FAILED`, `ENGINE_DISK_LOW`, `ENGINE_NO_DISPLAY`(3a) | 지속 경고 배너 |
 | `FILE_*`, `STAGE_*`, `APK_PARSE`, `INSTALL_*` | 결정 필요 모달 |
 | `APP_CRASH` | 폰 위 빨간 배너 + 문제 카드 |
 | 그 밖의 `APP_*` | [로그] 탭의 문제 카드(필요하면 배너도) |
@@ -1425,6 +1434,12 @@ firstboot.bootFromLocalSnapshot=no
 ### 11.4 루트 결정과 가드
 
 - **결정 순서:** `--home` > `ORCUS_HOME` > `<exe 폴더>\orcus_home.txt`(설치 프로그램이 기록) > `D:\OrcusAPK`.
+- **[3a 결정] 권한:**
+  - 설치(CHECK 단계)는 루트를 상위 폴더 권한에서 끊는다. 이 계정·SYSTEM·Administrators에게만 전체 권한을 주고 아래로 상속한다(`common/acl.py`, icacls, 계정마다 한 번).
+  - 이유: D:가 "Authenticated Users: 수정"을 물려주므로, 같은 PC의 다른 계정이 SDK 실행 파일을 바꿔 우리 계정으로 실행시킬 수 있었다(3a 리뷰).
+  - 잠그지 못하면 `SETUP_PERMISSIONS`로 멈추고 아무것도 받지 않는다.
+  - 되돌리기: `icacls <루트> /reset /T`.
+  - 이 PC의 `D:\OrcusAPK`와 개발 폴더 `D:\OrcusDev`도 2026-10-31에 같은 방식으로 잠갔다.
 - **실행을 거부하는 경우:**
   - 경로에 비 ASCII 문자가 있음(37.2.12에는 비 ASCII AVD 경로에서 멈추는 버그가 있음, P)
   - 경로가 40자를 넘음
@@ -1447,9 +1462,11 @@ firstboot.bootFromLocalSnapshot=no
 |---|---|
 | `%USERPROFILE%\.emulator_console_auth_token` | 에뮬레이터가 항상 기록(P) |
 | `%USERPROFILE%\.android\` | 사용자 adb 키 `adbkey`, `adbkey.pub`. adb는 `ANDROID_USER_HOME`을 무시하므로(P), 공유 키를 써도 adb가 만들 수 있다 |
-| `%LOCALAPPDATA%\Temp\avd\running\` | discovery 파일(위치 고정, P) |
+| `%LOCALAPPDATA%\Temp\avd\running\` | discovery 파일(위치 고정, P). 정지 때 engine이 지운다 **[3a]**. 강제 종료(창 강제 종료·Job 종료) 뒤 남은 것은 다음 시작의 고아 정리(§5.7)가 지운다 |
+| `%LOCALAPPDATA%\Microsoft\Windows\PowerShell\StartupProfileData-NonInteractive` | **[3a 추가]** PowerShell이 비대화형으로 뜰 때마다 갱신하는 자기 시작 캐시(이미 있는 파일). engine 사전 점검의 WHPX 확인(`common/accel.py`)이 PowerShell을 띄운다 |
+| `%LOCALAPPDATA%\Temp\netsim.ini`, `netsim.ini.lock`, `netsim.ini.init.lock` | **[3a 추가]** netsimd가 실행 중에 만든다(`TMP`·`TEMP`를 D:로 돌려도 이 위치). qemu와 함께 끝나며 지우므로 정지 뒤에는 없다(3a 측정). 프로세스가 강제로 끝나면 남을 수 있고 다음 실행이 다시 쓴다 |
 | HKCU `...\RunOnce` | 설치 중 재부팅 뒤 재개용 1개. 실행 후 자동 삭제 |
-| `%APPDATA%`, `%ProgramData%` | 아무것도 없어야 함 |
+| `%APPDATA%`, `%ProgramData%` | 아무것도 없어야 함. **[3a]** qemu가 스스로 끝나다 죽으면 Windows가 `%ProgramData%\Microsoft\Windows\WER\ReportArchive\AppCrash_qemu-system-x86_…`를 남긴다. 그래서 정지는 일시정지 뒤 qemu를 종료한다(§5.1 STOPPING) |
 
 - **판정 방법:**
   - 전후 비교에서 OS가 남기는 기록은 뺀다: `NTUSER.DAT*`, Explorer 기록(UserAssist, MuiCache, RecentDocs, ComDlg32, `%APPDATA%\Microsoft\Windows\Recent`), 다른 앱의 Temp·캐시.
@@ -1694,7 +1711,7 @@ firstboot.bootFromLocalSnapshot=no
 - **방향·스캐너:** 가로 고정 앱, BarcodeScanner(안내 문구가 정직한지).
 - **화면 환경:** 배율 100/125/150%. 창을 다른 모니터(세로 모니터 포함)로 옮겼을 때 크기 재계산. 원격제어(Mirage)를 켠 상태. V3 실시간 감시를 켠 상태.
 - **드롭:** Drive 한글 경로, 온라인 전용 파일, 탐색기, 바탕화면에서.
-- **로그오프 빠른 정지:** 앱 실행 중 로그오프 → 다시 로그인했을 때 `D:\OrcusAPK\sdk` 프로세스가 없고 스냅샷이 저장되지 않았다.
+- **로그오프 빠른 정지:** 앱 실행 중 로그오프 → 다시 로그인했을 때 `D:\OrcusAPK\sdk` 프로세스가 없고 스냅샷이 저장되지 않았다. **[3a]** 스냅샷이 저장되었는지는 `ram.bin`·`textures.bin`·`hardware.ini`·`screenshot.png`로 본다. `snapshot.pb`는 에뮬레이터가 로드할 때마다 성공 로드 횟수(필드 11)를 올려 다시 쓰므로 비교에서 뺀다.
 - **자원:** 작업 관리자로 유휴 RAM·CPU를 확인한다(모든 Orcus·SDK 프로세스 합계).
 - **흔적:** C:·Drive 폴더 비교(§11.5의 범위와 허용 목록).
 

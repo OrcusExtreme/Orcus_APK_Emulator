@@ -9,9 +9,12 @@ import hashlib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from google.protobuf.message import DecodeError
+
 from orcus.common import avd, jsonio, pins
 from orcus.common.paths import OrcusPaths
 from orcus.contracts import GpuMode, SessionMode, Settings
+from orcus.emugrpc.generated import snapshot_pb2
 
 from . import args
 
@@ -91,6 +94,17 @@ def clear(paths: OrcusPaths) -> None:
 
 def golden_exists(paths: OrcusPaths) -> bool:
     return (paths.golden_dir / "ram.bin").exists()
+
+
+def golden_gpu(paths: OrcusPaths) -> str | None:
+    """The host GPU the emulator recorded when it saved the golden (`snapshot.pb` host.gpu_driver, e.g.
+    '10de-NVIDIA GeForce GTX 1660-'); '' when it saw none; None when unreadable. A load compares it with the
+    session's display devices and deletes the golden on a mismatch (3a finding 18)."""
+    try:
+        snap = snapshot_pb2.Snapshot.FromString((paths.golden_dir / "snapshot.pb").read_bytes())
+    except (OSError, DecodeError):
+        return None
+    return snap.host.gpu_driver if snap.HasField("host") else None
 
 
 def usable(paths: OrcusPaths, key: ValidityKey, mode: SessionMode) -> Record | None:

@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _NAME = re.compile(r"^pid_(\d+)\.ini$", re.IGNORECASE)
+# the emulator's own processes: what a stop or a boot check may end under the SDK (never adb, emulator-check; 3a)
+EMULATOR_IMAGES = frozenset({"emulator.exe", "qemu-system-x86_64-headless.exe", "qemu-system-x86_64.exe",
+                             "netsimd.exe", "crashpad_handler.exe"})
 
 
 @dataclass(frozen=True)

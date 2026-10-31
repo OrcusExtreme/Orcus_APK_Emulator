@@ -12,13 +12,19 @@ import sys
 import time
 
 from orcus.app import compose
-from orcus.common import messages_ko  # noqa: F401  (the packaged build must carry the string table)
+from orcus.common import messages_ko, win32   # messages_ko: the packaged build must carry the string table
+from orcus.common.paths import home_problems
 
 
 def main() -> int:
     compose.prepare_process()
     p = compose.make_paths(None)
-    p.logs.mkdir(parents=True, exist_ok=True)
+    try:
+        p.logs.mkdir(parents=True, exist_ok=True)
+    except OSError as e:   # no D:, or a bad orcus_home.txt: say so instead of dying without a window or a log
+        reasons = " ".join(messages_ko.text(r) for r in home_problems(p.root)) or str(e)
+        win32.message_box("Orcus APK", f"{p.root} 폴더를 쓸 수 없어 시작하지 못했습니다.\n{reasons}")
+        return 1
     stamp = time.strftime("%Y%m%d-%H%M%S")
     if "--selftest" in sys.argv:
         report = compose.selftest()

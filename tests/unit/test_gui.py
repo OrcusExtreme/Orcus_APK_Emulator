@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence, QMouseEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from orcus.common import messages_ko
 from orcus.contracts import (
@@ -269,3 +269,24 @@ def test_window_wiring(qapp: QApplication, tmp_path: Path) -> None:
     assert list(w.banner_widgets) == [str(ErrorCode.ENGINE_GPU_SOFTWARE)] and len(s.dev.frames.started) == 2
     assert w.toast.text() == window.CRASH_NOTICE[SessionMode.GOLDEN]   # B11: golden data went back to the start
     w.close()
+
+
+def test_untrusted_app_text_is_never_rich_text(qapp: QApplication) -> None:
+    """A manifest label like `<img src=//host/x.png>` loaded over SMB as rich text (3a review)."""
+    from orcus.gui import overlays, panels
+    p = panels.AppPanel()
+    host = QWidget()   # keep it: a collected parent deletes the overlay with it
+    o = overlays.Overlay(host)
+    b = overlays.Banner("<b>crash</b>", red=True)
+    labels = [p.title, p.facts, o.label, *b.findChildren(type(p.title))]
+    assert all(label.textFormat() is Qt.TextFormat.PlainText for label in labels)
+
+
+def test_only_existing_local_files_are_handed_over(tmp_path: Path) -> None:
+    """Another account could hand over a share path and make us fetch it with our credentials (3a review)."""
+    from orcus.gui import instance
+    apk = tmp_path / "고양이.apk"
+    apk.write_bytes(b"x")
+    assert instance.acceptable(str(apk))
+    for bad in (r"\\host\share\x.apk", "//host/share/x.apk", "relative.apk", str(tmp_path / "missing.apk"), ""):
+        assert not instance.acceptable(bad), bad

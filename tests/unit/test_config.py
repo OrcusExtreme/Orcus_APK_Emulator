@@ -35,6 +35,20 @@ def test_bad_entries_are_skipped(tmp_path: Path) -> None:
     assert len(warnings) == 3
 
 
+def test_an_unreadable_settings_file_starts_from_defaults(tmp_path: Path) -> None:
+    """A hand edit saved as ANSI (CP949), a stray comma or Infinity must not stop the app (3a review)."""
+    p = OrcusPaths(tmp_path)
+    p.state.mkdir(parents=True)
+    f = p.state_file("settings.json")
+    for raw in ('{"engine": {"locale": "한국어"}}'.encode("cp949"), b'{"engine": {"ram_mb": 3072,}}'):
+        f.write_bytes(raw)
+        assert config.load(p, env={}) == Settings()
+        assert not f.exists() and p.state_file("settings.json.corrupt").read_bytes() == raw   # kept for a look
+    f.write_text('{"engine": {"ram_mb": Infinity}}', encoding="utf-8")
+    warnings: list[str] = []
+    assert config.load(p, env={}, warnings=warnings).engine.ram_mb == Settings().engine.ram_mb and warnings
+
+
 def test_apply_and_classify() -> None:
     base = Settings()
     assert config.classify(base, config.apply(base, {"engine.gpu_mode": "software"})) == ApplyResult(True, True)

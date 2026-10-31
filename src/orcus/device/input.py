@@ -26,6 +26,7 @@ from .rotation import to_panel
 
 _log = log.get("device.input")
 PASTE_SETTLE_S = 0.1
+PASTE_MAX = 64 * 1024   # characters; more blocked taps behind it and flooded a text box (3a review)
 LONG_PRESS_S = 0.7
 
 _KP, _DOWN, _UP = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
@@ -67,6 +68,9 @@ class InputQueue:
         self.paste_text(text)   # key events become jamo with the Korean keyboard (S8)
 
     def paste_text(self, text: str) -> None:
+        if len(text) > PASTE_MAX:   # a huge clipboard blocked the input queue for seconds and flooded the guest (3a)
+            _log.info("paste cut from %d to %d characters", len(text), PASTE_MAX)
+            text = text[:PASTE_MAX]
         self._q.put(("paste", text))
 
     def release_all(self) -> None:

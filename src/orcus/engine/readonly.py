@@ -1,11 +1,12 @@
 """A look at a VM another process owns: `orcus-cli engine status|shot` (ARCHITECTURE.md §1.3).
 
 Reads the owner record and the emulator's discovery file, then makes read-only gRPC calls (getStatus,
-getScreenshot). The VM, the lock and the owner record are never touched.
+getScreenshot). The VM, the lock and the owner record are never touched. The state shown is the one the owner
+wrote into its record (3a): the guest's `booted` turns true about 4 s before the owner's SESSION_INIT checks end.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import grpc
 from google.protobuf import empty_pb2
@@ -26,16 +27,21 @@ class Owner:
     started: float
     console: int
     grpc: int
+    state: EngineState | None = None   # None: written before 3a, without the owner's state
+    text_key: str | None = None
+    epoch: int = 0
+    mode: SessionMode = SessionMode.GOLDEN
 
 
 class ReadOnlyVm:
-    """orcus.contracts.ReadOnlyEngine. Mode and epoch belong to the owner, so status() reports them as
-    GOLDEN / 0; `owner` and `uptime_s()` say what is known from outside."""
+    """orcus.contracts.ReadOnlyEngine. status() reports the state, epoch and mode the owner last wrote (read again
+    on every call); `owner` and `uptime_s()` say what is known from outside."""
 
-    def __init__(self, owner: Owner, record: discovery.DiscoveryRecord) -> None:
+    def __init__(self, owner: Owner, record: discovery.DiscoveryRecord, paths: OrcusPaths) -> None:
         assert record.grpc_port and record.grpc_token
         self.owner = owner
         self.record = record
+        self._paths = paths
         self._channel = grpc_channel.make_channel(record.grpc_port, record.grpc_token)
         self._stub = grpc_channel.controller(self._channel)
 
@@ -49,7 +55,11 @@ class ReadOnlyVm:
         st = self._status()
         if st is None:
             return None
-        state = EngineState.READY if getattr(st, "booted", False) else EngineState.BOOTING
+        now = read_owner(self._paths)
+        if now is not None and now.pid == self.owner.pid and now.state is not None:
+            return EngineStatus(now.state, now.text_key or f"engine.state.{now.state}", None, now.mode, now.epoch,
+                                EpochCause.BOOT, True, (), None, None)
+        state = EngineState.READY if getattr(st, "booted", False) else EngineState.BOOTING   # an owner from before 3a
         return EngineStatus(state, f"engine.state.{state}", None, SessionMode.GOLDEN, 0, EpochCause.BOOT, True, (),
                             None, None)
 
@@ -73,10 +83,15 @@ def read_owner(paths: OrcusPaths) -> Owner | None:
     if not isinstance(raw, dict):
         return None
     try:
-        return Owner(int(raw["pid"]), str(raw.get("kind", "?")), float(raw.get("started", 0.0)),
-                     int(raw["console"]), int(raw["grpc"]))
+        owner = Owner(int(raw["pid"]), str(raw.get("kind", "?")), float(raw.get("started", 0.0)),
+                      int(raw["console"]), int(raw["grpc"]))
     except (KeyError, TypeError, ValueError):
         return None
+    try:   # the owner's own state (3a); a record without it, or with a value we do not know, keeps the defaults
+        return replace(owner, state=EngineState(raw["state"]), text_key=str(raw.get("text_key") or "") or None,
+                       epoch=int(raw.get("epoch", 0)), mode=SessionMode(raw.get("mode", SessionMode.GOLDEN)))
+    except (KeyError, TypeError, ValueError):
+        return owner
 
 
 def attach(paths: OrcusPaths) -> ReadOnlyVm | None:
@@ -84,8 +99,8 @@ def attach(paths: OrcusPaths) -> ReadOnlyVm | None:
     owner = read_owner(paths)
     if owner is None or not winjob.pid_alive(owner.pid):
         return None
-    dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""), "TMP": str(paths.tmp)})
+    dirs = discovery.candidate_dirs({"LOCALAPPDATA": os.environ.get("LOCALAPPDATA", "")})   # not the shared <home>\tmp
     rec = discovery.find(dirs, serial_port=owner.console, avd_dir=paths.avd_data, alive=winjob.pid_alive)
     if rec is None or not rec.grpc_port or not rec.grpc_token:
         return None
-    return ReadOnlyVm(owner, rec)
+    return ReadOnlyVm(owner, rec, paths)

@@ -21,6 +21,7 @@ from orcus.app import smoke as smoke_mod
 from orcus.app.session import Session
 from orcus.common import hostinfo, messages_ko, win32
 from orcus.common.messages_ko import text
+from orcus.common.paths import home_problems
 from orcus.common.pins import EMULATOR, EMULATOR_BUILD
 from orcus.contracts import (
     EngineState,
@@ -153,6 +154,12 @@ def _handle_whpx(api: compose.SetupService) -> bool:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     p = compose.make_paths(args.home)
+    problems = home_problems(p.root)   # before the log folder is made there (no D:, a Drive folder, …)
+    if problems:
+        _out(text("setup.title") + f"  ({p.root})")
+        for reason in problems:
+            _out("    " + text(reason))
+        return 1
     warnings: list[str] = []
     settings = compose.load_settings(p, warnings)
     log_path = compose.start_logging(p, "setup")
@@ -210,7 +217,10 @@ def cmd_setup(args: argparse.Namespace) -> int:
 def cmd_doctor(args: argparse.Namespace) -> int:
     p = compose.make_paths(args.home)
     settings = compose.load_settings(p)
-    compose.start_logging(p, "doctor")
+    try:
+        compose.start_logging(p, "doctor")
+    except OSError as e:   # the report says what is wrong with the folder; it needs no log file for that
+        _out(f"(로그 파일 없이 진행: {e})")
     lines = compose.doctor(p, settings)
     for line in lines:
         mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL", "info": "    "}[line.status]

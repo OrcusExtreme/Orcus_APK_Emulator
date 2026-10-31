@@ -5,10 +5,11 @@ import queue
 from pathlib import Path
 from typing import Any
 
-from orcus.common import accel, pins
+from orcus.common import accel, messages_ko, pins
 from orcus.common.paths import OrcusPaths
-from orcus.contracts import CmdResult, ErrorCode, Settings, SetupApi, SetupEvent, SetupStep
+from orcus.contracts import CmdResult, ErrorCode, OrcusFailure, Settings, SetupApi, SetupEvent, SetupStep
 from orcus.setup import extract, license
+from orcus.setup import steps as steps_mod
 from orcus.setup.repo_index import RemoteArchive, RemotePackage, RepoIndex
 from orcus.setup.steps import SetupDeps, SetupService
 from orcus.setup.whpx import DismOutcome
@@ -40,6 +41,9 @@ class World:
         self.calls: dict[str, int] = {}
         self.downloads: list[str] = []
         self.resume_registered = False
+        self.zips_ok = True   # the downloaded zips still match their pins at extraction
+        self.lock_code = 0    # icacls exit code for the root lock
+        self.locks = 0
 
     def count(self, name: str) -> None:
         self.calls[name] = self.calls.get(name, 0) + 1
@@ -78,6 +82,11 @@ class World:
             p.adbkey.with_suffix(".pub").write_text("public")
             return CmdResult(("adb", "keygen"), 0, "", "", 0.1, False)
 
+        def lock_root(path: Path, sid: str) -> CmdResult:
+            self.locks += 1
+            return CmdResult(("icacls",), self.lock_code, "", "" if self.lock_code == 0 else "Access is denied.", 0.1,
+                             False)
+
         def register() -> None:
             self.resume_registered = True
 
@@ -92,7 +101,10 @@ class World:
             run_dism=run_dism, download=download, install_archive=install, verify_installed=verify,
             emulator_check=check, adb_keygen=keygen, ensure_job=lambda: self.count("job"),
             disk_free=lambda: self.free, register_resume=register, unregister_resume=unregister,
-            check_interpreter=False, check_home=lambda root: [])
+            check_interpreter=False, check_home=lambda root: [],
+            boot_id=lambda: None,                                 # reboots are simulated by boot time here
+            verify_zip=lambda zip_path, archive: self.zips_ok,
+            lock_root=lock_root)
 
 
 class Recorder:
@@ -259,3 +271,84 @@ def test_cancel_while_waiting_for_license(tmp_path: Path) -> None:
     api.cancel()
     assert api.join(5)
     assert license.load_records(p) == []
+
+
+def _accept_and_enable(api: SetupService, rec: Recorder) -> None:
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    lt = api.license()
+    assert lt is not None
+    api.accept_license(lt.sha256, "tester")
+    rec.until(SetupStep.WHPX, "waiting_user")
+    api.enable_whpx()
+
+
+def test_a_zip_that_changed_after_its_download_is_not_extracted(tmp_path: Path) -> None:
+    """The SHA-1 is checked at download; another account could swap the file before EXTRACT (3a review)."""
+    w, p = World(), OrcusPaths(tmp_path)
+    w.zips_ok = False
+    api, rec = start(w, p)
+    _accept_and_enable(api, rec)
+    rec.until(SetupStep.DOWNLOAD, "done")
+    ev = rec.until(SetupStep.EXTRACT, "failed")
+    assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_CHECKSUM
+    assert not w.installed and not (p.downloads / pins.ARCHIVES[0].filename).exists()   # downloaded again next run
+
+
+def test_a_state_file_that_cannot_be_saved_does_not_stop_setup(tmp_path: Path, monkeypatch: Any) -> None:
+    """D: full while setup runs: steps still report (the next run redoes the unsaved ones) (3a review)."""
+    def disk_full(path: Path, data: Any) -> None:
+        if path.name == "setup.json":
+            raise OSError(28, "No space left on device")
+    monkeypatch.setattr(steps_mod.jsonio, "write_json_atomic", disk_full)
+    w, p = World(), OrcusPaths(tmp_path)
+    api, rec = start(w, p)
+    rec.until(SetupStep.CHECK, "done")
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    api.cancel()
+    assert api.join(5)
+
+
+def test_license_texts_that_failed_are_asked_again(tmp_path: Path, monkeypatch: Any) -> None:
+    """A failed license fetch must not leave the archive list cached without its texts: a retry on the same
+    service then passed LICENSE without asking (3a review)."""
+    real = steps_mod.repo_index.license_texts
+    calls: list[int] = []
+
+    def flaky(*a: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise OrcusFailure(messages_ko.error(ErrorCode.SETUP_LICENSE_NOT_STABLE, "no text in the index"))
+        return real(*a)
+    monkeypatch.setattr(steps_mod.repo_index, "license_texts", flaky)
+    w, p = World(), OrcusPaths(tmp_path)
+    api, rec = start(w, p)
+    ev = rec.until(SetupStep.LICENSE, "failed")
+    assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_LICENSE_NOT_STABLE
+    assert api.join(5)
+    api.run()                                            # same service: the texts are fetched again and asked
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    assert len(calls) == 2 and license.load_records(p) == []
+    api.cancel()
+    assert api.join(5)
+
+
+def test_the_root_becomes_this_accounts_only_once(tmp_path: Path) -> None:
+    """Another account on a shared PC could replace the SDK binaries under the drive's inherited ACL (3a decision)."""
+    w, p = World(), OrcusPaths(tmp_path)
+    api, rec = start(w, p)
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    api.cancel()
+    assert api.join(5) and w.locks == 1
+    api2, rec2 = start(w, p)                          # the next run sees it done for this account
+    rec2.until(SetupStep.LICENSE, "waiting_user")
+    api2.cancel()
+    assert api2.join(5) and w.locks == 1
+
+
+def test_a_root_that_cannot_be_locked_stops_setup(tmp_path: Path) -> None:
+    w, p = World(), OrcusPaths(tmp_path)
+    w.lock_code = 5
+    api, rec = start(w, p)
+    ev = rec.until(SetupStep.CHECK, "failed")
+    assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_PERMISSIONS
+    assert "index" not in w.calls                      # nothing is downloaded into a folder others can change

@@ -23,6 +23,15 @@ from PySide6.QtWidgets import (
 )
 
 from orcus.common.messages_ko import text
+
+
+def plain_box(parent: QWidget, title: str, words: str) -> None:
+    """An information box that never renders its text as HTML (it can quote an app's or the emulator's text)."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(words)
+    box.exec()
 from orcus.contracts import ApkInfo, Issue, IssueLevel, LogEntry, OrcusError
 
 from . import dialogs
@@ -49,6 +58,9 @@ class AppPanel(QWidget):
         self.facts = QLabel()
         self.facts.setWordWrap(True)
         self.facts.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # the manifest's label and package are untrusted: `<img src=//host/x>` loaded from SMB as rich text (3a)
+        for label in (self.title, self.facts):
+            label.setTextFormat(Qt.TextFormat.PlainText)
         self.era = QLabel()
         self.era.setStyleSheet("background:#e8f0fe;color:#174ea6;border-radius:8px;padding:2px 8px")
         self.empty = QLabel("여기에 .apk를 끌어다 놓거나 [APK 열기]를 누르세요.")
@@ -85,7 +97,7 @@ class AppPanel(QWidget):
         self.empty.hide()
         self.body.show()
         pm = QPixmap()
-        if info is not None and info.icon_png and pm.loadFromData(info.icon_png):
+        if info is not None and info.icon_png and pm.loadFromData(info.icon_png, "PNG"):   # no other image plugin
             self.icon.setPixmap(pm.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio,
                                           Qt.TransformationMode.SmoothTransformation))
         else:
@@ -112,7 +124,7 @@ class AppPanel(QWidget):
             chip.setText(words if len(words) <= 34 else words[:32] + "…")
             chip.setToolTip(words)
             chip.setStyleSheet(f"{LEVEL_STYLE[issue.level]};border-radius:10px;padding:3px 8px;text-align:left")
-            chip.clicked.connect(lambda _=False, w=words: QMessageBox.information(self, "PC 휴대폰 안내", w))
+            chip.clicked.connect(lambda _=False, w=words: plain_box(self, "PC 휴대폰 안내", w))
             self.chips.addWidget(chip)
 
 
@@ -128,7 +140,9 @@ class ProblemCard(QFrame):
         lay.addWidget(top)
         lay.addWidget(cause)
         if err.detail:
-            d = QLabel(err.detail if len(err.detail) <= 160 else err.detail[:157] + "…")
+            d = QLabel()
+            d.setTextFormat(Qt.TextFormat.PlainText)   # crash and runtime-error text comes from the app (3a review)
+            d.setText(err.detail if len(err.detail) <= 160 else err.detail[:157] + "…")
             d.setWordWrap(True)
             d.setStyleSheet("color:#52606d")
             d.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -148,9 +162,10 @@ class ProblemCard(QFrame):
         box = QMessageBox(self)
         box.setWindowTitle("자세히")
         box.setText(text(err.message_key))
-        box.setInformativeText(f"{err.code}: {err.detail}" if err.detail else str(err.code))
-        if err.log_excerpt:
-            box.setDetailedText(err.log_excerpt)
+        # the detail is the app's or the emulator's text: the informative label rendered it as HTML with links that
+        # open (file://host/x.hta), so it goes in the plain detailed-text area instead (3a review)
+        detail = f"{err.code}: {err.detail}" if err.detail else str(err.code)
+        box.setDetailedText(detail + (f"\n\n{err.log_excerpt}" if err.log_excerpt else ""))
         box.exec()
 
 
@@ -213,4 +228,7 @@ class LogPanel(QWidget):
     def _save(self) -> None:
         name = dialogs.save_file(self, "로그 저장", str(Path.home() / "orcus-log.txt"), "텍스트 (*.txt)")
         if name:
-            Path(name).write_text(self.raw.toPlainText(), encoding="utf-8")
+            try:
+                Path(name).write_text(self.raw.toPlainText(), encoding="utf-8")
+            except OSError as e:   # no console in the windowed build: say so instead of failing silently
+                plain_box(self, "로그 저장", f"저장하지 못했습니다: {e}")

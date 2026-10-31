@@ -20,6 +20,7 @@ from orcus.contracts import CmdResult, DeviceEndpoint, PortSettings, Settings
 from orcus.emugrpc.channel import make_channel
 from orcus.emugrpc.fake import FakeEmulatorServer
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
+from orcus.emugrpc.generated import snapshot_pb2
 from orcus.engine.discovery import DiscoveryRecord
 from orcus.engine.manager import EngineManager
 from orcus.engine.seams import Seams
@@ -212,10 +213,12 @@ class HookedFake(FakeEmulatorServer):
 
 
 class FakeProc:
-    def __init__(self, pid: int, exit_when: Callable[[], bool] = lambda: False) -> None:
+    def __init__(self, pid: int, exit_when: Callable[[], bool] = lambda: False,
+                 on_kill: Callable[[], None] = lambda: None) -> None:
         self.pid = pid
         self.code: int | None = None
         self._exit_when = exit_when
+        self._on_kill = on_kill
 
     def poll(self) -> int | None:
         if self.code is None and self._exit_when():
@@ -233,6 +236,7 @@ class FakeProc:
     def kill(self) -> None:
         if self.code is None:
             self.code = 1
+            self._on_kill()
 
 
 class FakeProcesses:
@@ -259,7 +263,12 @@ class FakeProcesses:
         golden_load_ok = True
         if "-snapshot" in argv:
             golden_load_ok = dev.load_golden() and GOLDEN_SNAPSHOT in fake.snapshots
-            if not golden_load_ok:
+            if golden_load_ok and self.env.gpu_changes_once:   # the emulator deletes the golden itself (3a)
+                self.env.gpu_changes_once = golden_load_ok = False
+                fake.snapshots.discard(GOLDEN_SNAPSHOT)
+                lines.append("WARNING | Failed to load snapshot, because 'host GPU has changed'; Emulator will "
+                             "delete existing snapshot and exit.\n")
+            elif not golden_load_ok:
                 lines.append("ERROR | Failed to load snapshot 'orcus_golden'\n")
         else:
             locale = argv[argv.index("-change-locale") + 1] if "-change-locale" in argv else None
@@ -274,13 +283,17 @@ class FakeProcesses:
                     dev.power_off()
                 return True
             return False
-        p = FakeProc(pid, gone)
+        p = FakeProc(pid, gone, on_kill=dev.power_off)   # a kill loses unflushed writes too
         self.procs[pid] = (p, str(self.env.paths.emulator_exe))
         self.emulator = p
         return p
 
     def sdk_processes(self) -> list[tuple[int, str]]:
-        return [(pid, image) for pid, (p, image) in self.procs.items() if p.poll() is None]
+        out = [(pid, image) for pid, (p, image) in self.procs.items() if p.poll() is None]
+        if self.emulator is not None and self.emulator.poll() is None:   # its qemu: the discovery record's pid
+            out.append((self.emulator.pid + 1, str(self.env.paths.sdk / "emulator" / "qemu" / "windows-x86_64" /
+                                                   "qemu-system-x86_64-headless.exe")))
+        return out
 
     def terminate(self, pid: int) -> bool:
         self.terminated.append(pid)
@@ -399,6 +412,9 @@ class EngineEnv:
         self.paths.tmp.mkdir(parents=True, exist_ok=True)
         self.settings = settings or Settings()
         self.extra_log_lines: list[str] = []
+        self.displays = 1                     # display devices of the session (0: disconnected Remote Desktop)
+        self.golden_gpu = "10de-Fake GPU-"    # what a saved golden records as its host GPU
+        self.gpu_changes_once = False         # the next golden load fails as 'host GPU has changed'
         self.device = FakeDevice()
         self.fake = HookedFake(self)
         self.fake.start()
@@ -410,7 +426,7 @@ class EngineEnv:
         self.seams = Seams(procs=self.procs, discovery=self.discovery, adb=self.adb, register=lambda a, b: "OKAY",
                            ports=FakePorts(), clock=self.clock, channel=make_channel, whpx_on=lambda: True,
                            disk_free=lambda p: 100 * GIB, env=lambda port: dict(os.environ),
-                           home_problems=lambda p: [])
+                           home_problems=lambda p: [], displays=lambda: self.displays)
         self.manager = EngineManager(self.paths, lambda: self.settings, self.seams, self._session, owner_kind="test")
 
     def _session(self, endpoint: DeviceEndpoint) -> Any:
@@ -420,12 +436,16 @@ class EngineEnv:
 
     def sync_golden_file(self) -> None:
         ram = self.paths.golden_dir / "ram.bin"
+        meta = self.paths.golden_dir / "snapshot.pb"   # the emulator records the host GPU it saw (3a finding 18)
         if GOLDEN_SNAPSHOT in self.fake.snapshots:
             ram.parent.mkdir(parents=True, exist_ok=True)
             if not ram.exists():
                 ram.write_bytes(b"ram")
-        elif ram.exists():
-            ram.unlink()
+            gpu = self.golden_gpu if self.displays else ""
+            meta.write_bytes(snapshot_pb2.Snapshot(host=snapshot_pb2.Host(gpu_driver=gpu)).SerializeToString())
+        else:
+            ram.unlink(missing_ok=True)
+            meta.unlink(missing_ok=True)
 
     def modes(self) -> list[str]:
         """Launch modes of the emulator spawns, in order."""

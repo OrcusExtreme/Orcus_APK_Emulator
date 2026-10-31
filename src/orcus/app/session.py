@@ -126,7 +126,7 @@ class Session:
     def shutdown(self, *, fast: bool = False) -> None:
         """§4 shutdown order from step 2: cancel the APK pipeline, stop the engine (it closes the device session
         and releases a held finger), then the private adb server. Bounded: ~2 s fast, ~15 s otherwise."""
-        self._apps.close()
+        self._apps.close(fast=fast)
         if not fast and self._engine.status().state not in IDLE:
             self._engine.stop()
             end = time.monotonic() + STOP_WAIT_S

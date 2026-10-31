@@ -16,6 +16,7 @@ class ErrorCode(StrEnum):
     SETUP_DISM_FAILED = auto()
     SETUP_REBOOT_PENDING = auto()
     SETUP_WHPX_REVERTED = auto()
+    SETUP_PERMISSIONS = auto()    # the root could not be made this account's only (3a, common/acl.py)
     SETUP_QUARANTINE = auto()
     SETUP_ACCEL_FAILED = auto()
     # PRE_*: checks before the emulator starts
@@ -25,6 +26,7 @@ class ErrorCode(StrEnum):
     PRE_DISK = auto()
     PRE_PATH = auto()
     PRE_PORTS = auto()
+    PRE_NO_DISPLAY = auto()       # no display device (disconnected Remote Desktop): no golden is saved (3a)
     # ENGINE_*: the emulator
     ENGINE_IN_USE = auto()
     ENGINE_EXIT = auto()
@@ -40,8 +42,10 @@ class ErrorCode(StrEnum):
     ENGINE_UNAVAILABLE = auto()
     ENGINE_NO_FRAMES = auto()
     ENGINE_DISK_LOW = auto()
+    ENGINE_NO_DISPLAY = auto()    # warning: booted COLD this once to keep the golden (3a finding 18)
     # FILE_* / STAGE_*: the dropped file
     FILE_NOT_ANDROID = auto()
+    STAGE_UNEXPECTED = auto()     # an error the pipeline did not expect: the run still ends (3a review)
     FILE_IS_AAB = auto()
     FILE_IS_AIA = auto()
     FILE_IS_AIX = auto()

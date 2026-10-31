@@ -161,8 +161,7 @@ def read_properties(path: Path) -> dict[str, str]:
 
 
 def partial_marker(paths: OrcusPaths, archive: Archive) -> Path:
-    target = paths.package_dir(archive)
-    return target.with_name(target.name + ".partial")
+    return paths.partial_marker(archive)
 
 
 @dataclass(frozen=True)

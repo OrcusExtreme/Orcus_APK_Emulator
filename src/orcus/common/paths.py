@@ -52,6 +52,11 @@ class OrcusPaths:
     def package_dir(self, archive: Archive) -> Path:
         return self.sdk / archive.install_dir
 
+    def partial_marker(self, archive: Archive) -> Path:
+        """`<package>.partial`: setup started extracting this package and has not finished (setup/extract.py)."""
+        target = self.package_dir(archive)
+        return target.with_name(target.name + ".partial")
+
     @property
     def avd_dir(self) -> Path:
         return self.root / "avd"

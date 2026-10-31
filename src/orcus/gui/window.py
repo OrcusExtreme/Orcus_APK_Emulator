@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from orcus.common import messages_ko
+from orcus.common import messages_ko, win32
 from orcus.common.messages_ko import Channel, text
 from orcus.contracts import (
     DeviceSession,
@@ -56,6 +56,7 @@ LANDSCAPES = (Rotation.LANDSCAPE, Rotation.REVERSE_LANDSCAPE)
 CRASH_NOTICE = {SessionMode.GOLDEN: "휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다.",
                 SessionMode.COLD: "휴대폰이 멈춰서 다시 켰습니다.",
                 SessionMode.KEEP_STATE: "휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다."}
+NO_DISPLAY_CHIP = "이번만 느린 시작 — 초기화하면 깨끗한 휴대폰으로"   # COLD boot that kept the golden (3a finding 18)
 MODE_CHIP = {SessionMode.GOLDEN: "깨끗한 휴대폰 모드 — 닫으면 처음 상태로", SessionMode.COLD: "느린 그래픽 모드 · 휴대폰 상태가 유지됨",
              SessionMode.KEEP_STATE: "휴대폰 유지 모드"}
 # RemedyAction -> handler method name; the unit test checks every action has one (§3)
@@ -107,7 +108,9 @@ class MainWindow(QMainWindow):
         central.setLayout(row)
         self.setCentralWidget(central)
         self.status_engine = QLabel()
-        self.status_app = QLabel()
+        self.status_app = QLabel()   # carries the app's own label: never rich text (3a review)
+        for label in (self.status_engine, self.status_app):
+            label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_mic = QLabel("마이크 꺼짐")
         self.statusBar().addWidget(self.status_engine, 1)
         self.statusBar().addPermanentWidget(self.status_app)
@@ -192,7 +195,8 @@ class MainWindow(QMainWindow):
         self._status = st
         android = "Android 16" if st.caps and st.caps.api == 36 else (f"API {st.caps.api}" if st.caps else "")
         gpu = f"GPU {st.caps.gpu_mode}" if st.caps else ""
-        parts = [text(st.text_key), android, gpu, MODE_CHIP[st.mode] if st.state == EngineState.READY else ""]
+        chip = NO_DISPLAY_CHIP if ErrorCode.ENGINE_NO_DISPLAY in st.warnings else MODE_CHIP[st.mode]
+        parts = [text(st.text_key), android, gpu, chip if st.state == EngineState.READY else ""]
         self.status_engine.setText("● " + " · ".join(p for p in parts if p))
         if st.state == EngineState.READY:
             self.engine_panel.hide()
@@ -230,8 +234,9 @@ class MainWindow(QMainWindow):
             action = None
             if spec.remedy is not None:
                 act = spec.remedy
-                action = (text(f"remedy.{act}"), lambda a=act: self.remedy(a))
-            b = Banner(spec.text, action=action, on_close=lambda k=key: self._forget_banner(k))
+                # clicked(bool) fills the first parameter: `lambda a=act:` got False and the button did nothing (3a)
+                action = (text(f"remedy.{act}"), lambda _=False, a=act: self.remedy(a))
+            b = Banner(spec.text, action=action, on_close=lambda _=False, k=key: self._forget_banner(k))
             self.banner_widgets[key] = b
             self.banners.addWidget(b)
 
@@ -329,7 +334,7 @@ class MainWindow(QMainWindow):
         self.log_panel.add_problem(err)
         self.tabs.setTabText(1, f"로그 ({self.log_panel.count})")
         if channel == Channel.RED_BANNER:
-            action = (text(f"remedy.{err.remedy.action}"), lambda a=err.remedy.action: self.remedy(a)) \
+            action = (text(f"remedy.{err.remedy.action}"), lambda _=False, a=err.remedy.action: self.remedy(a)) \
                 if err.remedy else None
             first = err.detail.splitlines()[0][:120] if err.detail else ""
             b = Banner(f"{self._app_name or '앱'}가 예기치 않게 종료되었습니다. {first}", red=True, action=action)
@@ -391,10 +396,13 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "설치 복구", "터미널에서 orcus-cli setup을 실행하면 빠진 파일을 다시 받습니다.")
 
     def open_logs(self) -> None:
-        subprocess.Popen(["explorer.exe", str(self.logs_dir)])   # explorer hands over to the shell (§1.2)
+        # explorer hands over to the shell (§1.2); by full path, never one found in the current folder (3a review)
+        subprocess.Popen([str(win32.system_dir().parent / "explorer.exe"), str(self.logs_dir)])
 
     def reset_phone(self) -> None:
-        if self._status.mode == SessionMode.COLD:
+        if ErrorCode.ENGINE_NO_DISPLAY in self._status.warnings:   # a restart loads the kept golden
+            question = "휴대폰을 다시 켜서 저장된 깨끗한 휴대폰으로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
+        elif self._status.mode == SessionMode.COLD:
             question = "느린 그래픽 모드에서는 휴대폰을 처음부터 다시 준비합니다(수 분). 계속할까요?"
         else:
             question = "휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
@@ -432,7 +440,11 @@ class MainWindow(QMainWindow):
             return
         name = dialogs.save_file(self, "스크린샷 저장", str(Path.home() / "Pictures" / "orcus.png"), "PNG (*.png)")
         if name:
-            Path(name).write_bytes(png)
+            try:
+                Path(name).write_bytes(png)
+            except OSError as e:   # the windowed build has no console: say it instead of failing silently
+                self.toast.show_text(f"스크린샷을 저장하지 못했습니다: {e.strerror or e}")
+                return
             self.toast.show_text("스크린샷을 저장했습니다")
 
     def copy_report(self) -> None:
@@ -463,6 +475,12 @@ class MainWindow(QMainWindow):
         if len(urls) == 1 and urls[0].isLocalFile():
             event.acceptProposedAction()
             self.s.open_paths([Path(urls[0].toLocalFile())])
+
+    def event(self, event: QEvent) -> bool:
+        # moved to a monitor with other scaling: refit, or the phone is cropped and taps land beside (3a review)
+        if event.type() == QEvent.Type.DevicePixelRatioChange:
+            QTimer.singleShot(0, self.fit_phone)
+        return super().event(event)
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():

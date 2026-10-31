@@ -1,10 +1,15 @@
-"""Manifest facts (ARCHITECTURE.md §7.3) with apkInspector 1.3.7's `parse_apk_for_manifest`.
+"""Manifest facts (ARCHITECTURE.md §7.3) with apkInspector 1.3.7's `get_manifest`.
 
 apkInspector returns the decoded manifest as XML text; values come back as decoded strings and enum attributes
 as numbers (screenOrientation "-1" / "0" in the fixtures). Parsing failures never block a run: the caller
 falls back to `pm list packages` and `resolve-activity` after installing.
+
+The file is untrusted (3a review): entries are inflated a chunk at a time and only up to a cap, and only the
+methods Android reads (stored, deflated). A zip bomb's manifest, asset or icon never gets inflated in full;
+apkInspector's own `parse_apk_for_manifest` read the whole APK into memory and inflated without a limit.
 """
 
+import io
 import logging
 import re
 import zipfile
@@ -13,7 +18,7 @@ from xml.etree import ElementTree as ET
 
 _root = logging.getLogger()
 _root_before = (list(_root.handlers), _root.level)
-from apkInspector.axml import parse_apk_for_manifest  # noqa: E402
+from apkInspector.axml import get_manifest  # noqa: E402
 
 # apkInspector 1.3.7 calls logging.basicConfig(level=DEBUG) when imported: every library's debug lines would go
 # to the console. Put the root logger back.
@@ -35,6 +40,28 @@ LANDSCAPE = frozenset({"landscape", "sensorLandscape", "reverseLandscape", "user
 PORTRAIT = frozenset({"portrait", "sensorPortrait", "reversePortrait", "userPortrait"})
 ICON_CANDIDATES = ("res/mipmap-xxxhdpi-v4/ic_launcher.png", "res/mipmap-xxhdpi-v4/ic_launcher.png",
                    "res/mipmap-xhdpi-v4/ic_launcher.png", "res/drawable/ya.png")
+MANIFEST_MAX = 4 << 20   # App Inventor manifests are a few KB
+ICON_MAX = 1 << 20
+READABLE = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)   # what Android reads; bzip2/LZMA cannot be bounded
+LIB_SO = re.compile(r"^lib/([^/]+)/[^/]+\.so$")          # only these make an ABI (not a stray lib/x/notes.txt)
+
+
+def _entry(z: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> bytes:
+    """At most `limit` bytes of an entry, inflated a chunk at a time. Raises ValueError beyond that."""
+    if info.compress_type not in READABLE:
+        raise ValueError(f"{info.filename}: compression method {info.compress_type}")
+    with z.open(info) as f:
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{info.filename}: more than {limit} bytes")
+    return data
+
+
+def _is_elf(z: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    if info.is_dir() or info.file_size < 4 or info.compress_type not in READABLE:
+        return False
+    with z.open(info) as f:
+        return f.read(4) == b"\x7fELF"
 
 
 def orientation_name(value: str | None) -> str | None:
@@ -44,7 +71,9 @@ def orientation_name(value: str | None) -> str | None:
 
 
 def _xml(apk: Path) -> ET.Element:
-    text = parse_apk_for_manifest(str(apk))
+    with zipfile.ZipFile(apk) as z:
+        raw = _entry(z, z.getinfo("AndroidManifest.xml"), MANIFEST_MAX)
+    text = get_manifest(io.BytesIO(raw))
     if not isinstance(text, str):   # a dict when it could not decode the manifest
         raise ValueError(f"manifest not decoded ({type(text).__name__})")
     # apkInspector may leave namespace declarations out; bind android: so ElementTree can read it
@@ -80,10 +109,16 @@ def inspect(apk: Path, sha256: str) -> ApkInfo:
     app_class = app.get(A + "name") or ""
     with zipfile.ZipFile(apk) as z:
         names = z.namelist()
-        abis = frozenset(n.split("/")[1] for n in names if n.startswith("lib/") and n.count("/") >= 2)
-        elf = any(n.startswith("assets/") and z.read(n)[:4] == b"\x7fELF" for n in names
-                  if n.startswith("assets/") and not n.endswith("/") and z.getinfo(n).file_size >= 4)
-        icon = next((z.read(n) for n in ICON_CANDIDATES if n in names), None)
+        abis = frozenset(m.group(1) for n in names if (m := LIB_SO.match(n)))
+        elf = any(_is_elf(z, info) for info in z.infolist() if info.filename.startswith("assets/"))
+        icon = None
+        for n in ICON_CANDIDATES:
+            if n in names:
+                try:
+                    icon = _entry(z, z.getinfo(n), ICON_MAX)
+                except ValueError:
+                    pass
+                break
     return ApkInfo(
         sha256=sha256, staged=apk, package=package, launcher=launcher,
         label=app.get(A + "label") or package.rsplit(".", 1)[-1],

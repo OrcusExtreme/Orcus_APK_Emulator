@@ -7,6 +7,7 @@ from _engine_fakes import FakeDevice, FastClock
 from orcus.common.paths import OrcusPaths
 from orcus.contracts import CmdResult, ErrorCode, GpuMode, SessionMode, Settings
 from orcus.contracts.session import EngineSettings
+from orcus.emugrpc.generated import snapshot_pb2
 from orcus.engine import adb, exitlog, gpu, provision, snapshots
 
 
@@ -91,6 +92,24 @@ def test_exit_log_classes() -> None:
     assert exitlog.classify("x86_64 emulation currently requires hardware acceleration", golden=False).code \
         == ErrorCode.PRE_WHPX_OFF
     assert exitlog.classify("something else", golden=True).code == ErrorCode.ENGINE_EXIT
+    changed = exitlog.classify("WARNING | Failed to load snapshot, because 'host GPU has changed'; Emulator will "
+                               "delete existing snapshot and exit.", golden=True)   # 3a finding 18
+    assert changed.golden_load_failed and changed.gpu_changed
+    assert not exitlog.classify("ERROR | Failed to load snapshot 'orcus_golden'", golden=True).gpu_changed
+
+
+def test_golden_gpu_is_what_the_emulator_recorded(tmp_path: Path) -> None:
+    paths = OrcusPaths(tmp_path)
+    assert snapshots.golden_gpu(paths) is None                 # no golden
+    meta = paths.golden_dir / "snapshot.pb"
+    meta.parent.mkdir(parents=True)
+    meta.write_bytes(snapshot_pb2.Snapshot(host=snapshot_pb2.Host(gpu_driver="10de-NVIDIA GeForce GTX 1660-",
+                                                                  hypervisor=0)).SerializeToString())
+    assert snapshots.golden_gpu(paths) == "10de-NVIDIA GeForce GTX 1660-"
+    meta.write_bytes(snapshot_pb2.Snapshot(host=snapshot_pb2.Host(hypervisor=0)).SerializeToString())
+    assert snapshots.golden_gpu(paths) == ""                   # saved while no display device was visible
+    meta.write_bytes(b"\xff\xff not a snapshot")
+    assert snapshots.golden_gpu(paths) is None
 
 
 def test_renderer_check() -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from orcus.contracts import CmdResult, DeviceShell, ErrorCode
 
 BYPASS_LOW_TARGET = "--bypass-low-target-sdk-block"
+FAILURE = re.compile(r"Failure \[([A-Z0-9_]+)")
 
 
 @dataclass(frozen=True)
@@ -54,21 +55,26 @@ def install(shell: DeviceShell, apk: Path, *, grant_all: bool, target_sdk: int) 
         text = _text(r)
         if r.code == 0 and "Success" in text:
             return InstallOutcome(True, None, text[-200:], total)
-        if "INSTALL_FAILED_DEPRECATED_SDK_VERSION" in text and BYPASS_LOW_TARGET not in fl:
+        # the exact `Failure [CODE` when there is one: the rest of the output can echo manifest text (3a review)
+        m = FAILURE.search(text)
+        failure = m.group(1) if m else ""
+        if failure == "INSTALL_FAILED_DEPRECATED_SDK_VERSION" and BYPASS_LOW_TARGET not in fl:
             fl.append(BYPASS_LOW_TARGET)
             continue
-        if "INSTALL_FAILED_VERSION_DOWNGRADE" in text and "-d" not in fl:
+        if failure == "INSTALL_FAILED_VERSION_DOWNGRADE" and "-d" not in fl:
             fl.append("-d")   # userdebug image allows it
             continue
-        if "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in text:
+        if failure == "INSTALL_FAILED_UPDATE_INCOMPATIBLE":
             return InstallOutcome(False, None, text[-300:], total, needs_uninstall_prompt=True)
-        if (r.timed_out or "device offline" in text or "no devices" in text) and not tried_offline:
+        lost = r.timed_out or "device offline" in text or "no devices" in text
+        if lost and not tried_offline:
             tried_offline = True
             if shell.get_state() == "device":
                 continue
+        if lost:   # gone again after the one retry: the ADB-lost advice, not "see the log" (§7.5)
             return InstallOutcome(False, ErrorCode.ENGINE_ADB_LOST, text[-300:], total)
         for needle, code in _MAP:
-            if needle in text:
+            if needle in (failure or text):
                 return InstallOutcome(False, code, text[-300:], total)
         return InstallOutcome(False, ErrorCode.INSTALL_OTHER, text[-300:], total)
 

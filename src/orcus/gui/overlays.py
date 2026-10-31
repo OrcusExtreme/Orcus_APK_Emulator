@@ -27,6 +27,7 @@ class Overlay(QFrame):
         super().__init__(parent)
         self.setStyleSheet("Overlay{background:rgba(10,10,14,190);border-radius:6px} QLabel{color:white}")
         self.label = QLabel()
+        self.label.setTextFormat(Qt.TextFormat.PlainText)   # app labels and errors are untrusted text (3a review)
         self.label.setWordWrap(True)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         f = self.label.font()
@@ -88,7 +89,9 @@ class Banner(QFrame):
                            % (("#b3261e", "white") if red else ("#fff4ce", "#3b2f00")))
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 6, 6)
-        label = QLabel(words)
+        label = QLabel()
+        label.setTextFormat(Qt.TextFormat.PlainText)   # a crash banner carries the app's own text (3a review)
+        label.setText(words)
         label.setWordWrap(True)
         lay.addWidget(label, 1)
         if action is not None:
@@ -122,6 +125,8 @@ class EnginePanel(QFrame):
         self.cause.setWordWrap(True)
         self.code = QLabel()
         self.code.setWordWrap(True)
+        for label in (self.cause, self.code):   # err.detail can quote the emulator's or an app's text
+            label.setTextFormat(Qt.TextFormat.PlainText)
         self.code.setStyleSheet("color:#52606d")
         self.code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.primary = QPushButton()

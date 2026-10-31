@@ -28,6 +28,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         rng = self.headers.get("Range")
         Handler.requests.append(rng)
+        if Handler.mode == "416_once" and rng and not Handler.dropped:   # the .part no longer fits the file
+            Handler.dropped = True
+            self.send_response(416)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         start = 0
         if rng and Handler.mode != "ignore_range":
             start = int(rng.removeprefix("bytes=").split("-")[0])
@@ -41,6 +47,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if Handler.mode == "drop_once" and not Handler.dropped:
             Handler.dropped = True
             self.wfile.write(body[: len(body) // 3])
+            self.wfile.flush()
+            self.connection.shutdown(2)
+            return
+        if Handler.mode == "drop_every" and len(body) > 200_000:   # Wi-Fi that keeps dropping, with progress
+            self.wfile.write(body[:200_000])
             self.wfile.flush()
             self.connection.shutdown(2)
             return
@@ -84,6 +95,21 @@ def test_dropped_connection_resumes(server: str, tmp_path: Path) -> None:
     download.download(server, tmp_path / "f.zip", size=len(DATA), sha1=SHA1, backoff_s=0.01)
     assert (tmp_path / "f.zip").read_bytes() == DATA
     assert len(Handler.requests) == 2 and Handler.requests[1] is not None
+
+
+def test_drops_with_progress_keep_the_retry_budget(server: str, tmp_path: Path) -> None:
+    """Six drops over a long download used to end in SETUP_NETWORK although each attempt got further (3a review)."""
+    Handler.mode = "drop_every"
+    download.download(server, tmp_path / "f.zip", size=len(DATA), sha1=SHA1, retries=2, backoff_s=0.01)
+    assert (tmp_path / "f.zip").read_bytes() == DATA and len(Handler.requests) > 3
+
+
+def test_416_drops_the_part_and_starts_over(server: str, tmp_path: Path) -> None:
+    Handler.mode = "416_once"
+    (tmp_path / "f.zip.part").write_bytes(DATA[:300_000])
+    download.download(server, tmp_path / "f.zip", size=len(DATA), sha1=SHA1, backoff_s=0.01)
+    assert (tmp_path / "f.zip").read_bytes() == DATA
+    assert Handler.requests == ["bytes=300000-", None]
 
 
 def test_checksum_mismatch_removes_part(server: str, tmp_path: Path) -> None:

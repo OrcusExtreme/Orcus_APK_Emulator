@@ -1,5 +1,6 @@
 """EngineManager state machine (ARCHITECTURE.md §5.1) on fakes: provisioning, READY, reset, stop, crashes."""
 
+import json
 import time
 from concurrent.futures import CancelledError
 from pathlib import Path
@@ -7,13 +8,16 @@ from pathlib import Path
 import pytest
 from _engine_fakes import GLES_SOFT, EngineEnv
 
-from orcus.common import winjob
+from orcus.common import pins, winjob
 from orcus.common.paths import GOLDEN_SNAPSHOT
 from orcus.contracts import (EngineControl, EngineNotReady, EngineState, EpochCause, ErrorCode, GpuMode, OrcusFailure,
                              SessionMode, Settings)
 from orcus.contracts.session import EngineSettings
+from orcus.emugrpc.generated import emulator_controller_pb2 as ec
+from orcus.emugrpc.generated import snapshot_pb2
 from orcus.emugrpc.generated import snapshot_service_pb2 as ss
 from orcus.engine import snapshots
+from orcus.engine.discovery import DiscoveryRecord
 from orcus.engine.manager import EngineManager
 
 S = EngineState
@@ -87,6 +91,100 @@ def test_reset_raises_epoch_by_exactly_one(env: EngineEnv) -> None:
     assert env.sessions[-1].epoch == target
 
 
+def test_a_stale_discovery_record_never_kills_another_process(env: EngineEnv) -> None:
+    """A record left by a killed app or a power cut may name the user's browser after PID reuse (3a review)."""
+    stale = DiscoveryRecord(4321, 5640, 5641, 1, "t", "orcus36", str(env.paths.avd_data), None,
+                            env.paths.tmp / "pid_4321.ini")
+    stale.source.parent.mkdir(parents=True, exist_ok=True)
+    stale.source.write_text("x", encoding="utf-8")
+    env.discovery.orphans.append(stale)
+    env.manager.start()
+    ready(env)
+    assert 4321 not in env.procs.terminated and not stale.source.exists()
+
+
+def test_a_half_extracted_sdk_is_not_installed(env: EngineEnv) -> None:
+    """Setup stopped mid-extraction leaves `<package>.partial`; that tree must not boot (3a review)."""
+    marker = env.paths.partial_marker(pins.SYSTEM_IMAGE)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("extracting", encoding="utf-8")
+    env.manager.start()
+    wait_for(env, S.FAILED)
+    st = env.manager.status()
+    assert st.error is not None and st.error.code is ErrorCode.PRE_NOT_INSTALLED and env.modes() == []
+
+
+def _second_start(env: EngineEnv) -> None:
+    env.manager.start()
+    ready(env)
+    env.manager.stop()
+    wait_for(env, S.STOPPED)
+    env.procs.spawned.clear()
+
+
+def test_no_display_boots_cold_once_and_keeps_the_golden(env: EngineEnv) -> None:
+    """A disconnected Remote Desktop session has no display device: a golden load would make the emulator delete
+    the golden ('host GPU has changed', 3a finding 18). Boot COLD this once; a reset with a display loads it."""
+    _second_start(env)
+    env.displays = 0
+    env.manager.start()
+    st = ready(env)
+    assert env.modes() == ["COLD"] and st.mode is SessionMode.COLD
+    assert ErrorCode.ENGINE_NO_DISPLAY in st.warnings
+    assert GOLDEN_SNAPSHOT in env.fake.snapshots and snapshots.golden_exists(env.paths)
+    env.displays = 1
+    env.procs.spawned.clear()
+    st = ready(env, min_epoch=env.manager.reset_device())    # a restart, not a rebuild
+    assert env.modes() == ["GOLDEN"] and (st.mode, st.epoch_cause) == (SessionMode.GOLDEN, EpochCause.RESET)
+    assert ErrorCode.ENGINE_NO_DISPLAY not in st.warnings
+
+
+def test_no_display_loads_a_golden_that_saw_none(env: EngineEnv) -> None:
+    """A golden saved without a display (before the fix) records no GPU: it loads in such a session."""
+    _second_start(env)
+    (env.paths.golden_dir / "snapshot.pb").write_bytes(
+        snapshot_pb2.Snapshot(host=snapshot_pb2.Host(hypervisor=0)).SerializeToString())
+    env.displays = 0
+    env.manager.start()
+    st = ready(env)
+    assert env.modes() == ["GOLDEN"] and ErrorCode.ENGINE_NO_DISPLAY not in st.warnings
+
+
+def test_no_golden_is_made_without_a_display(env: EngineEnv) -> None:
+    env.displays = 0
+    env.manager.start()
+    wait_for(env, S.FAILED)
+    st = env.manager.status()
+    assert st.error is not None and st.error.code is ErrorCode.PRE_NO_DISPLAY
+    assert env.modes() == [] and not snapshots.golden_exists(env.paths)
+
+
+def test_gpu_change_rebuilds_with_its_own_text(env: EngineEnv) -> None:
+    _second_start(env)
+    texts: list[str] = []
+    env.manager.subscribe(lambda st: texts.append(st.text_key))
+    env.gpu_changes_once = True                              # the emulator deletes the golden on this load
+    env.manager.start()
+    st = env.manager.wait_ready(60)
+    assert st.epoch_cause is EpochCause.REBUILD and env.modes()[:2] == ["GOLDEN", "REBUILD"]
+    assert "engine.state.provisioning_gpu" in texts
+    assert "engine.state.provisioning" not in texts   # progress steps kept the rebuild text ("first time" is wrong)
+
+
+def test_owner_record_carries_the_owners_own_state(env: EngineEnv) -> None:
+    """`orcus-cli engine status` in another process shows this, not the guest's `booted` (3a: ~4 s early)."""
+    def record() -> dict[str, object]:
+        return json.loads(env.paths.state_file("engine_owner.json").read_text(encoding="utf-8"))
+    env.manager.start()
+    first = ready(env)
+    owner = record()
+    assert (owner["state"], owner["text_key"], owner["epoch"], owner["mode"]) == \
+        ("ready", "engine.state.ready", first.epoch, "golden")
+    assert owner["console"] == 5640 and owner["adb_server_pid"]   # the launch fields stay
+    st = ready(env, min_epoch=env.manager.reset_device())
+    assert (record()["state"], record()["epoch"]) == ("ready", st.epoch)
+
+
 def test_shell_is_bound_to_its_epoch(env: EngineEnv) -> None:
     env.manager.start()
     ready(env)
@@ -106,12 +204,22 @@ def test_shell_quotes_each_argument(env: EngineEnv) -> None:
     assert env.device.commands[-1] == "setprop debug.test ''"
 
 
-def test_stop_shuts_down_and_releases_the_lock(env: EngineEnv) -> None:
+def test_stop_pauses_ends_qemu_and_releases_the_lock(env: EngineEnv) -> None:
     env.manager.start()
     ready(env)
+    emulator = env.procs.emulator
+    assert emulator is not None
+    discovery_file = env.paths.tmp / "pid.ini"
+    discovery_file.parent.mkdir(parents=True, exist_ok=True)
+    discovery_file.write_text("pid.ini of the fake emulator", encoding="utf-8")
+    n = len(env.procs.terminated)                         # the provisioning boot before READY ended its own qemu
     env.manager.stop()
     wait_for(env, S.STOPPED)
-    assert any(c == ("setVmState", 3) or c[0] == "setVmState" for c in env.fake.calls)
+    # no graceful SHUTDOWN: qemu's exit path can fail fast and leave a crash report in C:\ProgramData (3a)
+    assert ("setVmState", ec.VmRunState.PAUSED) in env.fake.calls
+    assert ("setVmState", ec.VmRunState.SHUTDOWN) not in env.fake.calls
+    assert env.procs.terminated[n] == emulator.pid + 1   # the qemu of the discovery record, before emulator.exe
+    assert not discovery_file.exists()
     other = winjob.ExclusiveLock(env.paths.state_file("engine.lock"))
     other.acquire()   # free again
     other.release()

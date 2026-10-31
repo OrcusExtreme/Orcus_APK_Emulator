@@ -4,16 +4,27 @@ A second start with a file (double-click on an .apk, a drop on the shortcut) con
 paths and ends; the first instance opens them through SessionApi.open_paths.
 """
 
+import os
 import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-from orcus.common import win32
+from orcus.common import log, win32
 
 MUTEX = "Local\\OrcusAPK.Instance"
 HANDOVER_S = 3.0
+MAX_MESSAGE = 64 * 1024
+_log = log.get("gui.instance")
+
+
+def acceptable(path: str) -> bool:
+    """Only an existing local file: no network share (another account could hand one over and make us fetch it
+    over SMB with our credentials), no relative path (3a review)."""
+    if not path.strip() or path.startswith(("\\\\", "//")) or not os.path.isabs(path):
+        return False
+    return os.path.isfile(path)
 
 
 def server_name() -> str:
@@ -22,6 +33,7 @@ def server_name() -> str:
 
 def hand_over(paths: list[str], timeout_s: float = HANDOVER_S) -> bool:
     """Second instance: deliver the paths to the first one. True when it acknowledged."""
+    paths = [os.path.abspath(p) for p in paths]   # the first instance has another working folder (3a review)
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:
         sock = QLocalSocket()
@@ -43,7 +55,8 @@ class InstanceServer(QObject):
         self._server = QLocalServer(self)
         self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         QLocalServer.removeServer(server_name())   # a crashed first instance can leave the name behind
-        self._server.listen(server_name())
+        if not self._server.listen(server_name()):
+            _log.warning("instance server not listening: %s", self._server.errorString())
         self._server.newConnection.connect(self._accept)
 
     def _accept(self) -> None:
@@ -54,10 +67,14 @@ class InstanceServer(QObject):
 
         def read() -> None:
             buf.extend(bytes(sock.readAll().data()))
+            if len(buf) > MAX_MESSAGE:   # a few paths, never megabytes (3a review)
+                sock.abort()
+                return
             if buf.endswith(b"\n\n"):
-                paths = [p for p in buf.decode("utf-8", errors="replace").splitlines() if p.strip()]
+                lines = buf.decode("utf-8", errors="replace").split("\n")   # not splitlines(): U+2028 is a name
+                buf.clear()
                 sock.write(b"ok")
                 sock.flush()
-                self._on_paths(paths)
+                self._on_paths([p for p in lines if acceptable(p)])
         sock.readyRead.connect(read)
         sock.disconnected.connect(sock.deleteLater)

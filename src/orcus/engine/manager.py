@@ -27,7 +27,7 @@ from typing import Any
 import grpc
 from google.protobuf import empty_pb2
 
-from orcus.common import childenv, jsonio, log, messages_ko, winjob
+from orcus.common import childenv, jsonio, log, messages_ko, pins, winjob
 from orcus.common.paths import GOLDEN_SNAPSHOT, OrcusPaths
 from orcus.common.ports import Ports
 from orcus.contracts import (DeviceCaps, DeviceEndpoint, DeviceSession, DeviceSessionFactory, EngineState,
@@ -37,7 +37,7 @@ from orcus.emugrpc import channel as grpc_channel
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 from orcus.emugrpc.generated import snapshot_service_pb2 as ss
 
-from . import args, exitlog, gpu, provision, snapshots
+from . import args, discovery, exitlog, gpu, provision, snapshots
 from .adb import AdbLogcat, AdbServer, EpochShell, RawShell, client, not_ready
 from .bootcheck import accelerator_from_log
 from .discovery import DiscoveryRecord
@@ -62,7 +62,8 @@ POST_LOAD_HEALTH_S = 60.0          # §6.5 step 10: after a load, past S4's 20-2
 QUIET_BUSY = 0.35                  # 7a: save once guest CPU is below this busy share twice in a row...
 QUIET_WAIT_S = 180.0               # ...or after this long anyway (logged). A golden saved at load ~12 came
                                    # back with system_server killed by its Watchdog (Phase 3a)
-STOP_GRACE_S, STOP_FAST_S = 5.0, 2.0
+PAUSE_S, PAUSE_FAST_S = 3.0, 1.0   # §5.1 STOPPING: pause, then end qemu (its exit path can fail fast, 3a)
+EMULATOR_IMAGES = discovery.EMULATOR_IMAGES
 CRASH_WINDOW_S = 300.0
 KEEPALIVE_FAILS = 3
 DEFAULT_LOCATION = (37.5665, 126.9780)
@@ -118,6 +119,7 @@ class _Fail(_Outcome):
 @dataclass
 class _GoldenBad(_Outcome):
     detail: str
+    gpu_changed: bool = False   # the emulator deleted the golden itself: 'host GPU has changed' (3a finding 18)
 
 
 @dataclass
@@ -184,6 +186,8 @@ class EngineManager:
         self._cond = threading.Condition()
         self._subs: list[Callable[[EngineStatus], None]] = []
         self._subs_lock = threading.Lock()
+        self._owner: dict[str, Any] | None = None   # engine_owner.json as written (worker at launch, supervisor after)
+        self._owner_lock = threading.Lock()
         self._adb: AdbServer | None = None
         # worker-owned
         self._provision_id = ""
@@ -322,6 +326,8 @@ class EngineManager:
 
     def _missing_install(self) -> bool:
         p = self._paths
+        if any(p.partial_marker(a).exists() for a in pins.ARCHIVES):   # setup stopped mid-extraction (3a review)
+            return True
         return not (p.emulator_exe.exists() and p.adb_exe.exists() and p.avd_ini.exists()
                     and Path(f"{p.adbkey}.pub").exists())
 
@@ -341,6 +347,7 @@ class EngineManager:
 
     def _publish(self) -> None:
         st = self._make_status()
+        self._write_owner(st=st)   # before anyone wakes up: nobody sees a state the record does not have yet
         with self._cond:
             self._status = st
             self._cond.notify_all()
@@ -353,6 +360,27 @@ class EngineManager:
                 _log.exception("status subscriber failed")
         _log.info("state %s epoch=%d cause=%s mode=%s %s", st.state, st.epoch, st.epoch_cause, st.mode,
                   f"{st.error.code}: {st.error.detail}" if st.error else "")
+
+    def _write_owner(self, record: dict[str, Any] | None = None, st: EngineStatus | None = None) -> None:
+        """engine_owner.json (§1.3): the owner and its ports from each launch, then the owner's own state whenever it
+        changes. A read-only viewer (`orcus-cli engine status`) must not call the phone ready while SESSION_INIT
+        still checks it; the guest's `booted` alone says so about 4 s early (3a)."""
+        with self._owner_lock:
+            if record is not None:
+                self._owner = record
+            if self._owner is None:
+                return
+            st = st or self._status
+            now = {"state": str(st.state), "text_key": st.text_key, "epoch": st.epoch, "mode": str(st.mode)}
+            if record is None and all(self._owner.get(k) == v for k, v in now.items()):
+                return
+            new = {**self._owner, **now}
+            try:
+                jsonio.write_json_atomic(self._paths.state_file("engine_owner.json"), new)
+            except OSError as e:   # kept unwritten, so the next change tries again (3a review)
+                _log.warning("owner record not written: %s", e)
+                return
+            self._owner = new
 
     # --- supervisor ---------------------------------------------------------------------------------------------
     def _supervise(self) -> None:
@@ -394,7 +422,9 @@ class EngineManager:
                     self._release()
                     self._set(S.STOPPED)
             case "reset" if state == S.READY and self._vm is not None:
-                if self._mode == SessionMode.COLD:
+                if ErrorCode.ENGINE_NO_DISPLAY in self._warnings:   # the golden is fine: a restart loads it
+                    self._stopping(("restart", EpochCause.RESET))
+                elif self._mode == SessionMode.COLD:
                     self._stopping(("rebuild", None))   # COLD reset = rebuild (the GUI confirmed)
                 else:
                     vm, nxt = self._vm, self._epoch + 1
@@ -403,6 +433,8 @@ class EngineManager:
             case "enter":
                 job_id, new_state, key, progress = payload
                 if self._job is not None and self._job[0] == job_id and state in ACTIVE:
+                    if key is None and new_state == state:   # a progress step keeps "rebuilding", not "first time"
+                        key = self._text_key
                     self._set(new_state, text_key=key, progress=progress)
             case "done":
                 job_id, outcome = payload
@@ -515,7 +547,7 @@ class EngineManager:
                 else:
                     self._rebuilds_used += 1
                     self._verify = None
-                    self._intent = ("rebuild", None)
+                    self._intent = ("rebuild", "gpu" if out.gpu_changed else None)
                     self._after_teardown()
             case _Retry():
                 self._intent = ("restart", self._next_cause)
@@ -525,7 +557,10 @@ class EngineManager:
                 self._stopping(("restart", EpochCause.RESET_RECOVERY))
             case _Fail():
                 self._verify = None
-                self._fail(out.error)
+                if self._vm is not None:   # e.g. a reset job that failed: stop the READY VM first (3a review)
+                    self._stopping(("fail", out.error))
+                else:
+                    self._fail(out.error)
             case _Stopped():
                 self._after_teardown()
             case _AdbBack():
@@ -550,7 +585,8 @@ class EngineManager:
                 self._next_cause = EpochCause.REBUILD
                 cold = self._settings().engine.gpu_mode == GpuMode.SOFTWARE
                 self._mode = SessionMode.COLD if cold else SessionMode.GOLDEN
-                self._set(S.PROVISIONING, text_key="engine.state.provisioning_rebuild")
+                self._set(S.PROVISIONING, text_key="engine.state.provisioning_gpu" if value == "gpu"
+                          else "engine.state.provisioning_rebuild")
                 mode = self._mode
                 self._run(lambda c: self._job_provision(mode, True, c))
             case "fail":
@@ -565,7 +601,12 @@ class EngineManager:
 
     def _release(self) -> None:
         if self._lock.held:
-            self._paths.state_file("engine_owner.json").unlink(missing_ok=True)
+            with self._owner_lock:
+                self._owner = None
+                try:   # a reader or a scanner may hold it; failing here froze the state machine (3a review)
+                    self._paths.state_file("engine_owner.json").unlink(missing_ok=True)
+                except OSError as e:
+                    _log.warning("owner record not removed: %s", e)   # readers check the owner pid anyway
             self._lock.release()
 
     def _watch(self, vm: _Vm) -> None:
@@ -644,7 +685,8 @@ class EngineManager:
             self._q.put(("done", (job_id, outcome)))
 
     def _enter(self, state: EngineState, key: str | None = None, progress: float | None = None) -> None:
-        self._q.put(("enter", (self._job_now, state, key or f"engine.state.{state}", progress)))
+        """key None: the state's own text, or for a progress step within the same state the text it shows now."""
+        self._q.put(("enter", (self._job_now, state, key, progress)))
 
     @staticmethod
     def _check(cancel: threading.Event) -> None:
@@ -672,7 +714,9 @@ class EngineManager:
             self._enter(S.BOOTING)
             self._boot(vm, cancel, BOOT_GOLDEN_S if mode == args.LaunchMode.GOLDEN else BOOT_COLD_S)
             self._enter(S.SESSION_INIT)
-            return self._session_init(vm, settings, cancel, cause=self._next_cause, epoch=self._epoch + 1)
+            ready = self._session_init(vm, settings, cancel, cause=self._next_cause, epoch=self._epoch + 1)
+            self._check(cancel)   # a stop or rebuild meanwhile drops this outcome: the VM must not be left running
+            return ready
         except BaseException:
             self._teardown(vm, fast=cancel.is_set())
             raise
@@ -699,12 +743,23 @@ class EngineManager:
             rebuild = force_rebuild or snapshots.read(self._paths) is not None or snapshots.golden_exists(self._paths)
             return _NeedProvision(mode, rebuild)
         self._provision_id = record.provision_id
+        if not cold and self._seams.displays() == 0 and snapshots.golden_gpu(self._paths) != "":
+            # The emulator takes the host GPU from this session's display devices, and there are none in a
+            # disconnected Remote Desktop session: the load would fail as 'host GPU has changed' and the emulator
+            # would delete a good golden (3a finding 18). Boot COLD this once and keep the golden.
+            if record is self._verify:   # the verification boot must load the new golden (§6.5 step 10)
+                raise _fail(ErrorCode.PRE_NO_DISPLAY, "no display device for the verification boot")
+            _log.warning("no display device: COLD boot this once instead of loading the golden")
+            return args.LaunchMode.COLD
         return args.LaunchMode.COLD if cold else args.LaunchMode.GOLDEN
 
     def _cleanup_orphans(self) -> None:
-        """With the lock held: a live VM of our AVD is an orphan; dead discovery files go (§5.7)."""
+        """With the lock held: a live VM of our AVD is an orphan; dead discovery files go (§5.7). A record's pid is
+        ended only while it is a qemu under our SDK (and not us): PIDs are reused, and a stale record survives a
+        power cut or a killed app (3a review)."""
+        ours = {pid for pid, image in self._seams.procs.sdk_processes() if "qemu-system" in image.lower()}
         for rec in self._seams.discovery.ours():
-            if self._seams.procs.alive(rec.pid):
+            if rec.pid in ours and rec.pid != os.getpid():
                 _log.warning("terminating orphan VM pid %d", rec.pid)
                 self._seams.procs.terminate(rec.pid)
             try:
@@ -750,9 +805,9 @@ class EngineManager:
         log_path = self._paths.logs / f"emulator-{time.strftime('%Y%m%d-%H%M%S')}-{mode}.log"
         proc = self._seams.procs.spawn(argv, env=self._seams.env(ports.adb_server), log_path=log_path)
         _log.info("launched %s: %s", mode, " ".join(argv[1:]))
-        jsonio.write_json_atomic(self._paths.state_file("engine_owner.json"), {
-            "pid": os.getpid(), "started": time.time(), "kind": self._owner_kind, "console": ports.console,
-            "grpc": ports.grpc, "adb_server": ports.adb_server, "adb_server_pid": adb.pid})
+        self._write_owner({"pid": os.getpid(), "started": time.time(), "kind": self._owner_kind,
+                           "console": ports.console, "grpc": ports.grpc, "adb_server": ports.adb_server,
+                           "adb_server_pid": adb.pid})
         return _Vm(mode, ports, proc, log_path)
 
     def _exited(self, vm: _Vm) -> _Abort:
@@ -766,7 +821,7 @@ class EngineManager:
         excerpt = exitlog.tail(text)
         if c.golden_load_failed or (golden and c.code == ErrorCode.ENGINE_EXIT
                                     and not snapshots.golden_exists(self._paths)):
-            return _Abort(_GoldenBad("golden did not load: " + excerpt[-300:]))
+            return _Abort(_GoldenBad("golden did not load: " + excerpt[-300:], gpu_changed=c.gpu_changed))
         assert c.code is not None
         if c.retry and str(c.code) not in self._retried:
             self._retried.add(str(c.code))
@@ -862,6 +917,8 @@ class EngineManager:
         renderer = gpu.renderer(sh.text(gpu.RENDERER_CMD, 15))
         warnings = [ErrorCode.ENGINE_GPU_SOFTWARE] if (gpu.is_software(renderer)
                                                       or settings.engine.gpu_mode == GpuMode.SOFTWARE) else []
+        if vm.mode == args.LaunchMode.COLD and settings.engine.gpu_mode != GpuMode.SOFTWARE:
+            warnings.append(ErrorCode.ENGINE_NO_DISPLAY)   # the COLD boot that kept the golden (_preflight)
         self._frame_check(vm, cancel)
         vm.nonce = uuid.uuid4().hex[:12]
         presets = settings.sensors.location_presets
@@ -934,6 +991,9 @@ class EngineManager:
     # provisioning (§6.5)
     def _job_provision(self, mode: SessionMode, rebuild: bool, cancel: threading.Event) -> _Outcome:
         settings = self._settings()
+        if mode == SessionMode.GOLDEN and self._seams.displays() == 0:
+            # the golden would record no host GPU, and the first load with a display would delete it (finding 18)
+            raise _fail(ErrorCode.PRE_NO_DISPLAY, "no display device to record in the golden")
         start = self._clock.monotonic()
         provision_id = uuid.uuid4().hex[:12]
         key = snapshots.current_key(self._paths, settings)
@@ -974,6 +1034,8 @@ class EngineManager:
             return _Provisioned(record)
         # 7a: never save in the provisioning session; a clean cold boot saves (S4)
         step[0] = "clean boot"
+        if self._seams.displays() == 0:   # this boot's host GPU goes into the golden (finding 18)
+            raise _fail(ErrorCode.PRE_NO_DISPLAY, "display device gone before the clean boot")
         self._enter(S.PROVISIONING, "engine.state.provisioning_save", 0.7)
         vm = self._launch(settings, args.LaunchMode.COLD)
         try:
@@ -1068,24 +1130,36 @@ class EngineManager:
                 _log.exception("DeviceSession.close")
             vm.session = None
         if vm.alive() and vm.stub is not None:
-            try:
-                vm.stub.setVmState(ec.VmRunState(state=ec.VmRunState.SHUTDOWN), timeout=3)
+            try:   # QEMU drains and flushes the disks when it pauses; nothing is saved at exit (-no-snapshot-save)
+                vm.stub.setVmState(ec.VmRunState(state=ec.VmRunState.PAUSED), timeout=PAUSE_FAST_S if fast else PAUSE_S)
             except grpc.RpcError as e:
-                _log.info("SHUTDOWN: %s", e.code())
-        if vm.proc.wait(STOP_FAST_S if fast else STOP_GRACE_S) is None:
+                _log.info("PAUSED: %s", e.code())
+        # No graceful SHUTDOWN: qemu's exit path can fail fast in combase.dll (0xc0000602), and Windows then holds the
+        # process for seconds and files a crash report under C:\ProgramData (3a: 31 in two days, §11.5).
+        if vm.alive():
             if vm.record is not None:   # qemu first: ending only emulator.exe leaves qemu running (P)
                 self._seams.procs.terminate(vm.record.pid)
             vm.proc.kill()
             vm.proc.wait(5)
+        if vm.record is not None:       # the emulator removes its discovery file only when it exits by itself
+            try:
+                vm.record.source.unlink(missing_ok=True)
+            except OSError as e:
+                _log.info("discovery file left: %s", e)
         if vm.channel is not None:
             vm.channel.close()
         keep = self._adb.pid if self._adb is not None else None
-        # S6: what stays is the `emulator -kill … -sleep 20` watchdog (it would linger 20 s); safe to end now
+        # S6: what stays is the `emulator -kill … -sleep 20` watchdog (it would linger 20 s); safe to end now.
+        # Only the emulator's own processes: never an adb server (a teacher's 5037 one) or emulator-check (3a review)
+
+        def leftovers() -> list[tuple[int, str]]:
+            return [(pid, image) for pid, image in self._seams.procs.sdk_processes()
+                    if pid != keep and Path(image).name.lower() in EMULATOR_IMAGES]
         end = self._clock.monotonic() + 0.5
-        left = [(pid, image) for pid, image in self._seams.procs.sdk_processes() if pid != keep]
+        left = leftovers()
         while left and self._clock.monotonic() < end:
             self._clock.sleep(0.25)
-            left = [(pid, image) for pid, image in self._seams.procs.sdk_processes() if pid != keep]
+            left = leftovers()
         for pid, image in left:
             _log.info("ending leftover %s (%d)", Path(image).name, pid)
             self._seams.procs.terminate(pid)
