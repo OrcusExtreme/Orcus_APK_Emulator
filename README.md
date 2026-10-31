@@ -3,11 +3,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.9-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.9)
+[![Release](https://img.shields.io/badge/Release-v0.1.10-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.10)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-406%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-407%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -79,15 +79,15 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.9 / Phase 3b Sensors, IME & Settings Completed)
+## 📊 Current Progress & Status (v0.1.10 / Phase 3b Direct Korean IME & Sensors Completed)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, and **Phase 3b (Sensor Integration, Korean IME Input Bar, Unified Settings Dialog, Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, backed by **406 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, and **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, backed by **407 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
     A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
     B --> C["Phase 3a: Runtime, Security & Hardening<br/>(Completed: v0.1.8)"]
-    C --> D["Phase 3b: Sensors, IME & Settings<br/>(Completed: v0.1.9)"]
+    C --> D["Phase 3b: Sensors & Direct IME<br/>(Completed: v0.1.10)"]
     D --> E["Phase 4: Inno Setup & Release<br/>(Next Milestone)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
     style B fill:#2d6a4f,stroke:#1b4332,color:#fff
@@ -105,11 +105,11 @@ All Phase 3b acceptance criteria were executed and verified on the real headless
 | **B3** | Sensor Shake & TextToSpeech integration | Shake click: **10/10** across Weak/Moderate/Strong in portrait; Moderate **10/10** across reverse portrait, landscape, and reverse landscape. TalkToMe: OrcusProbe Korean TTS ("안녕하세요", `AfterSpeaking=true`), TalkToMe English TTS ("Stop shaking me!" 0.4s post-shake, `InternalTTS speak called`) | **PASS** |
 | **Stepwise Rotation (§9.7)** | Zero false shake triggers during rotation | 15° stepwise rotation (0.1s step) across 6 turns produced **0 false shakes** (Strong sensitivity, 13s total). Instant 90° rotation triggered 1 false shake (confirming App Inventor accelerometer algorithm model) | **PASS** |
 | **B5** | Multi-orientation touch precision & secondary screen sync | Canvas tap error **≤ 4px** across all 4 postures (portrait 0.0px, landscape 1.2px, reverse portrait 1.2px, reverse landscape 0.8px). Secondary landscape screen (`Screen2`): orientation mismatch banner surfaced in **2.7s** with 1-click `[화면 방향 맞추기]`; post-sync canvas tap error 0.0px | **PASS** |
-| **B6** | Korean IME text composition & multiline clipboard paste | Floating composition bar overlay (Enter to paste, Shift+Enter multiline, Esc dismiss). Paste verified in guest: TextBox ("안녕하세요 Orcus"), MultiLine ("안녕하세요\nOrcus"), NumbersOnly ("123") | **PASS** |
+| **B6** | Direct on-screen Korean IME composition & clipboard paste | **Direct on-screen IME typing**: Windows IME composes directly on mobile screen (`WA_InputMethodEnabled`). Finished syllables pasted via input queue; preedit syllables displayed in floating bubble overlay; Hanja candidate window anchored at `ImCursorRectangle`. **B6 Paste verified**: TextBox ("안녕하세요 Orcus"), MultiLine ("안녕하세요\nOrcus"), NumbersOnly ("123"). Floating composition bar overlay (Ctrl+T, [가]) preserved for multiline/long text | **PASS** |
 | **B13** | GPS location injection, microphone privacy & tilt | Default Seoul City Hall injected in **7.8s**; Busan City Hall in **2.2s**; N Seoul Tower in **3.1s** (budget ≤ 10s); triple re-injection on `onResume`. Microphone privacy persisted per-package (`privacy.mic_allowed_packages`). Tilt pad tracks OrientationSensor pitch (-90° → -75°) and roll | **PASS** |
 | **B14** | Settings dialog & clean-close data loss warning | Unified Settings dialog (`gui/settings_dialog.py`); clean close warning for GOLDEN mode apps with "Do not ask again" checkbox. GPU mode switch initiates golden snapshot rebuild confirmation | **PASS** |
-| **Mouse Wheel** | Vertical page scroll without canvas touch drag interference | Form scrolled **256px** (2 notches down) via `cmd input mouse scroll ... --axis VSCROLL,n`; canvas drag count remained 0 when scrolling over Canvas | **PASS** |
-| **Smoke Test (v0.1.9)** | 11-step end-to-end automated verification | All 11 steps **PASS**: shake 0.9s, 90° rotation 0.7s (display `ROTATION_90`), GPS 0.7s, reset 7.0s, clean stop 1.6s | **PASS** |
+| **Mouse Wheel** | Vertical page scroll without canvas touch drag interference | Form scrolled **256px** (2 notches down) via `cmd input mouse scroll ... --axis VSCROLL,n`; canvas drag count remained 0 when scrolling over Canvas (user verified) | **PASS** |
+| **Smoke Test (v0.1.9+)** | 11-step end-to-end automated verification | All 11 steps **PASS**: shake 0.9s, 90° rotation 0.7s (display `ROTATION_90`), GPS 0.7s, reset 7.0s, clean stop 1.6s | **PASS** |
 | **Phase 3a Regression** | Zero regressions across Phase 3a real-device suite | 18 of 18 tests **PASS**: B1 warm drop 1.8–2.6s, start+drop 16.3s, B2 PaintPot latency 77–80ms, frame age p95 6.6ms, pointer release guarantee, crash recovery | **PASS** |
 
 ### 🏆 Phase 3a Acceptance Verification (Real-Device Measurements)
@@ -129,9 +129,17 @@ All Phase 3a acceptance criteria were executed and verified on the real headless
 | **B15** | Fast logoff termination & single-instance handover | Packaged app responds to `WM_QUERYENDSESSION`/`WM_ENDSESSION` with clean termination in **2.83s** (well within Windows 5s budget), 0 SDK processes left. CLI hand-off to running window completes in **0.7s**. **Real Windows Logoff verified** after ~17m session (stops in **1.2s**, 0 SDK processes, 0 WER crash dumps, snapshot intact, discovery/netsim purged) | **PASS** |
 | **Packaging Smoke** | Standalone PyInstaller distribution (`tools/build.py`) | Build time 44–66s, distribution folder **121.9 MB**. Selftests pass (`orcus-cli.exe` & `OrcusAPK.exe`). `--boot-check` passes WHPX host/host_hidden. `--gui-check` launches packaged window, reaches `READY` in **8.5–8.8s**, and terminates cleanly | **PASS** |
 
-### 🔍 Key Engineering Findings & Stabilizations (Findings 7–25)
+### 🔍 Key Engineering Findings & Stabilizations (Findings 7–26)
 
 During real-device acceptance runs and stress scenarios, critical edge cases were discovered and resolved:
+
+* **Finding 26 — Direct On-Screen Korean IME Composition (Pulled Forward from Phase 4)**: Following desktop user testing where typing in the bottom bar was functional but direct on-screen text entry was requested, direct Windows IME composition was enabled on `ScreenView` via `WA_InputMethodEnabled`. When the user switches to Korean via the `한/영` key on the phone canvas, Windows IME handles key strokes directly; completed syllables (`commitString`) are piped into the touch/key input queue via `paste_text` (preserving spacing and Enter key ordering), while composing syllables (`preeditString`) and Hanja candidates appear in an on-screen floating bubble overlay positioned above the guest navigation bar. Tapping the screen while composing auto-commits the in-flight syllable to the active field.
+* **Finding 20 — App Inventor Accelerometer Algorithm & 15° Stepwise Rotation**: App Inventor's `AccelerometerSensor.java` maintains a 10-sample circular buffer and evaluates `|mean - sample|` across X, Y, Z axes against thresholds (Weak=5, Moderate=13, Strong=20) with a 400ms debounce. An instant 90° or 180° rotation triggers false shakes (e.g. Strong triggers on instant 90°). Orcus implements a pure waveform stepwise 15° rotation per 0.1s in `device/shake.py` and `device/controls.py`, keeping sample deviations below 3.4 m/s² and yielding exactly **0 false shakes** across 6 consecutive rotations.
+* **Finding 21 — Non-Invasive Mouse Wheel Scrolling via `cmd input mouse scroll`**: While gRPC `injectWheel` failed to produce scroll events in S7, executing `cmd input mouse scroll x y --axis VSCROLL,n` via background worker thread produces 128px scroll per notch. When scrolling over an App Inventor Canvas, the canvas receives zero touch or drag events, allowing natural form scrolling without drawing unwanted lines.
+* **Finding 22 — In-App Secondary Screen Orientation Mismatch Detection**: MIT App Inventor secondary screens (e.g., `Screen2`) can specify a fixed orientation different from `Screen1`. Orcus monitors guest activity orientation every 3s (1.2s post-launch); upon detecting a mismatch twice consecutively, it surfaces a non-blocking banner with a 1-click `[화면 방향 맞추기]` button, completing rotation in 2.7s.
+* **Finding 23 — Triple GPS Re-Injection on App Resume (`onResume`)**: Android mock location providers only dispatch updates when new locations are submitted. If an app registers location listeners after launch or resumes from background, static initial coordinates are missed. Orcus automatically re-transmits the active GPS coordinates 3 times (1s interval) on app launch and `onResume`.
+* **Finding 24 — Named Pipe Impersonation Defense via SID Authentication**: To prevent local named pipe spoofing on multi-user systems, `gui/instance.py` inspects the server process ID token SID via `win32.pipe_server_sid` before forwarding file arguments, ensuring the recipient belongs strictly to the identical Windows user account.
+* **Finding 25 — Fast Typing Clipboard Queue Coalescing & Order Preservation**: Rapid typing or consecutive paste events queued in `device/input.py` are coalesced into a single atomic clipboard injection with a 100ms throttle before keypress, guaranteeing zero character reordering. Input stream generation IDs ensure that gRPC stream reconnects discard stale iterator pulls without dropping user keystrokes.
 
 * **Finding 20 — App Inventor Accelerometer Algorithm & 15° Stepwise Rotation**: App Inventor's `AccelerometerSensor.java` maintains a 10-sample circular buffer and evaluates `|mean - sample|` across X, Y, Z axes against thresholds (Weak=5, Moderate=13, Strong=20) with a 400ms debounce. An instant 90° or 180° rotation triggers false shakes (e.g. Strong triggers on instant 90°). Orcus implements a pure waveform stepwise 15° rotation per 0.1s in `device/shake.py` and `device/controls.py`, keeping sample deviations below 3.4 m/s² and yielding exactly **0 false shakes** across 6 consecutive rotations.
 * **Finding 21 — Non-Invasive Mouse Wheel Scrolling via `cmd input mouse scroll`**: While gRPC `injectWheel` failed to produce scroll events in S7, executing `cmd input mouse scroll x y --axis VSCROLL,n` via background worker thread produces 128px scroll per notch. When scrolling over an App Inventor Canvas, the canvas receives zero touch or drag events, allowing natural form scrolling without drawing unwanted lines.
@@ -220,10 +228,10 @@ A comprehensive adversarial code and security audit covering setup, APK pipeline
 * [`dialogs.py`](src/orcus/gui/dialogs.py): Registry-preserving `open_file` and `save_file` dialog wrappers enforcing ARCHITECTURE §11.5 zero-pollution policy (reverts or purges `HKCU\Software\QtProject\OrganizationDefaults\FileDialog` on dialog close).
 * [`settings_dialog.py`](src/orcus/gui/settings_dialog.py): Unified Settings dialog (GPU mode selection with golden snapshot rebuild confirmation, clean-close data loss warning toggle, log level) replacing `gpu_dialog.py`.
 * [`sensors.py`](src/orcus/gui/sensors.py): Collapsible [Sensors] drawer (shake sensitivity buttons with ~0.5s auto-repeat, 15° gradual rotation, 20° tilt pad with double-click level reset, GPS presets with coordinate hint, and microphone toggle).
-* [`hangul.py`](src/orcus/gui/hangul.py): Korean IME composition floating input bar (Enter to paste, Shift+Enter for multiline newline, Esc dismiss, with guest clipboard warning tooltip).
+* [`hangul.py`](src/orcus/gui/hangul.py): Korean IME composition floating input bar (Enter to paste, Shift+Enter for multiline newline, Esc dismiss, with guest clipboard warning tooltip) for long text and multiline editing.
 * [`window.py`](src/orcus/gui/window.py): Native desktop window housing the 9:16 mobile frame (432×768 on primary 1080p displays), system tray, logoff fast-shutdown handlers, multi-monitor DPI scaling, clean-close confirmation dialog, and zero-registry APK open / screenshot save dialogs.
-* [`phone.py`](src/orcus/gui/phone.py) / [`screen.py`](src/orcus/gui/screen.py) / [`frame_pump.py`](src/orcus/gui/frame_pump.py): 1:1 direct low-latency raster blit rendering viewport, touch input handler, bezel buttons (Back, Home, Recents, Rotate CCW F7, Rotate CW F8, Shake F6, Korean IME [가] Ctrl+T) with drag-to-cancel support, and non-invasive mouse wheel scrolling without canvas distortion.
-* [`keymap.py`](src/orcus/gui/keymap.py): Keyboard navigation mapping (Esc/Right-click = Back, Middle-click = Home, Ctrl+V = Korean text injection, F6 = Shake, F7/F8 = Rotation, Ctrl+T/VK_HANGUL = Korean IME bar).
+* [`phone.py`](src/orcus/gui/phone.py) / [`screen.py`](src/orcus/gui/screen.py) / [`frame_pump.py`](src/orcus/gui/frame_pump.py): 1:1 direct low-latency raster blit rendering viewport with direct on-screen Korean IME input (`WA_InputMethodEnabled`, `commitString` paste queue, bottom floating preedit bubble, Hanja candidate window positioning), touch input handler, bezel buttons (Back, Home, Recents, Rotate CCW F7, Rotate CW F8, Shake F6, Korean IME [가] Ctrl+T) with drag-to-cancel support, and non-invasive mouse wheel scrolling without canvas distortion.
+* [`keymap.py`](src/orcus/gui/keymap.py): Keyboard navigation mapping (Esc/Right-click = Back, Middle-click = Home, Ctrl+V = Korean text injection, F6 = Shake, F7/F8 = Rotation, Ctrl+T/[가] = Korean IME multiline bar, and native Windows IME `한/영` toggling on phone screen).
 * [`panels.py`](src/orcus/gui/panels.py): Collapsible [App Card] (displaying package, launcher, SDK, permissions), [Sensors] drawer, and [Diagnostic Logs] inspection drawers with plain-text rendering and clean text export dialogs.
 * [`overlays.py`](src/orcus/gui/overlays.py): Rich state overlays, non-blocking toast notifications, orientation mismatch warning banners (`[화면 방향 맞추기]`), and engine failure recovery cards.
 * [`instance.py`](src/orcus/gui/instance.py): Single-instance enforcement via Win32 Named Mutex and local QtNetwork IPC socket forwarding with local-path validation, named pipe SID authentication (`win32.pipe_server_sid`), and graceful shutdown mutex wait (up to 20s).
@@ -246,7 +254,7 @@ A comprehensive adversarial code and security audit covering setup, APK pipeline
 #### 9. Developer Toolchain & Testing Infrastructure (`tools/`, `tests/`)
 * **AI2 Project Synthesis Engine (`tools/ai2/`)**: Visual `.bky` XML and `.yail` Scheme code generator, producing valid `.aia` project archives (`HelloPurr`, `TalkToMe`, `OrcusProbe`, `PaintPot`, `BallBounce`, `MoleMash`, `HelloPurrKo`, `HelloPurrMin36`, `HelloPurrLand`).
 * [`bootstrap.py`](tools/bootstrap.py) / [`dev.py`](tools/dev.py) / [`build.py`](tools/build.py): Hash-pinned environment manager, test runner, and PyInstaller onedir distribution builder with `--gui-check` validation.
-* **Automated Test Suite**: **406 pytest unit tests** passing with 100% success rate (including `test_shake.py`, `test_gui_3b.py`, `test_gui_dialogs.py`, and security audit suites). Zero Pyright type check diagnostics.
+* **Automated Test Suite**: **407 pytest unit tests** passing with 100% success rate (including `test_shake.py`, `test_gui_3b.py`, `test_gui_dialogs.py`, and security audit suites). Zero Pyright type check diagnostics.
 * **Real-Device Acceptance Test Suites**:
   - `tests/device/test_acceptance_3a.py`: End-to-end device test harness validating criteria B1, B2, B4, B7, B8, B9, B11, B12, and B15.
   - `tests/device/test_acceptance_3b.py`: Real-device acceptance suite validating criteria B3, B5, B6, B13, B14, and non-invasive mouse wheel scrolling.
@@ -323,7 +331,7 @@ Orcus_APK_Emulator/
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   ├── unit/                   # 406 unit test suites covering contracts, engine, apk, device, gui, app
+│   ├── unit/                   # 407 unit test suites covering contracts, engine, apk, device, gui, app
 │   └── device/                 # Real emulator device integration test suites (Phase 3a & 3b)
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
@@ -367,7 +375,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (406 tests)
+# 4. Run the automated unit test suite (407 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -412,15 +420,16 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] Guaranteed pointer release on gRPC input stream restart (Finding 9)
   - [x] PyInstaller onedir distribution packaging with `--gui-check` validation (Finding 10)
   - [x] 350 automated unit tests passing with 100% success rate & 0 Pyright issues
-- [x] **Phase 3b: Sensor Integration, IME & Settings** (Completed: v0.1.9)
+- [x] **Phase 3b: Sensor Integration, IME & Settings** (Completed: v0.1.10)
+  - [x] Direct on-screen Korean IME composition (`WA_InputMethodEnabled`, `commitString` paste queue, floating preedit bubble, Hanja candidate window, native `한/영` key switching)
+  - [x] Multiline Korean IME text composition input bar overlay (Ctrl+T, [가] side button)
   - [x] [Sensors] panel: Shake sensitivity presets (Weak/Moderate/Strong), gradual 15° rotation, 20° tilt pad, GPS presets & injection, microphone toggle
-  - [x] Korean IME text composition input bar with guest clipboard synchronization (Enter, Shift+Enter, Esc, Ctrl+T, VK_HANGUL)
   - [x] Bezel side buttons: Rotate CCW (F7), Rotate CW (F8), Shake (F6 with ~0.5s auto-repeat), and [가] (Ctrl+T) with drag-to-cancel
   - [x] Unified Settings dialog (GPU mode, golden snapshot rebuild, clean-close data loss warning, log level)
   - [x] Mouse wheel vertical scrolling via guest VSCROLL without canvas touch drag interference
   - [x] Runtime secondary screen orientation mismatch detection (Screen2 landscape banner at 2.7s + 1-click sync)
   - [x] Real-device acceptance test suite (`tests/device/test_acceptance_3b.py`) validating criteria B3, B5, B6, B13, B14
-  - [x] 406 automated unit tests passing with 100% success rate & 0 Pyright issues
+  - [x] 407 automated unit tests passing with 100% success rate & 0 Pyright issues
 - [ ] **Phase 4: Packaging & Distribution** (Next Milestone)
   - [ ] Inno Setup standalone user installer (zero admin privileges required)
   - [ ] Optional multi-session state preservation (Keep-state A/B slots)

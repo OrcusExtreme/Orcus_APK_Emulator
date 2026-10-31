@@ -100,7 +100,6 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.pump = FramePump(bridge)
         self.screen_view = ScreenView(self.pump, lambda: self.s.settings().input)
-        self.screen_view.hangul.connect(self.open_hangul)
         self.phone = PhoneView(self.screen_view, self._phone_key, self._phone_action)
         self.overlay = Overlay(self.screen_view)
         self.overlay.clicked.connect(self._overlay_clicked)
@@ -643,7 +642,8 @@ class MainWindow(QMainWindow):
         keys = "\n".join(f"{k}: {v}" for k, v in (
             ("APK 열기", "Ctrl+O"), ("다시 실행", "F5"), ("뒤로", "Esc · 오른쪽 클릭"),
             ("홈", "Ctrl+Shift+H · 가운데 클릭"), ("최근 앱", "Ctrl+Shift+R"), ("흔들기", "F6 (누르고 있으면 반복)"),
-            ("왼쪽 / 오른쪽으로 돌리기", "F7 / F8"), ("한글 입력 바", "Ctrl+T · 폰 화면에서 한/영 키 · 옆 [가] 버튼"),
+            ("왼쪽 / 오른쪽으로 돌리기", "F7 / F8"), ("한글", "폰 화면에서 한/영 키로 바꿔 바로 입력(조합 중인 글자는 화면 "
+                                                         "아래 말풍선) · 긴 글은 Ctrl+T · 옆 [가] 버튼의 입력 바"),
             ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V"), ("스크롤", "마우스 휠")))
         QMessageBox.information(self, "도움말", "App Inventor에서 받은 .apk를 끌어다 놓으면 PC 휴대폰에서 바로 "
                                              "실행합니다. 센서는 오른쪽 [센서] 탭에 있습니다.\n\n" + keys)

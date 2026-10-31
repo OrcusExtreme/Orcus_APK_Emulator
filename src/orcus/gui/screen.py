@@ -3,30 +3,38 @@
 Pointer positions go out as normalized coordinates inside the frame on screen plus that frame's seq; the device
 package maps them to panel pixels with that frame's rotation (§9.2). A held finger is always lifted (§9.3): on
 release, when the pointer leaves the screen (at the edge), on focus loss, and when the frame rotation changes.
-The wheel scrolls (a real scroll event, 3b); the 한/영 key opens the Korean input bar (§9.6).
+The wheel scrolls (a real scroll event, 3b).
+
+Korean straight on the screen (§9.6, moved up from P4 at the user's request in 3b): the screen takes the Windows
+IME, which composes here. A finished syllable comes as the event's commit string and goes to the phone by paste,
+in the queue with the keys; the syllable still being composed shows in a bubble near the bottom, where the IME's
+candidate window opens too. The phone cannot show half a syllable: its own keyboard is not involved.
 """
 
 import time
 from collections import deque
 from collections.abc import Callable
 
-from PySide6.QtCore import QPointF, QRect, QSize, Qt, Signal
+from typing import Any
+
+from PySide6.QtCore import QPointF, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFocusEvent,
     QGuiApplication,
+    QInputMethodEvent,
     QKeyEvent,
     QMouseEvent,
     QPainter,
     QPaintEvent,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QWidget
 
 from orcus.contracts import HwKey, InputSettings, InputSink, PointerAt, Rotation
 
 from .frame_pump import FramePump, Shown
-from .keymap import CHORD_KEYS, NAMED_KEYS, VK_HANGUL
+from .keymap import CHORD_KEYS, NAMED_KEYS
 
 BACKGROUND = QColor(14, 14, 18)
 
@@ -41,8 +49,6 @@ def fit(avail: QSize, *, chrome: QSize, landscape: bool, dpr: float) -> QSize:
 
 
 class ScreenView(QWidget):
-    hangul = Signal()   # the 한/영 key: open the Korean input bar
-
     def __init__(self, pump: FramePump, settings: Callable[[], InputSettings]) -> None:
         super().__init__()
         self._pump = pump
@@ -55,6 +61,14 @@ class ScreenView(QWidget):
         self.overlay = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled)   # the Windows IME composes on the screen
+        self.composing = QLabel(self)
+        self.composing.setTextFormat(Qt.TextFormat.PlainText)
+        self.composing.setStyleSheet("background:rgba(20,20,24,225);color:white;border-radius:8px;padding:4px 12px")
+        f = self.composing.font()
+        f.setPointSizeF(f.pointSizeF() * 1.5)
+        self.composing.setFont(f)
+        self.composing.hide()
 
     # --- frames ---------------------------------------------------------------------------------------------------
     def set_input(self, sink: InputSink | None) -> None:
@@ -113,6 +127,8 @@ class ScreenView(QWidget):
         sink = self._input
         if sink is None:
             return
+        if self.composing.isVisible():   # the syllable being composed belongs to the text box tapped before
+            QGuiApplication.inputMethod().commit()
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         match event.button():
             case Qt.MouseButton.LeftButton:
@@ -160,16 +176,51 @@ class ScreenView(QWidget):
 
     def focusOutEvent(self, event: QFocusEvent) -> None:
         self.release()
+        self.composing.hide()   # Qt commits or drops the composition as focus leaves
         super().focusOutEvent(event)
+
+    # --- Korean IME (§9.6) --------------------------------------------------------------------------------------------
+    def inputMethodEvent(self, event: QInputMethodEvent) -> None:
+        commit = event.commitString()
+        if commit and self._input is not None:
+            self._input.paste_text(commit)   # the same queue as the keys: a following space or Enter stays after
+        self._show_composing(event.preeditString())
+        event.accept()
+
+    def inputMethodQuery(self, query: Qt.InputMethodQuery) -> Any:
+        match query:
+            case Qt.InputMethodQuery.ImEnabled:
+                return True
+            case Qt.InputMethodQuery.ImCursorRectangle:   # where the IME opens its candidate window (한자)
+                return self.composing.geometry() if self.composing.isVisible() else self._composing_place(40, 30)
+            case Qt.InputMethodQuery.ImSurroundingText:   # the phone's text is not ours to read
+                return ""
+            case Qt.InputMethodQuery.ImCursorPosition | Qt.InputMethodQuery.ImAnchorPosition:
+                return 0
+            case _:
+                return super().inputMethodQuery(query)
+
+    def _composing_place(self, w: int, h: int) -> QRect:
+        """Bottom centre, above the guest's navigation bar: over the guest keyboard, which PC typing does not use."""
+        return QRect((self.width() - w) // 2, self.height() - h - self.height() // 9, w, h)
+
+    def _show_composing(self, text: str) -> None:
+        if not text:
+            self.composing.hide()
+            return
+        self.composing.setText(text)
+        self.composing.adjustSize()
+        self.composing.setGeometry(self._composing_place(self.composing.width(), self.composing.height()))
+        self.composing.show()
+        self.composing.raise_()
+        QGuiApplication.inputMethod().update(Qt.InputMethodQuery.ImCursorRectangle)
 
     # --- keys (§9.4) ------------------------------------------------------------------------------------------------
     def focusNextPrevChild(self, next: bool) -> bool:
         return False   # Tab belongs to the phone while the screen has focus
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.nativeVirtualKey() == VK_HANGUL or event.key() == Qt.Key.Key_Hangul:
-            self.hangul.emit()
-            return
+        # In Korean mode the IME takes the letter keys (inputMethodEvent); 한/영 is the IME's own switch
         sink = self._input
         if sink is None:
             super().keyPressEvent(event)

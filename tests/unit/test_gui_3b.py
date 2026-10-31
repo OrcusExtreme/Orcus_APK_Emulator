@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QKeyEvent, QWheelEvent
+from PySide6.QtGui import QInputMethodEvent, QKeyEvent, QWheelEvent
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
@@ -276,8 +276,6 @@ def test_window_sends_the_bar_text_and_toggles_it(qapp: QApplication, tmp_path: 
     assert ("paste", "안녕하세요 Orcus") in s.dev.input.calls
     w.toggle_hangul()
     assert not w.hangul_bar.isVisible()
-    w.screen_view.hangul.emit()                             # the 한/영 key on the phone screen
-    assert w.hangul_bar.isVisible()
     w.quiet_close = True
     w.close()
 
@@ -308,7 +306,7 @@ def test_settings_dialog_saves_only_changes_and_confirms_the_gpu(qapp: QApplicat
     assert s.saved[-1] == {"input.esc_is_back": False, "ui.confirm_close_data": False} and len(s.rebuilt) == 1
 
 
-def test_screen_wheel_scrolls_and_the_hangul_key_opens_the_bar(qapp: QApplication) -> None:
+def test_screen_wheel_scrolls(qapp: QApplication) -> None:
     v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
     v.resize(400, 800)
     sink = Sink()
@@ -317,11 +315,44 @@ def test_screen_wheel_scrolls_and_the_hangul_key_opens_the_bar(qapp: QApplicatio
     v.wheelEvent(QWheelEvent(p, p, QPoint(0, 0), QPoint(0, -120), Qt.MouseButton.NoButton,
                              Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False))
     assert sink.calls == [("wheel", 0.5, 0.25, -120)]
-    opened: list[bool] = []
-    v.hangul.connect(lambda: opened.append(True))
-    v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_unknown, Qt.KeyboardModifier.NoModifier, 0, 0x15, 0))
-    v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Hangul, Qt.KeyboardModifier.NoModifier))
-    assert opened == [True, True] and sink.calls == [("wheel", 0.5, 0.25, -120)]   # never typed into the phone
+
+
+def ime(view: screen.ScreenView, preedit: str, commit: str = "") -> None:
+    """What the Windows IME sends through Qt while composing Korean (QWindowsInputContext)."""
+    ev = QInputMethodEvent(preedit, [])
+    if commit:
+        ev.setCommitString(commit)
+    view.inputMethodEvent(ev)
+
+
+def test_korean_typed_on_the_screen_goes_to_the_phone_syllable_by_syllable(qapp: QApplication) -> None:
+    """The user's 3b request: 한/영 on the phone screen and type. Finished syllables are pasted in order; the one
+    being composed shows in the bubble only (the phone cannot show half a syllable)."""
+    v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
+    v.resize(400, 800)
+    v.show()
+    sink = Sink()
+    v.set_input(sink)
+    assert v.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled)
+    assert v.inputMethodQuery(Qt.InputMethodQuery.ImEnabled) is True
+    for pre in ("ㅇ", "아", "안"):
+        ime(v, pre)
+    assert sink.calls == [] and v.composing.isVisible() and v.composing.text() == "안"
+    ime(v, "ㄴ", commit="안")                       # the next consonant finishes 안
+    ime(v, "녀")
+    ime(v, "녕")
+    ime(v, "", commit="녕")                         # space or Enter finishes the last one
+    assert sink.calls == [("paste", "안"), ("paste", "녕")]
+    assert not v.composing.isVisible()
+    v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier, " "))
+    assert sink.calls[-1] == ("ascii", " ")         # after the syllables, in the same queue
+    ime(v, "ㅎ")
+    box = v.inputMethodQuery(Qt.InputMethodQuery.ImCursorRectangle)
+    assert v.rect().contains(box) and box == v.composing.geometry()   # the 한자 window opens at the bubble
+    v.set_input(None)
+    ime(v, "", commit="하")                          # no phone: nothing breaks, nothing sent
+    assert sink.calls[-1] == ("ascii", " ")
+    v.close()
 
 
 def test_side_key_dragged_off_is_not_pressed(qapp: QApplication) -> None:
