@@ -294,3 +294,12 @@ def test_only_existing_local_files_are_handed_over(tmp_path: Path) -> None:
     assert instance.acceptable(str(apk))
     for bad in (r"\\host\share\x.apk", "//host/share/x.apk", "relative.apk", str(tmp_path / "missing.apk"), ""):
         assert not instance.acceptable(bad), bad
+
+
+def test_app_icon_is_loaded_and_set_on_window(qapp: QApplication) -> None:
+    '''Orcus logo icon is resolved and has embedded multi-resolution sizes.'''
+    from orcus.gui import app as gui_app
+    icon = gui_app.app_icon()
+    assert not icon.isNull()
+    sizes = [sz.width() for sz in icon.availableSizes()]
+    assert 16 in sizes and 32 in sizes and 256 in sizes

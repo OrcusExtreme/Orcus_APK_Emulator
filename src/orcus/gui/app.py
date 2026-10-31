@@ -11,7 +11,7 @@ from pathlib import Path
 from types import TracebackType
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QSessionManager
+from PySide6.QtGui import QIcon, QSessionManager
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from orcus.common import log, win32
@@ -37,10 +37,27 @@ def _log_uncaught() -> None:
     threading.excepthook = thread_hook
 
 
+def app_icon() -> QIcon:
+    '''Load the application icon from embedded resources or project assets.'''
+    for loc in (
+        Path(__file__).resolve().parent.parent / 'resources' / 'icon.ico',
+        Path(__file__).resolve().parent.parent / 'resources' / 'icon.png',
+        Path(__file__).resolve().parents[3] / 'assets' / 'icon.ico',
+        Path(__file__).resolve().parents[3] / 'assets' / 'icon.png',
+    ):
+        if loc.is_file():
+            return QIcon(str(loc))
+    return QIcon()
+
+
 def run(make_session: Callable[[], SessionApi], logs_dir: Path, files: list[str]) -> int:
     _log_uncaught()
+    win32.set_app_user_model_id("OrcusExtreme.OrcusAPK.Emulator")
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Orcus APK Emulator")
+    icon = app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     _mutex, existed = win32.named_mutex(instance.MUTEX)
     if existed:
         if instance.hand_over(files or []):
@@ -58,6 +75,8 @@ def run(make_session: Callable[[], SessionApi], logs_dir: Path, files: list[str]
     session.apps.subscribe(bridge.on_run)
     session.apps.subscribe_log(bridge.on_log)
     win = MainWindow(session, bridge, logs_dir)
+    if not icon.isNull():
+        win.setWindowIcon(icon)
     server = instance.InstanceServer(bridge.paths.emit)
     done = [False]
 

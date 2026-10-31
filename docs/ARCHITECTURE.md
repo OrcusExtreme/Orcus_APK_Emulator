@@ -1311,6 +1311,10 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
 - **베젤:** QPainter로 그린 일반적인 둥근 프레임이고 제조사 표식은 없다. 가로 모드에서는 베젤과 화면이 제자리에서 돈다.
 - **오른쪽 패널:** 접을 수 있다(폰만 보이는 작은 모드).
 - **[P3a]와 [P3b] 범위:** [P3a]에서는 툴바, 폰 화면, 베젤 키, [앱]·[로그] 패널(앱 카드, 문제 카드, 원본 로그)이 동작한다. [P3b]에서 [센서] 패널, 한글 입력 바, 설정 대화상자가 추가된다. [P3a]의 툴바 [설정]은 GPU 모드 대화상자를 연다.
+- **[3b 로고/아이콘]**
+  - 고해상도 앱 아이콘(`assets/icon.ico`, `assets/icon.png`, `src/orcus/resources/icon.ico`)을 탑재.
+  - Windows 작업 표시줄에서 Python 기본 아이콘으로 묶이지 않도록 `win32.set_app_user_model_id("OrcusExtreme.OrcusAPK.Emulator")`를 호출하고, `QApplication.setWindowIcon`과 `MainWindow.setWindowIcon`에 다중 해상도(16·24·32·48·64·128·256 px)를 지원하는 아이콘을 지정.
+  - PyInstaller 배포 빌드(`tools/build.py`) 시 `OrcusAPK.exe` 및 `orcus-cli.exe` 바이너리 자체에 아이콘 리소스를 포함.
 
 ### 10.2 피드백 채널 (심각도마다 하나, 코드 → 채널 표로 연결)
 

@@ -1,13 +1,17 @@
 # Orcus APK Emulator
 
+<p align="center">
+  <img src="assets/icon.png" width="128" height="128" alt="Orcus APK Emulator Logo">
+</p>
+
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.10-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.10)
+[![Release](https://img.shields.io/badge/Release-v0.1.11-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.11)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-407%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-408%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -79,15 +83,15 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.10 / Phase 3b Direct Korean IME & Sensors Completed)
+## 📊 Current Progress & Status (v0.1.11 / Phase 3b Direct Korean IME, Sensors & Official Branding Completed)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, and **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, backed by **407 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, and **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, backed by **408 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
     A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
     B --> C["Phase 3a: Runtime, Security & Hardening<br/>(Completed: v0.1.8)"]
-    C --> D["Phase 3b: Sensors & Direct IME<br/>(Completed: v0.1.10)"]
+    C --> D["Phase 3b: Sensors, Direct IME & Branding<br/>(Completed: v0.1.11)"]
     D --> E["Phase 4: Inno Setup & Release<br/>(Next Milestone)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
     style B fill:#2d6a4f,stroke:#1b4332,color:#fff
@@ -265,6 +269,7 @@ A comprehensive adversarial code and security audit covering setup, APK pipeline
 
 ```text
 Orcus_APK_Emulator/
+├── assets/                     # Project branding & multi-resolution application icons (.ico / .png)
 ├── docs/                       # Architecture specifications & research documents
 │   ├── ARCHITECTURE.md         # Full technical architecture specification (v3)
 │   ├── fixtures.md             # Test APK fixture specifications (HelloPurr, TalkToMe, OrcusProbe)
@@ -327,11 +332,12 @@ Orcus_APK_Emulator/
 │       │   ├── sensors.py      # Motion, rotation, tilt, GPS & microphone drawer
 │       │   ├── settings_dialog.py # Unified settings dialog (GPU, snapshots, warnings)
 │       │   └── window.py       # Top-level application window
+│       ├── resources/          # Embedded runtime application icons (icon.ico, icon.png)
 │       └── setup/              # Resumable downloader, safe extractor, WHPX configuration
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   ├── unit/                   # 407 unit test suites covering contracts, engine, apk, device, gui, app
+│   ├── unit/                   # 408 unit test suites covering contracts, engine, apk, device, gui, app
 │   └── device/                 # Real emulator device integration test suites (Phase 3a & 3b)
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
@@ -375,7 +381,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (407 tests)
+# 4. Run the automated unit test suite (408 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -420,7 +426,7 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] Guaranteed pointer release on gRPC input stream restart (Finding 9)
   - [x] PyInstaller onedir distribution packaging with `--gui-check` validation (Finding 10)
   - [x] 350 automated unit tests passing with 100% success rate & 0 Pyright issues
-- [x] **Phase 3b: Sensor Integration, IME & Settings** (Completed: v0.1.10)
+- [x] **Phase 3b: Sensor Integration, IME, Settings & Official Branding** (Completed: v0.1.11)
   - [x] Direct on-screen Korean IME composition (`WA_InputMethodEnabled`, `commitString` paste queue, floating preedit bubble, Hanja candidate window, native `한/영` key switching)
   - [x] Multiline Korean IME text composition input bar overlay (Ctrl+T, [가] side button)
   - [x] [Sensors] panel: Shake sensitivity presets (Weak/Moderate/Strong), gradual 15° rotation, 20° tilt pad, GPS presets & injection, microphone toggle
@@ -429,7 +435,8 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] Mouse wheel vertical scrolling via guest VSCROLL without canvas touch drag interference
   - [x] Runtime secondary screen orientation mismatch detection (Screen2 landscape banner at 2.7s + 1-click sync)
   - [x] Real-device acceptance test suite (`tests/device/test_acceptance_3b.py`) validating criteria B3, B5, B6, B13, B14
-  - [x] 407 automated unit tests passing with 100% success rate & 0 Pyright issues
+  - [x] Official application icon & multi-resolution Windows .ico integration (assets/, src/orcus/resources/, AppUserModelID taskbar grouping, PyInstaller spec)
+  - [x] 408 automated unit tests passing with 100% success rate & 0 Pyright issues
 - [ ] **Phase 4: Packaging & Distribution** (Next Milestone)
   - [ ] Inno Setup standalone user installer (zero admin privileges required)
   - [ ] Optional multi-session state preservation (Keep-state A/B slots)

@@ -33,6 +33,8 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
 shell32.IsUserAnAdmin.argtypes = []
 shell32.IsUserAnAdmin.restype = wintypes.BOOL
+shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [wintypes.LPCWSTR]
+shell32.SetCurrentProcessExplicitAppUserModelID.restype = wintypes.HRESULT
 
 
 class _DisplayDevice(ctypes.Structure):
@@ -243,3 +245,10 @@ def _process_sid(process: int) -> str:
             kernel32.LocalFree(ctypes.cast(text, wintypes.HLOCAL))
     finally:
         close_handle(token.value)
+
+def set_app_user_model_id(app_id: str = 'OrcusExtreme.OrcusAPK.Emulator') -> None:
+    '''Explicit AppUserModelID so Windows taskbar pins and groups the app under its own identity and icon.'''
+    try:
+        shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass

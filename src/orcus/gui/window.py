@@ -14,6 +14,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QGuiApplication, \
     QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -97,6 +98,8 @@ class MainWindow(QMainWindow):
         self.logs_dir = logs_dir
         self.quiet_close = False   # logoff and other ends that must not ask (gui.app sets it)
         self.setWindowTitle("Orcus APK Emulator")
+        if not QApplication.windowIcon().isNull():
+            self.setWindowIcon(QApplication.windowIcon())
         self.setAcceptDrops(True)
         self.pump = FramePump(bridge)
         self.screen_view = ScreenView(self.pump, lambda: self.s.settings().input)
