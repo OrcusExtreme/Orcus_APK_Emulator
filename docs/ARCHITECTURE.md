@@ -91,7 +91,8 @@
 - **GUI 단일 인스턴스.**
   1. `__main__`이 app.Session을 만들기 **전에** named mutex `Local\OrcusAPK.Instance`를 확인한다.
   2. 이미 있으면 사용자·세션별 이름의 QLocalServer(`OrcusAPK.ipc.<사용자 SID>`, `UserAccessOption`)에 최대 3 s 동안 재시도하며 접속해 파일 인자를 넘기고 끝낸다.
-  3. 접속하지 못하면 "Orcus가 이미 실행 중입니다"를 표시한다.
+     - **[3b]** 넘기기 전에 파이프 서버 프로세스의 계정 SID(`GetNamedPipeServerProcessId` → 토큰)가 우리 계정인지 확인한다. 이름은 누구나 먼저 만들 수 있고, SID가 든 이름은 비밀이 아니기 때문이다(3a 리뷰).
+  3. 접속하지 못하면 첫 인스턴스가 닫히는 중일 수 있다. **[3b]** 닫히는 인스턴스는 정지를 시작할 때 리스너를 먼저 닫으므로, 두 번째 실행은 mutex가 사라질 때까지 최대 20 s 기다린 뒤 그 자리에서 시작한다. 그래도 남아 있으면 "Orcus가 이미 실행 중입니다"를 표시한다(3a 리뷰: 닫히는 중에 넘긴 파일이 "ok"를 받고 사라졌다).
   - 리스너는 `gui/instance.py`에 있고 `SessionApi.open_paths()`를 부른다.
 - **Windows 로그오프·종료.** `gui/instance.py`의 `commitDataRequest`/`aboutToQuit`가 `SessionApi.shutdown(fast=True)`를 부른다.
   - 빠른 정지는 2 s 안에 끝내며 **절대 스냅샷을 저장하지 않는다.** 남은 프로세스는 강제 종료한다.
@@ -301,7 +302,7 @@ class FrameSource(Protocol):
 
 class InputSink(Protocol):               # 모든 호출은 큐에 넣고 바로 반환
     def pointer(self, at: PointerAt, pressed: bool) -> None: ...
-    def wheel(self, at: PointerAt, dy: int) -> None: ...
+    def wheel(self, at: PointerAt, dy: int) -> None: ...     # Qt angleDelta(한 칸 120, +는 위로) [3b]
     def key(self, key: HwKey | str, *, long_press: bool = False) -> None: ...  # 항상 keypress
     def chord(self, modifier: str, key: str) -> None: ...                     # 예: ("Control", "a")
     def type_ascii(self, text: str) -> None: ...
@@ -309,10 +310,16 @@ class InputSink(Protocol):               # 모든 호출은 큐에 넣고 바로
     def release_all(self) -> None: ...
 
 class DeviceControls(Protocol):          # 모두 device-controls FIFO 스레드에 넣고 바로 반환
+    @property
+    def posture(self) -> Rotation: ...   # 가장 최근 rotate()의 목표 [3b]. epoch마다 PORTRAIT에서 시작
+    @property
+    def microphone(self) -> bool: ...    # 가장 최근 set_microphone() [3b]. SESSION_INIT이 끈다
     def shake(self, sensitivity: Sensitivity) -> None: ...
-    def rotate(self, to: Rotation) -> None: ...
+    def rotate(self, to: Rotation, *, gradual: bool = True) -> None: ...
+    # gradual: 15°씩 0.1 s(§9.7). 실행 전 회전은 앱이 아직 듣지 않으므로 한 번에 돈다
     def tilt(self, pitch_deg: float, roll_deg: float) -> None: ...
     def set_location(self, lat: float, lon: float, alt_m: float = 30.0) -> None: ...
+    def resend_location(self) -> None: ...   # [3b] 가장 최근 위치를 다시(테스트 제공자는 보낼 때만 알림, §9.7)
     def set_microphone(self, enabled: bool) -> None: ...
 
 class DeviceSession(Protocol):
@@ -357,6 +364,7 @@ class RunEvent:
     run_id: str; stage: RunStage; info: ApkInfo | None; issues: tuple[Issue, ...]
     problem: OrcusError | None; prompt: Prompt | None; elapsed_s: float
     pid: int | None; epoch: int
+    warnings: tuple[ErrorCode, ...] = ()   # [3b] RUNNING 중 배너(방향 불일치). 이벤트마다 통째로 바뀐다
 
 class ApkService(Protocol):              # 모든 메서드는 명령만 넣고 바로 반환
     def submit(self, path: Path, policy: RunPolicy | None = None) -> str: ...  # None이면 설정 기본값. 최신 드롭 우선
@@ -711,7 +719,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
 | 상황 | GOLDEN | COLD | [P4] KEEP_STATE |
 |---|---|---|---|
 | 상태 칩 | "깨끗한 휴대폰 모드 — 닫으면 처음 상태로" | "느린 그래픽 모드 · 휴대폰 상태가 유지됨" (+ 배너) | "휴대폰 유지 모드" |
-| **[P3b]** 닫을 때(이번 세션에 앱을 설치하거나 실행했으면) | 모달: "이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다." [닫기] [취소] □ 다시 묻지 않기. **[P4]**에서 [이번에는 휴대폰 유지하고 닫기] 추가 | 묻지 않음 | 묻지 않음(정상 종료 때 저장) |
+| **[P3b]** 닫을 때(이번 세션에 앱을 설치하거나 실행했으면) | 모달: "이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다." [닫기] [취소] □ 다시 묻지 않기. **[P4]**에서 [이번에는 휴대폰 유지하고 닫기] 추가. **[3b]** 화면 장치가 없어 이번만 COLD로 켠 경우(`ENGINE_NO_DISPLAY`)도 다음 골든 로드에서 지워지므로 묻는다. 로그오프는 묻지 않는다 | 묻지 않음 | 묻지 않음(정상 종료 때 저장) |
 | 크래시 자동 재시작(`epoch_cause = CRASH_RESTART`) | "휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다." | "휴대폰이 멈춰서 다시 켰습니다." | "휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다." |
 
 ### 6.2 epoch와 실행 정책
@@ -1127,7 +1135,10 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - 한 제스처 안에서 MouseEvent와 TouchEvent를 섞지 않는다.
 - **오른쪽 클릭**은 Back(설정, 기본 켬), **가운데 클릭**은 Home이다.
 - **이동 밀도(S7):** 게스트는 화면 프레임마다(약 60 Hz) 한 번 묶어 Dragged를 보낸다(10 ms 간격 50번 → 30번). 그보다 촘촘히 보내도 얻는 것이 없고, 20 ms 간격이면 거의 다 전달된다.
-- **휠: 게스트에 휠을 받을 장치가 없다**(S7: `getevent -lp`에 REL_WHEEL 없음, `injectWheel`로 스크롤되지 않음). **[P3b]** 대안: 커서가 Canvas 밖에 있을 때만 휠 한 칸을 짧은 세로 드래그(약 120 패널 px)로 흉내 낸다. Canvas 위에서는 드래그 이벤트가 되므로 보내지 않는다.
+- **휠: 게스트에 휠을 받을 장치가 없다**(S7: `getevent -lp`에 REL_WHEEL 없음, `injectWheel`로 스크롤되지 않음).
+  - **[3b 구현, 계획 변경]** `cmd input mouse scroll <x> <y> --axis VSCROLL,<n>`으로 진짜 스크롤 이벤트(ACTION_SCROLL)를 넣는다. 처음 계획한 "Canvas 밖에서만 짧은 세로 드래그"는 Canvas 위치를 알아야 했다.
+  - 실측(OrcusProbe, 2026-10-31): 명령 하나 0.06 s, 한 칸 = 128 px. **Canvas 위에서 굴려도 Canvas는 터치·드래그를 받지 않고**(Dragged 0) 바깥 Scrollable 화면만 스크롤된다.
+  - adb가 필요하므로 app이 `ScrollSink`를 주입한다. `device-wheel` 스레드가 명령을 하나씩 보내고, 그동안 온 칸은 더해서(마지막 위치로) 다음에 보낸다. 좌표는 회전된 표시 좌표이며, 표시가 프레임 자세를 따른다고 보고 계산한다(180°와 고정 화면은 방향 불일치 배너가 맡는다).
 - **[P4]** 두 손가락 핀치(Ctrl + 드래그, TouchEvent id 0/1)를 넣는다.
 
 ### 9.4 키
@@ -1157,13 +1168,14 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 | 뒤로 | Esc(설정, 기본 켬) · 오른쪽 클릭 |
 | 홈 | Ctrl+Shift+H · 가운데 클릭 |
 | 최근 앱 | Ctrl+Shift+R |
-| 흔들기 | F6 |
-| 왼쪽 / 오른쪽 회전 | F7 / F8 |
-| 한글 입력 바 | Ctrl+T · 한/영 키(S8에서 확인) · [가] 버튼 |
+| 흔들기 | F6 (누르고 있으면 450 ms마다 — 키 반복을 창이 거른다) · 옆 버튼 |
+| 왼쪽 / 오른쪽 회전 | F7 / F8 · 옆 버튼 (왼쪽 = z + 90°) |
+| 한글 입력 바 | Ctrl+T · 폰 화면의 한/영 키 · [가] 옆 버튼 |
 | 휴대폰 초기화 | 메뉴에서만(확인 대화상자) |
 | FPS·지연 오버레이(개발용) | Ctrl+Shift+F12 |
 
 Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치므로 쓰지 않는다.
+**[3b]** 한/영 키는 Qt가 Windows에서 `Key_Hangul`로 바꾸지 않을 수 있어 가상 키 `VK_HANGUL`(0x15)도 본다. 실제 키보드 확인은 수동 점검(B10)이다.
 
 ### 9.6 한글 입력
 
@@ -1214,8 +1226,13 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - **[P3a]** launcher의 방향을 읽어 실행 전에 기기를 돌린다(§7.6).
   - **[P3b]** 표시 회전이 기기 자세와 다르면 배너와 [화면 방향 맞추기]를 보여준다.
     - 표시 회전은 `dumpsys window displays`의 `mCurrentRotation=ROTATION_n`으로 읽는다(S7: 0.06 s). API 36의 `dumpsys input`에는 SurfaceOrientation 줄이 없다.
+    - **[3b 구현]** 앱이 RUNNING인 동안 ApkService가 표시 회전과 자세를 비교한다. 회전 직후 표시가 따라오기까지 약 1 s 걸리므로 **같은 (표시, 자세) 불일치를 두 번 연속** 봐야 `RunEvent.warnings`에 `APP_ORIENTATION_MISMATCH`를 넣는다. 맞으면 바로 뺀다. 앱이 끝나면 비운다.
+      - 점검 하나는 adb 프로세스 하나라 우리 프로세스 CPU 7.3 ms다(실측). 평소에는 3 s마다(한 코어의 0.24%, B9), 실행 직후와 App Inventor 화면이 다시 나올 때(`Form … got onResume`, Screen2 열기·닫기)는 1.2 s 간격으로 두 번 바로 본다. 실측: Screen2를 누르고 2.7 s 뒤 배너.
+      - 시계 기준으로 돈다. 파이프라인 큐에 명령이 자주 들어와도 점검이 밀리지 않는다.
     - Screen2, 스캐너 화면, 실행 중 ScreenOrientation 블록도 이 방법으로 해결한다.
 - **[P3b] 회전 버튼(F7/F8):** `setPhysicalModel(ROTATION, [0,0,0] | [0,0,90] | [0,0,180] | [0,0,270], STEP)` → 프레임 PORTRAIT / LANDSCAPE / REVERSE_PORTRAIT / REVERSE_LANDSCAPE(S7 확정). 앱 표시는 0·90·270°만 따라 돈다.
+  - **[3b 구현]** 15°씩 0.1 s 간격으로 돈다(`device/shake.py` `turn_steps`, 90°에 0.6 s, z는 가까운 쪽으로). App Inventor 감지기를 옮긴 유닛 테스트에서 표본 편차가 3.4 m/s² 아래라 세 감도 모두 0번이고, 한 번에 도는 회전은 S7처럼 울린다. [화면 방향 맞추기]도 이 방식이다. **실행 전 회전(§7.6)만 한 번에** 돈다(앱이 아직 듣지 않음).
+  - 자세는 `DeviceControls.posture`(가장 최근 목표) 하나로 본다. 회전 버튼과 실행 전 회전이 같은 값을 쓴다(3a의 ApkService 따로 기억은 없앴다).
   - 골든에서 자동 회전이 켜져 있어, App Inventor의 "unspecified" 방향은 기기 회전을 따른다.
   - 프레임이 회전하면 창과 베젤도 함께 돈다.
 
@@ -1229,6 +1246,8 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
 - **프레임워크 테스트 제공자로 넣는다**(S7 결과로 변경): `cmd location providers set-test-provider-location gps|fused --location <lat>,<lon> --accuracy 5`를 두 제공자에 보낸다. 제공자 준비는 `session_init`(§6.6)에서 한다. 기본값은 서울시청이고 프리셋을 둔다.
   - gRPC `setGps`·콘솔 `geo fix`는 쓰지 않는다: App Inventor LocationSensor는 Google Play 서비스 fused 제공자에 BALANCED로 요청하고, 그 요청은 GNSS를 켜지 않아 에뮬레이터 GPS 값이 앱까지 오지 않는다(S7, GOLDEN·COLD 모두).
   - 앱은 1 s 간격으로 보낸 값을 수 초 안에 받는다(S7: 세 번 보낸 뒤 "loc 37.5665,126.9780"). 위치를 바꾸면 값을 1 s 간격으로 2–3번 보낸다.
+  - **[3b 구현]** 같은 `device-controls` 스레드가 1 s 간격으로 3번 보낸다. 새 위치가 오면 그것으로 바꿔 다시 센다. 초기화와 겹친 재전송은 버린다(새 세션은 서울시청에서 시작). 프리셋 기본값: 서울시청, 남산서울타워, 부산시청(`sensors.location_presets`).
+  - **[3b 발견·고침] 테스트 제공자는 값을 보낼 때만 알린다.** 세션 시작 때 한 번 보낸 위치는 나중에 업데이트를 요청한 LocationSensor에 가지 않아, 앱이 사용자가 프리셋을 고를 때까지 위치를 받지 못했다(기기 시험 "loc -"). 그래서 위치 권한이 있는 앱이 RUNNING이 될 때와 App Inventor 화면이 다시 나올 때(앱 로그 `Form … got onResume`, 권한 대화상자 뒤 포함) ApkService가 `DeviceControls.resend_location()`으로 가장 최근 위치(처음에는 첫 프리셋)를 다시 3번 보낸다.
   - 테스트 제공자 위치는 `Location.isMock()`이 참이다. App Inventor는 이 값을 보지 않는다.
 - **위치 힌트**(위치 컨트롤 옆과 `LOCATION` 칩):
   - "App Inventor LocationSensor 기본값은 TimeInterval 60000 ms·DistanceInterval 5 m라서, 첫 위치 뒤에는 약 1분마다·5 m 이상 움직였을 때만 LocationChanged가 옵니다. 빨리 보려면 TimeInterval을 1000으로 바꾸세요."(P)
@@ -1249,6 +1268,8 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - RECORD_AUDIO 앱에는 켜기를 제안한다. 동의는 패키지마다 기억하고, 실행할 때 다시 적용한다.
   - 켜져 있는 동안 빨간 "마이크 켜짐"을 표시한다. 녹음이 무음이면 Windows '데스크톱 앱의 마이크 액세스' 설정을 안내한다.
   - S3: SoundRecorder 녹음·재생 흐름은 마이크 꺼짐·켜짐 모두 동작한다(3gp 약 13 KB, AfterSoundRecorded). 이 PC에는 녹음 장치가 없어(`dsound: Could not initialize DirectSoundCapture`) 실제 소리는 확인하지 못했다 → 녹음 장치가 없으면 [마이크 켜기]를 끄고 "이 PC에 마이크가 없습니다"를 보여준다. 장치 유무는 에뮬레이터 로그의 이 줄로 안다.
+  - **[3b 구현]** 장치 유무는 에뮬레이터 로그 대신 Windows `waveInGetNumDevs()`(녹음 장치 수)로 GUI가 직접 본다. 같은 원인을 보면서 부팅을 기다리지 않아도 된다(이 PC: 0개 → 버튼 꺼짐, 상태 표시 "마이크 없음").
+  - 동의는 사용자가 [센서] 탭에서 켤 때 그 앱이 RECORD_AUDIO를 쓰면 `privacy.mic_allowed_packages`에 저장하고, 끄면 지운다. **ApkService가 실행할 때마다**(크래시 재시작 포함) 그 패키지의 동의대로 켜고 끈다. 그래서 다음 앱은 마이크를 물려받지 않는다. 켜져 있으면 상태 표시줄에 빨간 "마이크 켜짐".
 - **카메라:** `hw.camera.back=emulated`(**소프트웨어 가상 카메라**, P).
   - Camera·Camcorder는 가짜 영상을 받는다. BarcodeScanner는 실제 바코드를 비출 수 없으므로 인식할 수 없다(§7.4 문구).
   - **확인 항목(Phase 2에서 미실시 → [P4] 착수 전):** `-camera-back imagefile:D:\OrcusAPK\camera\current.png`(고정 ASCII 경로)를 확인한다. OrcusProbe의 BarcodeScanner는 외부 스캐너를 쓰므로(1501) 내장 스캐너용 픽스처가 따로 필요하다.
@@ -1306,7 +1327,7 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
 |---|---|
 | `SETUP_*` | 설치 진행 화면(CLI 터미널 / [P4] 마법사)의 실패 줄 + IT 요청문 |
 | `PRE_*`, `ENGINE_*`(아래 넷 제외) | 엔진 실패 패널 |
-| `ENGINE_GPU_SOFTWARE`, `ENGINE_ADB_LOST`, `ENGINE_RESET_FAILED`, `ENGINE_DISK_LOW`, `ENGINE_NO_DISPLAY`(3a) | 지속 경고 배너 |
+| `ENGINE_GPU_SOFTWARE`, `ENGINE_ADB_LOST`, `ENGINE_RESET_FAILED`, `ENGINE_DISK_LOW`, `ENGINE_NO_DISPLAY`(3a), `APP_ORIENTATION_MISMATCH`(3b, `RunEvent.warnings`에서, 해결 [화면 방향 맞추기]) | 지속 경고 배너 |
 | `FILE_*`, `STAGE_*`, `APK_PARSE`, `INSTALL_*` | 결정 필요 모달 |
 | `APP_CRASH` | 폰 위 빨간 배너 + 문제 카드 |
 | 그 밖의 `APP_*` | [로그] 탭의 문제 카드(필요하면 배너도) |
@@ -1330,6 +1351,7 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
 - 런타임 폴더(읽기 전용), [로그 폴더 열기]
 - [P3a]에는 GPU 모드만 고르는 작은 대화상자가 먼저 들어간다(툴바 [설정]과 배너에서 연다, §5.6).
 - `update_settings`의 `ApplyResult`에 따라 "다시 시작 필요" / "휴대폰 다시 준비 필요(약 3분)" 확인을 받는다.
+- **[3b 구현]** `gui/settings_dialog.py`(3a의 GPU 대화상자를 대신함). 바뀐 키만 저장한다. 한글 붙여넣기 방식은 Paste 키 하나뿐이라(S8) 고르는 칸 대신 설명으로 보여 준다. "닫을 때 앱 데이터 안내" 켜기·끄기를 더했다(§6.1의 "다시 묻지 않기"를 되돌리는 곳). GPU 배너의 [GPU 모드 바꾸기]도 이 대화상자를 연다. 재구축 확인 문구는 "약 5분"이다.
 
 ### 10.5 설치 UI
 
@@ -1699,7 +1721,10 @@ firstboot.bootFromLocalSnapshot=no
 
 - **`orcus-cli smoke`(약 1분):** PASS/FAIL 표와 시간을 `logs\smoke-*.txt`에 남긴다. **에뮬레이터·이미지·platform-tools 업그레이드의 관문**이다.
   - **[P3a]** 시작 → 프레임 → 탭 → 키 → HelloPurr 설치·실행 → 붙여넣기 → 초기화 → 정지.
-  - **[P3b]** 위 순서에 흔들기·회전·위치를 더한다.
+  - **[P3b]** 붙여넣기 뒤에 흔들기·회전·위치를 더한다(3b 구현).
+    - 흔들기: HelloPurr의 Shaking이 Sound.Play를 부른다. App Inventor Sound는 Play마다 `SoundPool.play returned stream id`(500 ms 안이면 `Unable to play because MinimumInterval…`)를 로그로 남기므로 앱 로그에서 확인한다. 탭 단계의 고양이 소리 뒤 0.6 s 기다린다. `dumpsys audio`는 같은 플레이어의 두 번째 시작을 남기지 않아 쓰지 않는다.
+    - 회전: 프레임 회전이 LANDSCAPE가 되는지(약 0.6 s), 센서를 따르는 앱이면 표시도 `ROTATION_90`이 되는지 본 뒤 세로로 되돌린다.
+    - 위치: `dumpsys location`의 gps·fused 테스트 제공자 마지막 위치가 보낸 값이 되는지 본다(약 0.7 s).
 - **`OrcusAPK.exe --selftest`(패키징본) [P2부터]:** 내장 검사만 한다(테스트 코드나 pytest를 쓰지 않음).
   - import, 의존성 버전 대 lock, proto·스텁 해시, `FakeEmulatorServer` 왕복을 확인한다(`engine/selftest.py`).
   - 과거의 개발용·배포용 런타임 불일치(OpenCV 4.14 대 5.0)를 막는 장치다.

@@ -11,10 +11,13 @@ SHORTCUTS: dict[str, str] = {
     "rerun": "F5",
     "home": "Ctrl+Shift+H",
     "recents": "Ctrl+Shift+R",
+    "shake": "F6",                 # held down: one pulse per 450 ms (the window throttles the key repeat)
+    "rotate_left": "F7",
+    "rotate_right": "F8",
+    "hangul_bar": "Ctrl+T",        # also the 한/영 key on the phone screen and the [가] side button
     "overlay": "Ctrl+Shift+F12",   # frame age / fps, for development
-    # [P3b]: shake F6, rotate F7/F8, Korean input bar Ctrl+T
 }
-RESERVED_P3B = ("F6", "F7", "F8", "Ctrl+T")
+VK_HANGUL = 0x15   # the 한/영 key's virtual key: Qt has no Key_Hangul mapping for it on Windows
 
 # Keys that belong to the phone while its screen has focus.
 PHONE_EDIT_KEYS = ("Ctrl+A", "Ctrl+C", "Ctrl+X", "Ctrl+Z", "Ctrl+V", "Ctrl+Left", "Ctrl+Right", "Ctrl+Shift+Left",

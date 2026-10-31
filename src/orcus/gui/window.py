@@ -1,16 +1,20 @@
-"""Main window (ARCHITECTURE.md §10.1): toolbar, the phone with its overlays, [App]/[Log] panels, status bar.
+"""Main window (ARCHITECTURE.md §10.1): toolbar, the phone with its overlays, [App]/[Sensors]/[Log] panels,
+the Korean input bar under the phone, status bar.
 
-Everything arrives through the Bridge on the main thread. The window only calls SessionApi, whose methods all
-return at once. Feedback goes to one channel per severity (§10.2, the code -> channel table in messages_ko).
+Everything arrives through the Bridge on the main thread. The window only calls SessionApi and DeviceControls,
+whose methods all return at once. Feedback goes to one channel per severity (§10.2, the code -> channel table
+in messages_ko); banners are the engine's warnings plus the running app's (RunEvent.warnings).
 """
 
 import subprocess
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QGuiApplication, \
     QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -24,6 +28,8 @@ from PySide6.QtWidgets import (
 from orcus.common import messages_ko, win32
 from orcus.common.messages_ko import Channel, text
 from orcus.contracts import (
+    ApkInfo,
+    DeviceControls,
     DeviceSession,
     EngineState,
     EngineStatus,
@@ -37,25 +43,31 @@ from orcus.contracts import (
     RunStage,
     SessionApi,
     SessionMode,
+    Sensitivity,
 )
 
 from . import dialogs
 from .bridge import Bridge
 from .frame_pump import FramePump
-from .gpu_dialog import GpuDialog
+from .hangul import HangulBar
 from .keymap import SHORTCUTS
 from .overlays import Banner, EnginePanel, Overlay, Toast
 from .panels import AppPanel, LogPanel
 from .phone import PhoneView
 from .screen import ScreenView, fit
+from .sensors import SHAKE_REPEAT_MS, SensorPanel
+from .settings_dialog import SettingsDialog, focus_gpu
 
 PANEL_W = 360
 WINDOW_CHROME_H = 192   # title bar, toolbar, banner room, status bar (§9.1: ~256 px with the bezel and nav row)
 BUSY = (RunStage.STAGING, RunStage.INSPECTING, RunStage.CHECKING, RunStage.INSTALLING, RunStage.LAUNCHING)
+USED = (RunStage.INSTALLING, RunStage.LAUNCHING, RunStage.RUNNING)   # the app may have written data
 LANDSCAPES = (Rotation.LANDSCAPE, Rotation.REVERSE_LANDSCAPE)
+RECORD_AUDIO = "android.permission.RECORD_AUDIO"
 CRASH_NOTICE = {SessionMode.GOLDEN: "휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다.",
                 SessionMode.COLD: "휴대폰이 멈춰서 다시 켰습니다.",
                 SessionMode.KEEP_STATE: "휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다."}
+CLOSE_NOTICE = "이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다."   # §6.1, GOLDEN only
 NO_DISPLAY_CHIP = "이번만 느린 시작 — 초기화하면 깨끗한 휴대폰으로"   # COLD boot that kept the golden (3a finding 18)
 MODE_CHIP = {SessionMode.GOLDEN: "깨끗한 휴대폰 모드 — 닫으면 처음 상태로", SessionMode.COLD: "느린 그래픽 모드 · 휴대폰 상태가 유지됨",
              SessionMode.KEEP_STATE: "휴대폰 유지 모드"}
@@ -66,7 +78,15 @@ REMEDIES: dict[RemedyAction, str] = {
     RemedyAction.OPEN_LOG: "open_logs", RemedyAction.RESET_PHONE: "reset_phone", RemedyAction.RUN_AGAIN: "rerun",
     RemedyAction.GRANT_ALL: "grant_all", RemedyAction.CHANGE_GPU_MODE: "gpu_dialog",
     RemedyAction.FREE_DISK: "explain_disk", RemedyAction.CONTINUE_ANYWAY: "rerun",
+    RemedyAction.MATCH_ORIENTATION: "match_orientation",
 }
+
+
+def host_has_mic() -> bool:
+    try:
+        return win32.capture_device_count() > 0
+    except OSError:   # winmm missing (Windows N without media features): let the user try
+        return True
 
 
 class MainWindow(QMainWindow):
@@ -75,11 +95,13 @@ class MainWindow(QMainWindow):
         self.s = session
         self.bridge = bridge
         self.logs_dir = logs_dir
+        self.quiet_close = False   # logoff and other ends that must not ask (gui.app sets it)
         self.setWindowTitle("Orcus APK Emulator")
         self.setAcceptDrops(True)
         self.pump = FramePump(bridge)
         self.screen_view = ScreenView(self.pump, lambda: self.s.settings().input)
-        self.phone = PhoneView(self.screen_view, self._phone_key)
+        self.screen_view.hangul.connect(self.open_hangul)
+        self.phone = PhoneView(self.screen_view, self._phone_key, self._phone_action)
         self.overlay = Overlay(self.screen_view)
         self.overlay.clicked.connect(self._overlay_clicked)
         self.toast = Toast(self.screen_view)
@@ -89,17 +111,30 @@ class MainWindow(QMainWindow):
         self.engine_panel.copy_report.connect(self.copy_report)
         self.banners = QVBoxLayout()
         self.banner_widgets: dict[str, Banner] = {}
+        self.hangul_bar = HangulBar()
+        self.hangul_bar.send.connect(self._send_text)
+        self.hangul_bar.closed.connect(lambda: self.screen_view.setFocus())
         self.app_panel = AppPanel()
         self.app_panel.action.connect(self._app_action)
+        self.sensors = SensorPanel(session.settings().sensors.location_presets)
+        self.sensors.shake.connect(self.shake)
+        self.sensors.sensitivity_changed.connect(self._sensitivity_chosen)
+        self.sensors.rotate.connect(self.rotate)
+        self.sensors.match.connect(self.match_orientation)
+        self.sensors.tilt.connect(self._tilt)
+        self.sensors.locate.connect(self._locate)
+        self.sensors.microphone.connect(self._microphone)
         self.log_panel = LogPanel()
         self.log_panel.remedy.connect(lambda err: self.remedy(err.remedy.action) if err.remedy else None)
         self.tabs = QTabWidget()
         self.tabs.addTab(self.app_panel, "앱")
+        self.tabs.addTab(self.sensors, "센서")
         self.tabs.addTab(self.log_panel, "로그")
         self.tabs.setFixedWidth(PANEL_W)
         left = QVBoxLayout()
         left.addLayout(self.banners)
         left.addWidget(self.phone, 0, Qt.AlignmentFlag.AlignHCenter)
+        left.addWidget(self.hangul_bar)
         left.addStretch(1)
         row = QHBoxLayout()
         row.addLayout(left, 1)
@@ -111,7 +146,7 @@ class MainWindow(QMainWindow):
         self.status_app = QLabel()   # carries the app's own label: never rich text (3a review)
         for label in (self.status_engine, self.status_app):
             label.setTextFormat(Qt.TextFormat.PlainText)
-        self.status_mic = QLabel("마이크 꺼짐")
+        self.status_mic = QLabel()
         self.statusBar().addWidget(self.status_engine, 1)
         self.statusBar().addPermanentWidget(self.status_app)
         self.statusBar().addPermanentWidget(self.status_mic)
@@ -124,6 +159,13 @@ class MainWindow(QMainWindow):
         self._retry_frames = 0
         self._app_name = ""
         self._busy_run = False
+        self._info: ApkInfo | None = None      # the app of the newest run (sensitivity, mic consent)
+        self._run_warnings: tuple[ErrorCode, ...] = ()
+        self._used_app = False                 # installed or run an app this session: ask at close (§6.1)
+        self._run_stage: RunStage | None = None
+        self._last_shake = 0.0
+        self._host_mic = host_has_mic()
+        self._show_mic()
         bridge.engine.connect(self.on_engine)
         bridge.run.connect(self.on_run)
         bridge.log.connect(self.log_panel.append_log)
@@ -148,6 +190,7 @@ class MainWindow(QMainWindow):
         if not self.tabs.isVisible():
             size = alone
         self.phone.set_screen_size(size)
+        self.hangul_bar.setFixedWidth(self.phone.sizeHint().width())
         for w in (self.overlay, self.engine_panel):
             w.setGeometry(0, 0, size.width(), size.height())
         if self._device is not None:
@@ -171,7 +214,7 @@ class MainWindow(QMainWindow):
         for label, slot, tip in (("APK 열기", self.open_apk, "Ctrl+O"), ("다시 실행", self.rerun, "F5"),
                                  ("앱 중지", self.s.apps.stop_app, ""), ("데이터 지우고 실행", self.s.apps.clear_data, ""),
                                  ("휴대폰 초기화", self.reset_phone, "확인 후 초기화"), ("스크린샷", self.screenshot, ""),
-                                 ("설정", self.gpu_dialog, "GPU 모드"), ("도움말", self.help, "")):
+                                 ("설정", self.settings_dialog, ""), ("도움말", self.help, "")):
             act = QAction(label, self)
             act.setToolTip(f"{label} ({tip})" if tip else label)
             act.triggered.connect(slot)
@@ -181,7 +224,8 @@ class MainWindow(QMainWindow):
         actions = {"open_apk": self.open_apk, "rerun": self.rerun,
                    "home": lambda: self._phone_key(HwKey.HOME, False),
                    "recents": lambda: self._phone_key(HwKey.RECENTS, False),
-                   "overlay": self._toggle_overlay}
+                   "shake": self.shake, "rotate_left": lambda: self.rotate(1), "rotate_right": lambda: self.rotate(-1),
+                   "hangul_bar": self.toggle_hangul, "overlay": self._toggle_overlay}
         for name, keys in SHORTCUTS.items():
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(actions[name])
@@ -223,7 +267,7 @@ class MainWindow(QMainWindow):
         self._sync_banners(st.warnings)
 
     def _sync_banners(self, warnings: tuple[ErrorCode, ...]) -> None:
-        wanted = {str(c): c for c in warnings}
+        wanted = {str(c): c for c in (*warnings, *self._run_warnings)}
         for key in list(self.banner_widgets):
             if key not in wanted:
                 self.banner_widgets.pop(key).deleteLater()
@@ -253,6 +297,12 @@ class MainWindow(QMainWindow):
         self.screen_view.set_input(dev.input)
         w, h = self._phys()
         dev.frames.start(w, h, self.pump.on_frame, self.bridge.on_frames_ended)
+        # a new phone: portrait, level, at the first location preset, microphone off (SESSION_INIT, §6.6)
+        self.sensors.set_device(dev.controls is not None)
+        self.sensors.set_posture(dev.controls.posture if dev.controls else Rotation.PORTRAIT)
+        self.sensors.center_tilt()
+        self.sensors.reset_location()
+        self._show_mic()
 
     def _detach_device(self) -> None:
         if self._device is None:
@@ -263,12 +313,19 @@ class MainWindow(QMainWindow):
         self._device = None
         self.pump.clear()
         self.screen_view.clear()
+        self.sensors.set_device(False)
+        self._show_mic()
+
+    def _controls(self) -> DeviceControls | None:
+        return self._device.controls if self._device is not None else None
 
     def _on_frame(self) -> None:
         turned = self.screen_view.show_frame()
-        if turned is not None and (turned in LANDSCAPES) != self._landscape:
-            self._landscape = turned in LANDSCAPES   # the window and bezel turn with the frame
-            self.fit_phone()
+        if turned is not None:
+            self.sensors.set_posture(turned)   # frames follow the posture, whoever turned it (§9.7)
+            if (turned in LANDSCAPES) != self._landscape:
+                self._landscape = turned in LANDSCAPES   # the window and bezel turn with the frame
+                self.fit_phone()
 
     def _on_frames_ended(self, err: OrcusError | None) -> None:
         if self._device is None or self._status.state != EngineState.READY:
@@ -288,10 +345,118 @@ class MainWindow(QMainWindow):
             self._device.input.key(key, long_press=long_press)
             self.screen_view.setFocus()
 
+    def _phone_action(self, name: str) -> None:
+        match name:
+            case "rotate_left":
+                self.rotate(1)
+            case "rotate_right":
+                self.rotate(-1)
+            case "shake":
+                self.shake()
+            case "hangul":
+                self.toggle_hangul()
+            case _:
+                pass
+
     def _overlay_clicked(self) -> None:
         if self._status.state == EngineState.READY and not self._status.display_on:
             self._phone_key(HwKey.POWER, False)
             self.overlay.hide()
+
+    # --- sensors (§9.7, §9.8) ------------------------------------------------------------------------------------
+    def shake(self) -> None:
+        """One pulse; F6 held repeats with the keyboard (30 a second), so pulses keep 450 ms apart like the button."""
+        c = self._controls()
+        now = time.monotonic()
+        if c is None or now - self._last_shake < SHAKE_REPEAT_MS / 1000 - 0.03:
+            return
+        self._last_shake = now
+        c.shake(self.sensors.sensitivity())
+
+    def rotate(self, step: int) -> None:
+        """+1 turns the phone left (counter-clockwise: z += 90°), -1 right; gradual, from the newest posture."""
+        c = self._controls()
+        if c is None:
+            return
+        c.rotate(Rotation((c.posture + step) % 4))
+        self.sensors.center_tilt()   # the turn also levels the phone
+
+    def match_orientation(self) -> None:
+        self.s.apps.match_orientation()
+
+    def _tilt(self, pitch: float, roll: float) -> None:
+        c = self._controls()
+        if c is not None:
+            c.tilt(pitch, roll)
+
+    def _locate(self, lat: float, lon: float) -> None:
+        c = self._controls()
+        if c is not None:
+            c.set_location(lat, lon)
+            self.toast.show_text("위치를 보냈습니다. 앱에 닿기까지 몇 초 걸립니다.")
+
+    def _sensitivity_chosen(self, sensitivity: Sensitivity) -> None:
+        if self._info is None:
+            return
+        table = {k: v.value for k, v in self.s.settings().sensors.shake_sensitivity.items()}
+        table[self._info.package] = sensitivity.value
+        self._save({"sensors.shake_sensitivity": table})
+
+    def _app_uses_mic(self) -> bool:
+        return self._info is not None and RECORD_AUDIO in self._info.permissions
+
+    def _microphone(self, on: bool) -> None:
+        """Turned by the user: remembered for the current app when it records (§9.8), applied at its next runs."""
+        c = self._controls()
+        if c is None:
+            return
+        c.set_microphone(on)
+        if self._info is not None and self._app_uses_mic():
+            pkg = self._info.package
+            allowed = [p for p in self.s.settings().privacy.mic_allowed_packages if p != pkg]
+            self._save({"privacy.mic_allowed_packages": [*allowed, pkg] if on else allowed})
+        self._show_mic()
+
+    def _show_mic(self) -> None:
+        c = self._controls()
+        on = c is not None and c.microphone
+        self.sensors.set_mic(on, host_mic=self._host_mic, app_uses_mic=self._app_uses_mic())
+        if not self._host_mic:
+            self.status_mic.setText("마이크 없음")
+            self.status_mic.setStyleSheet("color:#7b8794")
+        elif on:
+            self.status_mic.setText("마이크 켜짐")
+            self.status_mic.setStyleSheet("color:#b3261e;font-weight:bold")
+        else:
+            self.status_mic.setText("마이크 꺼짐")
+            self.status_mic.setStyleSheet("")
+
+    def _app_changed(self, info: ApkInfo) -> None:
+        sensors = self.s.settings().sensors
+        self.sensors.set_sensitivity(sensors.shake_sensitivity.get(info.package, sensors.shake_default))
+        self._show_mic()
+
+    def _save(self, changes: dict[str, object]) -> None:
+        try:
+            self.s.update_settings(changes)
+        except (OSError, ValueError) as e:
+            self.toast.show_text(f"설정을 저장하지 못했습니다: {e}")
+
+    # --- Korean input bar (§9.6) -----------------------------------------------------------------------------------
+    def toggle_hangul(self) -> None:
+        if self.hangul_bar.isVisible():
+            self.hangul_bar.close_bar()
+        else:
+            self.open_hangul()
+
+    def open_hangul(self) -> None:
+        self.hangul_bar.open_bar()
+
+    def _send_text(self, words: str) -> None:
+        if self._device is None:
+            self.toast.show_text("휴대폰이 준비되면 보낼 수 있습니다")
+            return
+        self._device.input.paste_text(words)
 
     # --- runs ------------------------------------------------------------------------------------------------------------
     def on_run(self, ev: RunEvent) -> None:
@@ -299,24 +464,41 @@ class MainWindow(QMainWindow):
             self.app_panel.show_app(ev.info, ev.issues)
         if ev.info is not None:
             self._app_name = ev.info.label
+            other_app = self._info is None or ev.info.package != self._info.package
+            self._info = ev.info   # a new build of the same app may ask for the microphone now
+            if other_app:
+                self._app_changed(ev.info)
+        if ev.stage in USED:
+            self._used_app = True
+        if ev.warnings != self._run_warnings:
+            self._run_warnings = ev.warnings
+            self._sync_banners(self._status.warnings)
         name = self._app_name or "앱"
         if ev.prompt is not None:
             self._ask(ev)
             return
         words = text(f"run.stage.{ev.stage}")
+        was_running = self._run_stage == RunStage.RUNNING   # a RUNNING event again only updates the banners
+        self._run_stage = ev.stage
         self._busy_run = ev.stage in BUSY or ev.stage == RunStage.WAITING_ENGINE
         if ev.stage in BUSY and self._status.state == EngineState.READY:
             self.overlay.show_text(f"{name}: {words}")
         elif ev.stage == RunStage.WAITING_ENGINE and self._status.state != EngineState.READY:
             self.overlay.show_text(f"{text(self._status.text_key)}\n{words}", self._status.progress)
-        elif ev.stage == RunStage.RUNNING and ev.problem is None:
+        elif ev.stage == RunStage.RUNNING and ev.problem is None and not was_running:
             self.overlay.hide()
-            self.toast.show_text(f"실행 중 · {ev.elapsed_s:.1f}초")
+            self._show_mic()   # the pipeline applied this app's microphone consent before launching it
+            c = self._controls()
+            note = ""
+            if self._app_uses_mic() and self._host_mic and not (c is not None and c.microphone):
+                note = "\n이 앱은 마이크를 씁니다 — [센서] 탭에서 켤 수 있습니다"
+            self.toast.show_text(f"실행 중 · {ev.elapsed_s:.1f}초{note}", 5000 if note else 3000)
             self.screen_view.setFocus()
         elif not self._busy_run and self._status.state == EngineState.READY:
             self.overlay.hide()
-        self.status_app.setText(f"{name} {words}" + (f" · {ev.elapsed_s:.1f}초" if ev.stage == RunStage.RUNNING
-                                                      else ""))
+        if not (ev.stage == RunStage.RUNNING and was_running):   # a banner update keeps the launch time shown
+            self.status_app.setText(f"{name} {words}" + (f" · {ev.elapsed_s:.1f}초" if ev.stage == RunStage.RUNNING
+                                                          else ""))
         if ev.problem is not None:
             self.show_problem(ev.problem)
 
@@ -332,7 +514,7 @@ class MainWindow(QMainWindow):
             box.exec()
             return
         self.log_panel.add_problem(err)
-        self.tabs.setTabText(1, f"로그 ({self.log_panel.count})")
+        self.tabs.setTabText(self.tabs.indexOf(self.log_panel), f"로그 ({self.log_panel.count})")
         if channel == Channel.RED_BANNER:
             action = (text(f"remedy.{err.remedy.action}"), lambda _=False, a=err.remedy.action: self.remedy(a)) \
                 if err.remedy else None
@@ -366,7 +548,7 @@ class MainWindow(QMainWindow):
                         == QMessageBox.StandardButton.Yes:
                     self.s.apps.uninstall()
             case "match_orientation":
-                self.s.apps.match_orientation()
+                self.match_orientation()
             case "copy_report":
                 self.copy_report()
             case _:
@@ -416,8 +598,14 @@ class MainWindow(QMainWindow):
         self.s.apps.grant_all()
         self.toast.show_text("요청한 권한을 모두 허용했습니다")
 
+    def settings_dialog(self, *, gpu: bool = False) -> None:
+        dialog = SettingsDialog(self.s, self.logs_dir.parent, self.open_logs, self)
+        if gpu:
+            focus_gpu(dialog)
+        dialog.exec()
+
     def gpu_dialog(self) -> None:
-        GpuDialog(self.s, self).exec()
+        self.settings_dialog(gpu=True)
 
     def explain_disk(self) -> None:
         QMessageBox.information(self, "공간 확보", "D: 드라이브에서 필요 없는 파일을 지우세요. 휴지통 비우기와 "
@@ -452,11 +640,13 @@ class MainWindow(QMainWindow):
         self.toast.show_text("보고서를 복사했습니다")
 
     def help(self) -> None:
-        keys = "\n".join(f"{k}: {v}" for k, v in (("APK 열기", "Ctrl+O"), ("다시 실행", "F5"), ("뒤로", "Esc · 오른쪽 클릭"),
-                                                  ("홈", "Ctrl+Shift+H · 가운데 클릭"), ("최근 앱", "Ctrl+Shift+R"),
-                                                  ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V")))
+        keys = "\n".join(f"{k}: {v}" for k, v in (
+            ("APK 열기", "Ctrl+O"), ("다시 실행", "F5"), ("뒤로", "Esc · 오른쪽 클릭"),
+            ("홈", "Ctrl+Shift+H · 가운데 클릭"), ("최근 앱", "Ctrl+Shift+R"), ("흔들기", "F6 (누르고 있으면 반복)"),
+            ("왼쪽 / 오른쪽으로 돌리기", "F7 / F8"), ("한글 입력 바", "Ctrl+T · 폰 화면에서 한/영 키 · 옆 [가] 버튼"),
+            ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V"), ("스크롤", "마우스 휠")))
         QMessageBox.information(self, "도움말", "App Inventor에서 받은 .apk를 끌어다 놓으면 PC 휴대폰에서 바로 "
-                                             "실행합니다.\n\n" + keys)
+                                             "실행합니다. 센서는 오른쪽 [센서] 탭에 있습니다.\n\n" + keys)
 
     # --- window events -------------------------------------------------------------------------------------------------
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -494,5 +684,30 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self.quiet_close and not self._may_close():
+            event.ignore()
+            return
         self.screen_view.release()
         event.accept()
+
+    def _may_close(self) -> bool:
+        """§6.1: a GOLDEN phone forgets this session's app data at close; say so once an app was installed or run.
+        The COLD boot that kept the golden (no display, 3a finding 18) forgets it too, at the next golden load."""
+        st = self._status
+        forgets = st.mode == SessionMode.GOLDEN or ErrorCode.ENGINE_NO_DISPLAY in st.warnings
+        if not (self._used_app and forgets and self.s.settings().ui.confirm_close_data):
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Orcus 닫기")
+        box.setText(CLOSE_NOTICE)
+        close = box.addButton("닫기", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        never = QCheckBox("다시 묻지 않기")
+        box.setCheckBox(never)
+        box.exec()
+        if box.clickedButton() is not close:
+            return False
+        if never.isChecked():
+            self._save({"ui.confirm_close_data": False})
+        return True

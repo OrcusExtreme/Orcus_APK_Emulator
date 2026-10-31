@@ -96,6 +96,7 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.APP_AI_RUNTIME_ERROR: MessageSpec("블록을 실행하다 오류가 났습니다. 오류가 난 블록을 확인하세요.", C.PROBLEM_CARD, R.OPEN_LOG),
     E.APP_TTS_MISSING: MessageSpec("이 가상 휴대폰에는 말하기(TTS) 기능이 없습니다.", C.PROBLEM_CARD, None),
     E.APP_SPEECH_MISSING: MessageSpec("이 가상 휴대폰에는 음성 인식 기능이 없습니다.", C.PROBLEM_CARD, None),
+    E.APP_ORIENTATION_MISMATCH: MessageSpec("앱 화면이 휴대폰과 다른 방향으로 그려져 돌아가 보입니다(가로 고정 화면 등). [화면 방향 맞추기]를 누르면 휴대폰을 앱 방향으로 돌립니다.", C.BANNER, R.MATCH_ORIENTATION),
 }
 
 REMEDY_LABELS: dict[RemedyAction, str] = {
@@ -110,6 +111,7 @@ REMEDY_LABELS: dict[RemedyAction, str] = {
     R.CHANGE_GPU_MODE: "GPU 모드 바꾸기",
     R.FREE_DISK: "공간 확보 방법",
     R.CONTINUE_ANYWAY: "그래도 계속",
+    R.MATCH_ORIENTATION: "화면 방향 맞추기",
 }
 
 TEXT: dict[str, str] = {
@@ -187,6 +189,7 @@ TEXT: dict[str, str] = {
     "issue.location": "위치는 처음에 서울시청입니다. LocationSensor 기본값(TimeInterval 60000 ms, DistanceInterval 5 m)에서는 첫 위치 뒤 약 1분마다, 5 m 넘게 움직일 때만 LocationChanged가 옵니다. 빨리 보려면 TimeInterval을 1000으로 바꾸세요. 권한 창에서 '대략적인 위치'를 고르면 10분에 한 번만 갱신되니 [이 앱 권한 모두 허용]으로 정확한 위치를 허용하세요.",
     "issue.tts_missing": "이 PC 휴대폰의 말하기(TTS) 엔진이 꺼져 있어 TextToSpeech가 동작하지 않습니다. [휴대폰 초기화]를 하면 처음 상태로 돌아옵니다.",
     "issue.speech_missing": "이 PC 휴대폰에는 음성 인식 앱이 없어 SpeechRecognizer가 동작하지 않습니다.",
+    "issue.cold_fresh_app": "느린 그래픽 모드에서는 휴대폰 초기화가 수 분 걸려서, '실행할 때마다 휴대폰 초기화' 대신 이 앱의 데이터만 지우고 실행했습니다.",
     # 실행 중 문제 카드의 자세한 문구 (OrcusError.message_key, §7.8)
     "app.speech_missing": "이 PC 휴대폰에는 음성 인식 앱이 없어 오류가 났습니다. 음성 인식은 실제 휴대폰이나 Companion으로 시험하세요. (SpeechRecognizer의 UseLegacy를 끄면 오류 창 대신 ErrorOccurred로 받습니다.)",
     "app.tts_missing": "이 PC 휴대폰의 말하기(TTS) 엔진이 응답하지 않아 말하기가 실패했습니다. [휴대폰 초기화] 뒤 다시 실행해 보세요.",

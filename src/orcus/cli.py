@@ -3,7 +3,8 @@
     orcus-cli setup  [--home DIR] [--resume]   install steps 1-8 (the license needs a human at the console)
     orcus-cli doctor [--home DIR]              read-only health report
     orcus-cli run APK [--policy P] [--watch S] boot the phone, install and launch, print problems for S seconds
-    orcus-cli smoke [--apk HelloPurr.apk]      start, frame, key, install, tap, paste, reset, stop (§12.5)
+    orcus-cli smoke [--apk HelloPurr.apk]      start, frame, key, install, tap, paste, shake, rotate, location,
+                                               reset, stop (§12.5)
     orcus-cli engine status|shot [--out PNG]   look at a phone another Orcus owns, without touching it
 
 Exit codes: 0 done, 1 failed, 2 waiting for a Windows restart, 3 stopped by the user.
@@ -364,7 +365,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         return 1
     s = _headless(args, "smoke")
     p = compose.make_paths(args.home)
-    _out("스모크: 시작 → 화면 → 키 → 설치·실행 → 탭 → 붙여넣기 → 초기화 → 정지"
+    _out("스모크: 시작 → 화면 → 키 → 설치·실행 → 탭 → 붙여넣기 → 흔들기 → 회전 → 위치 → 초기화 → 정지"
          + ("" if apk else "  (--apk 없음: 앱 단계는 SKIP)"))
     try:
         steps = smoke_mod.run(s, p.sdk, apk, lambda st: _out(f"{st.status:<4} {st.name:<8} {st.seconds:6.1f} s  "
@@ -428,7 +429,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--policy", choices=list(POLICIES), help="default: settings (keep, or fresh-phone)")
     r.add_argument("--watch", type=float, default=10.0, help="seconds to keep printing problems once running")
     r.add_argument("--timeout", type=float, default=900.0, help="give up if not running after this many seconds")
-    m = sub.add_parser("smoke", help="upgrade gate: start, frame, key, install, tap, paste, reset, stop")
+    m = sub.add_parser("smoke", help="upgrade gate: start, frame, key, install, tap, paste, shake, rotate, "
+                                     "location, reset, stop")
     m.add_argument("--home")
     m.add_argument("--apk", help="your HelloPurr build (the tap is checked through its vibration)")
     e = sub.add_parser("engine", help="look at a phone another Orcus owns (read-only)")

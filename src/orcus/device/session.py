@@ -24,7 +24,7 @@ from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 
 from .controls import ControlQueue, LocationSink
 from .frames import FrameStream
-from .input import InputQueue
+from .input import InputQueue, ScrollSink
 from .logcat import LogcatStream
 
 _log = log.get("device.session")
@@ -36,6 +36,7 @@ type LogcatSource = Callable[[], CancellableIter[LogEntry]]
 class GrpcDeviceSession:
     def __init__(self, endpoint: DeviceEndpoint, *, panel: tuple[int, int] = (720, 1280),
                  location: LocationSink | None = None, logcat_source: LogcatSource | None = None,
+                 scroll: ScrollSink | None = None, home: tuple[float, float] | None = None,
                  channel_factory: Callable[[int, str], grpc.Channel] = grpc_channel.make_channel) -> None:
         port = int(endpoint.target.rsplit(":", 1)[1])
         self.epoch = endpoint.epoch
@@ -43,8 +44,8 @@ class GrpcDeviceSession:
         self._channel = channel_factory(port, endpoint.token)
         self._stub = grpc_channel.controller(self._channel)
         self._frames = FrameStream(self._stub)
-        self._input = InputQueue(self._stub, panel, self._frames.rotation_of)
-        self._controls = ControlQueue(self._stub, location)
+        self._input = InputQueue(self._stub, panel, self._frames.rotation_of, scroll)
+        self._controls = ControlQueue(self._stub, location, home)
         self.frames: FrameSource = self._frames
         self.input: InputSink = self._input
         self.controls: DeviceControls | None = self._controls
@@ -91,6 +92,8 @@ class GrpcDeviceSession:
 
 
 def connect(endpoint: DeviceEndpoint, *, panel: tuple[int, int] = (720, 1280),
-            location: LocationSink | None = None, logcat_source: LogcatSource | None = None) -> GrpcDeviceSession:
+            location: LocationSink | None = None, logcat_source: LogcatSource | None = None,
+            scroll: ScrollSink | None = None, home: tuple[float, float] | None = None) -> GrpcDeviceSession:
     """The DeviceSessionFactory the app gives the engine."""
-    return GrpcDeviceSession(endpoint, panel=panel, location=location, logcat_source=logcat_source)
+    return GrpcDeviceSession(endpoint, panel=panel, location=location, logcat_source=logcat_source, scroll=scroll,
+                             home=home)

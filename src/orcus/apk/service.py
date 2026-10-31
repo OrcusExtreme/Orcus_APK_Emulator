@@ -36,6 +36,8 @@ from orcus.contracts import (
     ErrorCode,
     FileKind,
     Issue,
+    IssueCode,
+    IssueLevel,
     LogEntry,
     OrcusError,
     OrcusFailure,
@@ -59,6 +61,10 @@ REPORT_LINES = 50        # app log lines in [Copy report] (§7.9)
 REPORT_WARN_LINES = 30
 MAX_FILE = 1 << 30       # nothing App Inventor builds comes near 1 GiB: refuse before copying a dropped video
 UNKNOWN_TARGET_SDK = 36  # unreadable manifest: install retries with the legacy flag by itself if needed
+ORIENT_CHECK_S = 3.0     # while an app runs: its display rotation against the posture (§9.7, 0.06 s each)
+ORIENT_SOON_S = 1.2      # right after a launch or a screen switch: two quick checks (the display settles in ~1 s)
+RECORD_AUDIO = "android.permission.RECORD_AUDIO"
+LOCATION = frozenset({"android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"})
 
 
 class _Cancelled(Exception):
@@ -83,6 +89,7 @@ class _Run:
     stage: RunStage = RunStage.STAGING
     problem: OrcusError | None = None
     restarted: bool = False
+    warnings: tuple[ErrorCode, ...] = ()
 
 
 @dataclass(eq=False)
@@ -96,11 +103,16 @@ class Service:
     """orcus.contracts.ApkService."""
 
     def __init__(self, engine: EngineControl, staging: Path, settings: Callable[[], ApkSettings], *,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 mic_allowed: Callable[[str], bool] = lambda package: False,
+                 sleep: Callable[[float], None] = time.sleep, orient_check_s: float = ORIENT_CHECK_S,
+                 orient_soon_s: float = ORIENT_SOON_S) -> None:
         self._engine = engine
         self._staging = staging
         self._settings = settings
+        self._mic_allowed = mic_allowed   # per-package consent from the settings (§9.8)
         self._sleep = sleep
+        self._orient_check_s = orient_check_s
+        self._orient_soon_s = orient_soon_s
         self._q: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._lock = threading.Lock()            # submit/cancel/answer/subscribe vs the pipeline
         self._latest: str | None = None
@@ -115,8 +127,9 @@ class Service:
         self._front: tuple[str, int] | None = None   # (package, epoch) last launched: force-stopped before the next
         self._installed: dict[str, str] = {}     # package -> sha installed by us in _installed_epoch (fast path)
         self._installed_epoch = -1
-        self._posture = Rotation.PORTRAIT        # what we turned the device to in _posture_epoch
-        self._posture_epoch = -1
+        self._orient_seen: tuple[Rotation, Rotation] | None = None   # last (display, posture) that differed
+        self._next_check = 0.0
+        self._quick_checks = 0   # quick ones still due after a launch or a screen switch
         # logcat thread + pipeline, under _watch_lock
         self._watch_lock = threading.Lock()
         self._stream: CancellableIter[LogEntry] | None = None
@@ -248,7 +261,23 @@ class Service:
     # --- pipeline thread ------------------------------------------------------------------------------------------
     def _loop(self) -> None:
         while True:
-            cmd, arg = self._q.get()
+            run = self._current
+            wait: float | None = None
+            if run is not None and run.stage == RunStage.RUNNING:
+                wait = self._next_check - time.monotonic()
+                if wait <= 0:   # by the clock: commands arriving more often than that must not starve it
+                    self._quick_checks = max(0, self._quick_checks - 1)
+                    self._next_check = time.monotonic() + (self._orient_soon_s if self._quick_checks
+                                                           else self._orient_check_s)
+                    try:
+                        self._check_orientation()
+                    except Exception:
+                        _log.exception("orientation check failed")
+                    continue
+            try:
+                cmd, arg = self._q.get(timeout=wait)
+            except queue.Empty:
+                continue
             if cmd == "close":
                 return
             try:
@@ -329,6 +358,7 @@ class Service:
         if policy == RunPolicy.FRESH_PHONE and st.mode == SessionMode.COLD:
             _log.info("COLD mode: a fresh phone would be a rebuild of minutes, running as FRESH_APP (§6.2)")
             policy = RunPolicy.FRESH_APP
+            run.issues = (*run.issues, Issue(IssueLevel.INFO, IssueCode.COLD_FRESH_APP, "issue.cold_fresh_app"))
         elif policy == RunPolicy.FRESH_PHONE:
             st = self._wait(run, min_epoch=self._engine.reset_device())
         run.epoch = st.epoch
@@ -402,7 +432,8 @@ class Service:
         run.pid = None
         started = time.monotonic()
         self._emit(run, RunStage.LAUNCHING)
-        self._turn_for(run, shell.epoch)
+        self._turn_for(run)
+        self._apply_mic(run)
         self._ensure_logcat(shell.epoch).wait(LOG_LIVE_WAIT_S)
         with self._watch_lock:
             mark = self._seq
@@ -421,19 +452,72 @@ class Service:
         run.pid = out.pid
         self._attach(run, mark)
         self._emit(run, RunStage.RUNNING)
+        self._screen_shown(run)
         _log.info("%s running %.1f s after the drop (launching %.1f s, am start %s ms)", run.package,
                   time.monotonic() - run.t0, time.monotonic() - started, out.total_ms)
 
-    def _turn_for(self, run: _Run, epoch: int) -> None:
-        """Pre-rotation (§7.6 step 2). A new epoch starts in the golden's portrait posture."""
-        current = self._posture if self._posture_epoch == epoch else Rotation.PORTRAIT
-        want = launch.wanted_rotation(run.info.launcher_orientation if run.info else None, current)
-        if want is None:
+    def _turn_for(self, run: _Run) -> None:
+        """Pre-rotation (§7.6 step 2) from the device's posture (the rotate buttons turn it too; a new epoch starts
+        in portrait). Nothing listens to the sensors yet, so the turn is one step."""
+        controls = self._engine.session().controls
+        if controls is None:
+            return
+        want = launch.wanted_rotation(run.info.launcher_orientation if run.info else None, controls.posture)
+        if want is not None:
+            controls.rotate(want, gradual=False)
+
+    def _apply_mic(self, run: _Run) -> None:
+        """§9.8: the microphone is on only for an app the user turned it on for (remembered per package). Every
+        launch sets it, so a crash restart re-applies it and the next app does not inherit it."""
+        controls = self._engine.session().controls
+        if controls is None:
+            return
+        wanted = bool(run.package) and self._mic_allowed(run.package or "")
+        if wanted != controls.microphone:
+            controls.set_microphone(wanted)
+
+    def _screen_shown(self, run: _Run) -> None:
+        """A launch or an App Inventor screen coming back (Screen2, the permission dialog closing): the display
+        may have turned, and a LocationSensor starts listening. The polls stay at 3 s otherwise (B9: each check
+        is an adb process, 0.6% of a core every 2 s in 3b)."""
+        self._quick_checks = 2
+        self._next_check = min(self._next_check, time.monotonic() + self._orient_soon_s)
+        self._relocate(run)
+
+    def _relocate(self, run: _Run) -> None:
+        """A LocationSensor asks for updates when its screen starts or resumes (also after the permission dialog),
+        and a test provider reports only when told: send the phone's location again for the first fix (3b device
+        test: the app showed no location until a preset was chosen)."""
+        if run.info is None or not run.info.permissions & LOCATION:
             return
         controls = self._engine.session().controls
         if controls is not None:
-            controls.rotate(want)
-            self._posture, self._posture_epoch = want, epoch
+            controls.resend_location()
+
+    def _check_orientation(self) -> None:
+        """A landscape Screen2, a scanner or a ScreenOrientation block turns the display alone: the frame follows
+        the posture and shows the app turned (S7). Banner when (display, posture) differ in two checks in a row:
+        the display settles about a second after a turn."""
+        run = self._current
+        if run is None or run.stage != RunStage.RUNNING or self._engine.status().state != EngineState.READY:
+            return   # resetting or restarting: the next epoch decides about the run
+        try:
+            shell = self._engine.shell()
+            controls = self._engine.session().controls
+            if controls is None or shell.epoch != run.epoch:
+                return
+            display = launch.display_rotation(shell)
+        except OrcusFailure as e:
+            _log.info("orientation check skipped: %s", e)
+            return
+        seen = (display, controls.posture) if display is not None and display != controls.posture else None
+        mismatch = seen is not None and seen == self._orient_seen
+        self._orient_seen = seen
+        if mismatch != (ErrorCode.APP_ORIENTATION_MISMATCH in run.warnings):
+            _log.info("orientation %s: display %s, posture %s", "differs" if mismatch else "matches again",
+                      display, controls.posture)
+            run.warnings = (ErrorCode.APP_ORIENTATION_MISMATCH,) if mismatch else ()
+            self._emit(run, run.stage)
 
     def _stop_front(self, shell: DeviceShell) -> None:
         self._detach()
@@ -549,12 +633,13 @@ class Service:
                     if run.info is not None:
                         n = launch.grant_all(shell, run.package, run.info.permissions)
                         _log.info("%s: granted %d of %d permissions", run.package, n, len(run.info.permissions))
-                case "match_orientation":
+                case "screen_shown":
+                    self._screen_shown(run)
+                case "match_orientation":   # the app listens: a gradual turn, or it is caught as a shake (§9.7)
                     want = launch.display_rotation(shell)
                     controls = self._engine.session().controls
-                    if want is not None and controls is not None:
+                    if want is not None and controls is not None and want != controls.posture:
                         controls.rotate(want)
-                        self._posture, self._posture_epoch = want, shell.epoch
                 case _:
                     _log.warning("unknown command %s", cmd)
         except EngineNotReady as e:
@@ -565,8 +650,11 @@ class Service:
         run.stage = stage
         if problem is not None:
             run.problem = problem
+        if stage != RunStage.RUNNING:
+            run.warnings = ()
+            self._orient_seen = None
         ev = RunEvent(run.run_id, stage, run.info, run.issues, problem, prompt,
-                      round(time.monotonic() - run.t0, 3), run.pid, run.epoch)
+                      round(time.monotonic() - run.t0, 3), run.pid, run.epoch, run.warnings)
         with self._lock:
             subs = list(self._subs)
         for cb in subs:
@@ -610,6 +698,10 @@ class Service:
                         self._app_log.append(line(entry))
                         if entry.level in "WEF":
                             self._app_warn.append(line(entry))
+                    resumed = (app is not None and entry.pid == app[1] and entry.tag == "Form"
+                               and "got onResume" in entry.msg)   # App Inventor's Form, whenever a screen comes back
+                if resumed:
+                    self._q.put(("screen_shown", None))
                 for f in found:
                     self._q.put(("finding", (run_id, gen, f)))
                 self._publish_log(entry, app)

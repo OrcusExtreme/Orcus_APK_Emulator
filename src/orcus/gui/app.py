@@ -45,8 +45,13 @@ def run(make_session: Callable[[], SessionApi], logs_dir: Path, files: list[str]
     if existed:
         if instance.hand_over(files or []):
             return 0
-        QMessageBox.information(None, "Orcus APK Emulator", "Orcus가 이미 실행 중입니다.")
-        return 0
+        # a closing first instance has stopped listening: wait for it to end, then start in its place (3a review)
+        win32.close_handle(_mutex)
+        if instance.wait_until_gone(instance.MUTEX):
+            _mutex, existed = win32.named_mutex(instance.MUTEX)
+        if existed:
+            QMessageBox.information(None, "Orcus APK Emulator", "Orcus가 이미 실행 중입니다.")
+            return 0
     session = make_session()
     bridge = Bridge()
     session.engine.subscribe(bridge.on_engine)
@@ -59,6 +64,8 @@ def run(make_session: Callable[[], SessionApi], logs_dir: Path, files: list[str]
     def shutdown(fast: bool) -> None:
         if not done[0]:
             done[0] = True
+            server.close()          # a second start waits for us instead of handing over a file we never open
+            win.quiet_close = True  # logoff: no question about app data (Qt 6's quit() closes visible windows)
             win.hide()
             session.shutdown(fast=fast)
 

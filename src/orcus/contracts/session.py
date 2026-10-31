@@ -68,7 +68,8 @@ def _no_overrides() -> Mapping[str, Sensitivity]:
 class SensorSettings:
     shake_default: Sensitivity = Sensitivity.MODERATE
     shake_sensitivity: Mapping[str, Sensitivity] = field(default_factory=_no_overrides)   # per package
-    location_presets: tuple[tuple[float, float, str], ...] = ((37.5665, 126.9780, "서울시청"),)
+    location_presets: tuple[tuple[float, float, str], ...] = (   # the first is where SESSION_INIT puts the phone
+        (37.5665, 126.9780, "서울시청"), (37.5512, 126.9882, "남산서울타워"), (35.1798, 129.0750, "부산시청"))
 
 
 @dataclass(frozen=True)

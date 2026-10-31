@@ -1,7 +1,9 @@
 """The phone around the screen (ARCHITECTURE.md §10.1): a plain rounded bezel drawn with QPainter (no maker
-marks), the ◁ ○ ▢ row below it (D7: the guest also shows its own 3-button bar) and the power and volume keys.
+marks), the ◁ ○ ▢ row below it (D7: the guest also shows its own 3-button bar), the power and volume keys and,
+from 3b, turn left/right, shake and [가] (the Korean input bar).
 
-Key glyphs are drawn shapes, not emoji (§10.6). A key held longer than 0.6 s is a long press (power menu).
+Key glyphs are drawn shapes, not emoji (§10.6). A key held longer than 0.6 s is a long press (power menu). A
+press dragged off the button and let go there is no press at all (3a review: it used to send the key).
 """
 
 import time
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolButton, QVBoxLayout
 from orcus.contracts import HwKey
 
 from .screen import ScreenView
+from .sensors import SHAKE_REPEAT_MS
 
 BEZEL = 12
 RADIUS = 26
@@ -66,6 +69,23 @@ def glyph(kind: str, size: int = 22) -> QIcon:
             p.drawLine(QPointF(s * 0.62, s * 0.5), QPointF(s * 0.9, s * 0.5))
             if kind == "vol_up":
                 p.drawLine(QPointF(s * 0.76, s * 0.36), QPointF(s * 0.76, s * 0.64))
+        case "turn_left" | "turn_right":
+            left = kind == "turn_left"
+            p.drawArc(QRectF(s * 0.2, s * 0.2, s * 0.6, s * 0.6), (40 if left else -40) * 16, 260 * 16 * (1 if left
+                                                                                                         else -1))
+            tip = QPointF(s * 0.78, s * 0.3) if left else QPointF(s * 0.22, s * 0.3)
+            p.drawLine(tip, tip + QPointF(-s * 0.16 if left else s * 0.16, 0))
+            p.drawLine(tip, tip + QPointF(0, s * 0.16))
+        case "shake":
+            p.drawRoundedRect(QRectF(s * 0.36, s * 0.2, s * 0.28, s * 0.6), 2, 2)
+            for x in (0.2, 0.8):
+                p.drawLine(QPointF(s * x, s * 0.35), QPointF(s * x, s * 0.65))
+        case "hangul":
+            f = p.font()
+            f.setPixelSize(int(s * 0.62))
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(QRectF(0, 0, s, s), Qt.AlignmentFlag.AlignCenter, "가")
         case _:
             pass
     p.end()
@@ -86,13 +106,31 @@ class KeyButton(QToolButton):
         self.setAutoRaise(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)   # the screen keeps the keyboard
         super().pressed.connect(self._down)
-        super().released.connect(self._up)
+        super().clicked.connect(self._up)   # released also fires when the press is dragged off the button
 
     def _down(self) -> None:
         self._down_at = time.monotonic()
 
     def _up(self) -> None:
         self.pressed_key.emit(self._key, time.monotonic() - self._down_at >= LONG_PRESS_S)
+
+
+class ActionButton(QToolButton):
+    """A side button for the window, not the phone: turn, shake (repeats while held), [가]."""
+    action = Signal(str)
+
+    def __init__(self, name: str, icon: str, tip: str, *, repeat_ms: int = 0) -> None:
+        super().__init__()
+        self.setIcon(glyph(icon))
+        self.setIconSize(QSize(22, 22))
+        self.setToolTip(tip)
+        self.setAutoRaise(True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        if repeat_ms:
+            self.setAutoRepeat(True)
+            self.setAutoRepeatDelay(repeat_ms)
+            self.setAutoRepeatInterval(repeat_ms)
+        self.clicked.connect(lambda _=False, n=name: self.action.emit(n))
 
 
 class Bezel(QWidget):
@@ -114,7 +152,8 @@ class Bezel(QWidget):
 
 
 class PhoneView(QWidget):
-    def __init__(self, screen: ScreenView, on_key: Callable[[HwKey, bool], None]) -> None:
+    def __init__(self, screen: ScreenView, on_key: Callable[[HwKey, bool], None],
+                 on_action: Callable[[str], None]) -> None:
         super().__init__()
         self.view = screen   # not `screen`: QWidget.screen() is the monitor
         self.bezel = Bezel(screen)
@@ -136,6 +175,16 @@ class PhoneView(QWidget):
             if box is nav:
                 nav.addSpacing(28)
             self.keys.append(b)
+        side.addSpacing(14)
+        self.side_actions: list[ActionButton] = []
+        for name, icon, tip, repeat in (("rotate_left", "turn_left", "왼쪽으로 돌리기 (F7)", 0),
+                                        ("rotate_right", "turn_right", "오른쪽으로 돌리기 (F8)", 0),
+                                        ("shake", "shake", "흔들기 (F6, 누르고 있으면 반복)", SHAKE_REPEAT_MS),
+                                        ("hangul", "hangul", "한글 입력 바 (Ctrl+T)", 0)):
+            a = ActionButton(name, icon, tip, repeat_ms=repeat)
+            a.action.connect(on_action)
+            side.addWidget(a)
+            self.side_actions.append(a)
         nav.addStretch(1)
         side.addStretch(1)
         column = QVBoxLayout()

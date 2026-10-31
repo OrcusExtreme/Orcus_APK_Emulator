@@ -222,9 +222,10 @@ def test_every_issue_text_resolves() -> None:
                                             "android.permission.VIBRATE", "android.permission.ACCESS_FINE_LOCATION"}))
     issues = compat.preflight(everything, replace(NO_TTS, speech_recognizer=False))
     issues += compat.preflight(app(target_sdk=23, native_abis=frozenset({"arm64-v8a"})), CAPS)
-    assert {i.code for i in issues} >= set(IssueCode)
+    assert {i.code for i in issues} >= set(IssueCode) - {IssueCode.COLD_FRESH_APP}   # that one is the pipeline's
     for i in issues:
         assert messages_ko.text(i.text_key)
+    assert messages_ko.text("issue.cold_fresh_app")
 
 
 # --- shells ----------------------------------------------------------------------------------------------------

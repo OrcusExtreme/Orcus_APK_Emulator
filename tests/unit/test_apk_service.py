@@ -22,7 +22,9 @@ from orcus.contracts import (
     EngineState,
     EpochCause,
     ErrorCode,
+    IssueCode,
     LogEntry,
+    RemedyAction,
     Rotation,
     RunEvent,
     RunPolicy,
@@ -40,14 +42,18 @@ def _manifests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class World:
-    def __init__(self, tmp_path: Path, engine: FakeEngine | None = None, settings: ApkSettings | None = None) -> None:
+    def __init__(self, tmp_path: Path, engine: FakeEngine | None = None, settings: ApkSettings | None = None,
+                 mic_for: tuple[str, ...] = (), orient_check_s: float = 60.0, orient_soon_s: float = 60.0) -> None:
         self.engine = engine or FakeEngine()
         self.phone = self.engine.phone
         self.events = Events()
         self.dir = tmp_path
         self.staging = tmp_path / "staging"
         chosen = settings or ApkSettings()
-        self.svc = Service(cast(EngineControl, self.engine), self.staging, lambda: chosen, sleep=lambda s: None)
+        self.mic_for = list(mic_for)
+        self.svc = Service(cast(EngineControl, self.engine), self.staging, lambda: chosen,
+                           mic_allowed=lambda pkg: pkg in self.mic_for, sleep=lambda s: None,
+                           orient_check_s=orient_check_s, orient_soon_s=orient_soon_s)
         self.svc.subscribe(self.events)
 
     def apk(self, name: str = "HelloPurr", package: str = PKG, **manifest: object) -> Path:
@@ -136,8 +142,106 @@ def test_fresh_phone_waits_for_the_new_epoch_and_cold_uses_fresh_app(make: Calla
     assert w.engine.resets == 1 and ev.epoch == 2
     cold = make(engine=FakeEngine(mode=SessionMode.COLD))
     cold.phone.packages[PKG] = 1
-    cold.stage_is(cold.svc.submit(cold.apk(), RunPolicy.FRESH_PHONE), S.RUNNING)
+    ev = cold.stage_is(cold.svc.submit(cold.apk(), RunPolicy.FRESH_PHONE), S.RUNNING)
     assert cold.engine.resets == 0 and cold.phone.uninstalls == [PKG]
+    assert IssueCode.COLD_FRESH_APP in [i.code for i in ev.issues]   # said on the app card (3b)
+
+
+def test_microphone_follows_the_consent_of_the_app_being_launched(make: Callable[..., World]) -> None:
+    """§9.8: on for an app the user allowed, re-applied after a crash restart, off again for the next app."""
+    w = make(mic_for=(PKG,))
+    rid = w.svc.submit(w.apk(permissions=["android.permission.RECORD_AUDIO"]))
+    w.stage_is(rid, S.RUNNING)
+    assert w.engine.current().controls.mics == [True]
+    w.engine.new_epoch(EpochCause.CRASH_RESTART)           # SESSION_INIT turned it off: the new controls say so
+    w.stage_is(rid, S.RUNNING, epoch=2)
+    assert w.engine.current().controls.mics == [True]
+    w.stage_is(w.svc.submit(w.apk("B", "appinventor.ai_test.B")), S.RUNNING)
+    assert w.engine.current().controls.mics == [True, False]
+
+
+def test_location_apps_get_the_location_again_when_a_screen_starts_or_resumes(make: Callable[..., World]) -> None:
+    """Test providers report only when told: the app that starts listening gets the phone's location again (3b)."""
+    w = make()
+    rid = w.svc.submit(w.apk(permissions=["android.permission.ACCESS_FINE_LOCATION"]))
+    running = w.stage_is(rid, S.RUNNING)
+    controls = w.engine.current().controls
+    until(lambda: controls.resent == 1)                     # at the launch
+    assert running.pid is not None
+    w.engine.current().push(LogEntry(now_us(), running.pid, running.pid, "I", "Form", "Form Screen1 got onResume"))
+    until(lambda: controls.resent == 2)                     # back from the permission dialog, say
+    w.engine.current().push(LogEntry(now_us(), SYSTEM_PID, SYSTEM_PID, "I", "Form", "Form Screen1 got onResume"))
+    time.sleep(0.2)
+    assert controls.resent == 2                             # another process's line is not our app
+    plain = make()
+    plain.stage_is(plain.svc.submit(plain.apk()), S.RUNNING)
+    time.sleep(0.2)
+    assert plain.engine.current().controls.resent == 0      # no location permission: nothing sent
+
+
+def test_a_turned_app_screen_raises_the_banner_and_clears_it(make: Callable[..., World]) -> None:
+    """A landscape Screen2 in a portrait posture: banner after two checks in a row, gone once they match."""
+    w = make(orient_check_s=0.05, orient_soon_s=0.05)
+    rid = w.svc.submit(w.apk())
+    w.stage_is(rid, S.RUNNING)
+    mark = w.events.mark()
+    w.phone.display = "ROTATION_90"
+    ev = w.events.wait(lambda e: e.run_id == rid and e.warnings == (ErrorCode.APP_ORIENTATION_MISMATCH,),
+                       after=mark)
+    assert ev.stage is S.RUNNING
+    assert messages_ko.spec(ErrorCode.APP_ORIENTATION_MISMATCH).remedy is RemedyAction.MATCH_ORIENTATION
+    mark = w.events.mark()
+    w.svc.match_orientation()                                # turns the phone to the display
+    w.events.wait(lambda e: e.run_id == rid and e.warnings == (), after=mark)
+    assert w.engine.current().controls.rotations == [Rotation.LANDSCAPE]
+    w.phone.display = "ROTATION_0"                           # Screen2 closed: portrait app in a landscape posture
+    mark = w.events.mark()
+    w.events.wait(lambda e: e.warnings == (ErrorCode.APP_ORIENTATION_MISMATCH,), after=mark)
+    mark = w.events.mark()
+    w.svc.stop_app()
+    assert w.stage_is(rid, S.EXITED, after=mark).warnings == ()   # an exited app has no banner
+
+
+def test_the_orientation_check_keeps_its_pace_while_commands_keep_coming(make: Callable[..., World]) -> None:
+    """By the clock: a command every 20 ms restarted the 50 ms wait, so the check never ran (3b review)."""
+    w = make(orient_check_s=0.05, orient_soon_s=0.05)
+    rid = w.svc.submit(w.apk())
+    w.stage_is(rid, S.RUNNING)
+    mark = w.events.mark()
+    w.phone.display = "ROTATION_90"
+    end = time.monotonic() + 3
+    seen = False
+    while time.monotonic() < end and not seen:
+        w.svc.grant_all()
+        time.sleep(0.02)
+        seen = any(e.warnings for e in w.events.since(mark))
+    assert seen
+
+
+def test_a_screen_switch_is_checked_soon_whatever_the_slow_pace(make: Callable[..., World]) -> None:
+    """Screen2 opening (its Form resumes): two quick checks find the turned display long before the 3 s poll."""
+    w = make(orient_check_s=60.0, orient_soon_s=0.05)
+    rid = w.svc.submit(w.apk())
+    running = w.stage_is(rid, S.RUNNING)
+    assert running.pid is not None
+    time.sleep(0.3)                                          # the launch's quick checks are over
+    mark = w.events.mark()
+    w.phone.display = "ROTATION_90"
+    w.engine.current().push(LogEntry(now_us(), running.pid, running.pid, "I", "Form", "Form Screen2 got onResume"))
+    w.events.wait(lambda e: e.warnings == (ErrorCode.APP_ORIENTATION_MISMATCH,), timeout_s=2, after=mark)
+
+
+def test_a_turn_still_settling_is_not_a_mismatch(make: Callable[..., World]) -> None:
+    w = make(orient_check_s=0.05, orient_soon_s=0.05)
+    rid = w.svc.submit(w.apk())
+    w.stage_is(rid, S.RUNNING)
+    mark = w.events.mark()
+    w.svc._orient_seen = None                                # noqa: SLF001
+    w.phone.display = "ROTATION_90"
+    time.sleep(0.07)                                         # one check sees it ...
+    w.phone.display = "ROTATION_0"                           # ... and the display settles before the next
+    time.sleep(0.3)
+    assert not [e for e in w.events.since(mark) if e.warnings]
 
 
 def test_newest_drop_wins_while_the_phone_boots(make: Callable[..., World]) -> None:
@@ -263,6 +367,10 @@ def test_landscape_launcher_turns_the_phone_before_starting(make: Callable[..., 
     port = w.apk("Port", "appinventor.ai_test.Port", orientation="portrait")
     w.stage_is(w.svc.submit(port), S.RUNNING, after=w.events.mark())
     assert controls.rotations == [Rotation.LANDSCAPE, Rotation.PORTRAIT]
+    assert controls.gradual == [False, False]   # nothing listens before the launch: one step
+    controls.rotate(Rotation.LANDSCAPE)         # [Rotate left] while the portrait app runs
+    w.stage_is(w.svc.submit(port), S.RUNNING, after=w.events.mark())
+    assert controls.rotations[-1] == Rotation.PORTRAIT   # the posture the buttons left, not a remembered one
 
 
 def test_epoch_change_while_installing(make: Callable[..., World]) -> None:
@@ -285,12 +393,14 @@ def test_app_commands(make: Callable[..., World]) -> None:
     first = w.stage_is(rid, S.RUNNING)
     mark = w.events.mark()
     w.svc.grant_all()
+    w.phone.display = "ROTATION_90"
     w.svc.match_orientation()
     w.svc.clear_data()
     second = w.stage_is(rid, S.RUNNING, after=mark)
     assert second.pid != first.pid and ("pm", "clear", PKG) in w.phone.commands
     assert ("pm", "grant", PKG, "android.permission.ACCESS_FINE_LOCATION") in w.phone.commands
     assert w.engine.current().controls.rotations == [Rotation.LANDSCAPE]   # display said ROTATION_90
+    assert w.engine.current().controls.gradual == [True]                   # the app listens: 15° steps
     assert len(w.phone.installs) == 1                                      # clearing data keeps the record
     mark = w.events.mark()
     w.svc.stop_app()

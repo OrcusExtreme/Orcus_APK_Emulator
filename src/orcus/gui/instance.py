@@ -1,7 +1,9 @@
 """Single instance (ARCHITECTURE.md §1.3): the named mutex decides, a per-user QLocalServer hands files over.
 
 A second start with a file (double-click on an .apk, a drop on the shortcut) connects for up to 3 s, sends the
-paths and ends; the first instance opens them through SessionApi.open_paths.
+paths and ends; the first instance opens them through SessionApi.open_paths. It sends only to a server run by its
+own account (anyone can create the pipe name first). A closing first instance stops listening at once; the
+second start then waits for it to end and starts in its place (3a review: the file was acknowledged and lost).
 """
 
 import os
@@ -15,6 +17,7 @@ from orcus.common import log, win32
 
 MUTEX = "Local\\OrcusAPK.Instance"
 HANDOVER_S = 3.0
+CLOSING_WAIT_S = 20.0   # a closing first instance takes up to ~15 s to stop the phone
 MAX_MESSAGE = 64 * 1024
 _log = log.get("gui.instance")
 
@@ -39,6 +42,10 @@ def hand_over(paths: list[str], timeout_s: float = HANDOVER_S) -> bool:
         sock = QLocalSocket()
         sock.connectToServer(server_name())
         if sock.waitForConnected(500):
+            if win32.pipe_server_sid(int(sock.socketDescriptor())) != win32.user_sid():
+                _log.warning("the instance pipe is not served by this account: nothing handed over")
+                sock.abort()
+                return False
             sock.write(("\n".join(paths) + "\n\n").encode("utf-8"))
             sock.waitForBytesWritten(1000)
             ok = sock.waitForReadyRead(2000) and bytes(sock.readAll().data()).startswith(b"ok")
@@ -46,6 +53,16 @@ def hand_over(paths: list[str], timeout_s: float = HANDOVER_S) -> bool:
             return ok
         time.sleep(0.2)
     return False
+
+
+def wait_until_gone(mutex_name: str, timeout_s: float = CLOSING_WAIT_S) -> bool:
+    """A second start whose hand-over failed: True once the first instance has ended (its mutex is gone)."""
+    end = time.monotonic() + timeout_s
+    while win32.mutex_exists(mutex_name):
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.2)
+    return True
 
 
 class InstanceServer(QObject):
@@ -58,6 +75,10 @@ class InstanceServer(QObject):
         if not self._server.listen(server_name()):
             _log.warning("instance server not listening: %s", self._server.errorString())
         self._server.newConnection.connect(self._accept)
+
+    def close(self) -> None:
+        """Shutting down: a second start must not hand a file to an instance that will not open it."""
+        self._server.close()
 
     def _accept(self) -> None:
         sock = self._server.nextPendingConnection()

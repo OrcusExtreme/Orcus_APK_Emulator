@@ -8,7 +8,7 @@ import pytest
 from orcus.contracts import DeviceEndpoint, DeviceSession, Frame, HwKey, PointerAt, Rotation, Sensitivity
 from orcus.device import controls, logcat, rotation
 from orcus.device.session import GrpcDeviceSession
-from orcus.emugrpc.fake import FakeEmulatorServer
+from orcus.emugrpc.fake import BREAK_KEY, FakeEmulatorServer
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 
 W, H = 720, 1280
@@ -128,6 +128,7 @@ def test_keys_chords_and_paste_order(fake: FakeEmulatorServer, session: GrpcDevi
     session.input.key(HwKey.BACK)
     session.input.chord("Control", "a")
     session.input.paste_text("안녕하세요 Orcus")
+    until(lambda: len(keys(fake)) == 5)
     session.input.type_ascii("abc")   # ASCII goes through paste too (S8)
     until(lambda: len(keys(fake)) == 6)
     assert keys(fake) == [("GoBack", kp), ("Control", down), ("a", kp), ("Control", up), ("Paste", kp),
@@ -136,29 +137,113 @@ def test_keys_chords_and_paste_order(fake: FakeEmulatorServer, session: GrpcDevi
     assert [c for c, _ in fake.calls].count("setClipboard") == 2
 
 
-def test_controls_shake_rotate_tilt_mic_location(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
+def test_fast_typing_goes_as_one_paste_in_order(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
+    """Characters typed while a paste is on its way: one setClipboard with all of them, in order (3a review)."""
+    kp, down, up = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
+    session.input.key(HwKey.POWER, long_press=True)   # holds the input thread 0.7 s while the rest queues up
+    for ch in ("안", "녕", "a", "b", "하세요"):
+        session.input.type_ascii(ch) if ch.isascii() else session.input.paste_text(ch)
+    session.input.chord("Control", "z")
+    session.input.paste_text("!")
+    until(lambda: len(keys(fake)) == 7)
+    assert keys(fake) == [("Power", down), ("Power", up), ("Paste", kp), ("Control", down), ("z", kp),
+                          ("Control", up), ("Paste", kp)]
+    clips = [arg for c, arg in fake.calls if c == "setClipboard"]
+    assert clips == ["안녕ab하세요", "!"]
+
+
+def test_a_broken_stream_loses_no_input_after_it(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
+    """gRPC pulls a failed call's request iterator once more: that pull took the first input after a reconnect."""
+    kp = ec.KeyboardEvent.keypress
+    session.input.key(BREAK_KEY)   # the emulator ends the call
+    until(lambda: (BREAK_KEY, kp) in keys(fake))
+    time.sleep(0.05)               # inside the reconnect backoff
+    session.input.key(HwKey.HOME)
+    session.input.key(HwKey.BACK)
+    until(lambda: len(keys(fake)) == 3)
+    assert keys(fake) == [(BREAK_KEY, kp), ("GoHome", kp), ("GoBack", kp)]
+    assert [c for c, _ in fake.calls].count("streamInputEvent") == 2
+
+
+def test_wheel_notches_add_up_and_follow_the_posture(fake: FakeEmulatorServer) -> None:
+    scrolls: list[tuple[int, int, float]] = []
+    gate = threading.Event()
+
+    def sink(x: int, y: int, amount: float) -> None:
+        gate.wait(2)   # one adb command (~60 ms) at a time; notches meanwhile add up
+        scrolls.append((x, y, amount))
+    s = GrpcDeviceSession(DeviceEndpoint(f"localhost:{fake.port}", fake.token, "emulator-5640", 1), scroll=sink)
+    try:
+        s.input.wheel(PointerAt(0.5, 0.25, 0), -120)    # one notch toward the user: scroll down
+        time.sleep(0.1)
+        for _ in range(3):
+            s.input.wheel(PointerAt(0.5, 0.75, 0), -120)
+        s.input.wheel(PointerAt(0.5, 0.75, 0), 60)      # half a notch back (precise touchpads)
+        gate.set()
+        until(lambda: len(scrolls) == 2)
+        assert scrolls == [(360, 320, -1.0), (360, 959, -2.5)]   # portrait display coordinates
+    finally:
+        s.close()
+
+
+def test_controls_shake_rotate_tilt_mic_location(fake: FakeEmulatorServer, session: GrpcDeviceSession,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(controls, "LOCATION_GAP_S", 0.05)
     fake.sensors[ec.SensorValue.ACCELERATION] = ec.SensorValue(target=ec.SensorValue.ACCELERATION,
                                                                 value=ec.ParameterValue(data=[0.0, -9.81, 0.0]))
     c = session.controls
     assert c is not None
+    assert (c.posture, c.microphone) == (Rotation.PORTRAIT, False)
     c.shake(Sensitivity.MODERATE)
     c.rotate(Rotation.LANDSCAPE)
+    assert c.posture == Rotation.LANDSCAPE   # at once: the caller decides the next turn from it
     c.tilt(35, -5)
+    c.rotate(Rotation.PORTRAIT, gradual=False)
     c.set_microphone(True)
+    assert c.microphone
     c.set_location(37.5, 127.0)
-    until(lambda: fake.microphone and session.located)   # type: ignore[attr-defined]
+    until(lambda: fake.microphone and len(session.located) == 3)   # type: ignore[attr-defined]
     pulse = fake.sensors[ec.SensorValue.ACCELERATION].value.data
     assert [round(v, 2) for v in pulse] == [0.0, -25.81, 0.0]   # upside down: away from zero
-    rots = [list(p.value.data) for p in fake.physical]
+    rots = [[round(v, 6) for v in p.value.data] for p in fake.physical]
     assert rots[0] == [0.0, 0.0, 0.0]                  # the shake ends by restoring the posture
-    assert rots[1] == [0.0, 0.0, 90.0]
-    assert rots[2] == [20.0, 0.0, 85.0]                # tilt clamped to 20°, roll around the current z
-    assert session.located == [(37.5, 127.0, 30.0)]    # type: ignore[attr-defined]
+    assert [r[2] for r in rots[1:7]] == [15.0, 30.0, 45.0, 60.0, 75.0, 90.0]   # 15° steps (§9.7)
+    assert rots[7] == [20.0, 0.0, 85.0]                # tilt clamped to 20°, roll around the current z
+    assert rots[8:] == [[0.0, 0.0, 0.0]]               # pre-rotation: one step
+    assert session.located == [(37.5, 127.0, 30.0)] * 3   # type: ignore[attr-defined]
 
 
-def test_pulse_never_crosses_zero() -> None:
-    assert [round(v, 2) for v in controls.pulse_for([0.0, 9.81, 0.3], 16)] == [0.0, 25.81, 0.3]
-    assert [round(v, 2) for v in controls.pulse_for([-9.81, 0.1, 0.0], 9)] == [-18.81, 0.1, 0.0]
+def test_resend_repeats_the_newest_location_starting_from_home(fake: FakeEmulatorServer,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(controls, "LOCATION_GAP_S", 0.02)
+    located: list[tuple[float, float, float]] = []
+    s = GrpcDeviceSession(DeviceEndpoint(f"localhost:{fake.port}", fake.token, "emulator-5640", 1),
+                          location=lambda lat, lon, alt: located.append((lat, lon, alt)), home=(37.5665, 126.978))
+    try:
+        c = s.controls
+        assert c is not None
+        c.resend_location()                     # the start place SESSION_INIT set
+        until(lambda: len(located) == 3)
+        c.set_location(35.1798, 129.075)
+        until(lambda: len(located) == 6)
+        c.resend_location()
+        until(lambda: len(located) == 9)
+        assert located == [(37.5665, 126.978, 30.0)] * 3 + [(35.1798, 129.075, 30.0)] * 6
+    finally:
+        s.close()
+
+
+def test_a_newer_location_replaces_the_one_being_repeated(session: GrpcDeviceSession,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(controls, "LOCATION_GAP_S", 0.2)
+    c = session.controls
+    assert c is not None
+    c.set_location(37.5, 127.0)
+    until(lambda: len(session.located) == 1)   # type: ignore[attr-defined]
+    c.set_location(35.1, 129.0)
+    until(lambda: len(session.located) == 4)   # type: ignore[attr-defined]
+    time.sleep(0.5)
+    assert session.located == [(37.5, 127.0, 30.0)] + [(35.1, 129.0, 30.0)] * 3   # type: ignore[attr-defined]
 
 
 def test_logcat_parses_text_mode_and_drops_the_backlog(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:

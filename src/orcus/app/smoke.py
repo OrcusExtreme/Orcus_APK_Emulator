@@ -3,6 +3,11 @@
 [P3a] start -> frame -> key -> install and launch -> tap -> paste -> reset -> stop, each step timed. The APK is
 the user's own HelloPurr build (not shipped); without one the app steps are SKIP. The tap is checked through
 HelloPurr's Vibrate(500), which `dumpsys vibrator_manager` records with the package (S5).
+[P3b] adds shake, rotate and location after paste. HelloPurr's Shaking plays the meow, and App Inventor's Sound
+logs every Play: "SoundPool.play returned stream id", or "Unable to play because MinimumInterval has not elapsed"
+within 500 ms of the tap's meow (`dumpsys audio` logs no second start of the same player).
+A turn shows in the frames' rotation and in the display of an app that follows the sensor; a location shows as
+the gps and fused test providers' last location (3b device check, 2026-10-31).
 """
 
 import re
@@ -12,17 +17,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from orcus.apk import launch
 from orcus.common import winjob
 from orcus.contracts import (
+    DeviceControls,
     DeviceSession,
     EngineState,
     Frame,
     HwKey,
+    LogEntry,
     OrcusError,
     OrcusFailure,
     PointerAt,
+    Rotation,
     RunEvent,
     RunStage,
+    Sensitivity,
 )
 
 from .session import Session
@@ -30,6 +40,8 @@ from .session import Session
 BOUNDS = re.compile(r'class="([^"]*)" package="([^"]+)"[^>]*?\sclickable="true"[^>]*?'
                     r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
 PANEL = (720, 1280)
+BUSAN = (35.1798, 129.0750)   # anywhere but the session's Seoul City Hall
+SOUND_INTERVAL_S = 0.6        # App Inventor Sound.MinimumInterval is 500 ms
 
 
 @dataclass(frozen=True)
@@ -161,6 +173,58 @@ class _Smoke:
         self._device().input.paste_text("안녕하세요 Orcus")
         return "sent (not read back)"
 
+    def shake(self) -> str | None:
+        if self.package is None:
+            return None
+        played = threading.Event()
+
+        def on_log(e: LogEntry) -> None:
+            if e.tag == "Sound" and ("SoundPool.play returned" in e.msg or "MinimumInterval" in e.msg):
+                played.set()   # Play() ran: only Shaking calls it now
+        unsubscribe = self.s.apps.subscribe_log(on_log)
+        try:
+            time.sleep(SOUND_INTERVAL_S)   # the tap's meow: Sound refuses a second Play within 500 ms
+            self._controls().shake(Sensitivity.MODERATE)   # HelloPurr keeps the default sensitivity
+            if not self.package.endswith(".HelloPurr"):
+                return "sent (not HelloPurr: not checked)"
+            if not played.wait(5):
+                raise AssertionError("no Shaking: HelloPurr's Sound.Play did not run")
+        finally:
+            unsubscribe()
+        return "Shaking played HelloPurr's sound"
+
+    def rotate(self) -> str:
+        dev, controls = self._device(), self._controls()
+        got: list[Frame] = []
+        dev.frames.start(360, 640, got.append, lambda err: None)
+        try:
+            took = self._turn(controls, got, Rotation.LANDSCAPE)
+            display = "not checked (no app)"
+            if self.package is not None:   # the launcher stays at 0°; HelloPurr follows the sensor
+                sh = self.s.engine.shell()
+                end = time.monotonic() + 4
+                while (shown := launch.display_rotation(sh)) != Rotation.LANDSCAPE:
+                    if time.monotonic() > end:
+                        raise AssertionError(f"the frames turned but the app's display stayed {shown}")
+                    time.sleep(0.3)
+                display = "turned too"
+            self._turn(controls, got, Rotation.PORTRAIT)
+        finally:
+            dev.frames.stop()
+        return f"frames LANDSCAPE in {took:.1f} s (15° steps), display {display}, back to PORTRAIT"
+
+    def location(self) -> str:
+        t = time.monotonic()
+        self._controls().set_location(*BUSAN)
+        want = f"{BUSAN[0]:.6f},{BUSAN[1]:.6f}"
+        end = t + 10
+        while time.monotonic() < end:
+            out = self.s.engine.shell().shell(["dumpsys", "location"], timeout_s=20).out
+            if f"Location[gps {want}" in out and f"Location[fused {want}" in out:
+                return f"gps and fused test providers at {want} in {time.monotonic() - t:.1f} s"
+            time.sleep(0.5)
+        raise AssertionError(f"the test providers never reported {want}")
+
     def reset(self) -> str:
         t = time.monotonic()
         target = self.s.engine.reset_device()
@@ -190,6 +254,22 @@ class _Smoke:
             raise AssertionError("no device session")
         return dev
 
+    def _controls(self) -> DeviceControls:
+        controls = self._device().controls
+        if controls is None:
+            raise AssertionError("no device controls")
+        return controls
+
+    @staticmethod
+    def _turn(controls: DeviceControls, got: list[Frame], to: Rotation) -> float:
+        t = time.monotonic()
+        controls.rotate(to)
+        while not got or got[-1].rotation != to:
+            if time.monotonic() - t > 5:
+                raise AssertionError(f"no {to.name} frame 5 s after the turn")
+            time.sleep(0.05)
+        return time.monotonic() - t
+
 
 def run(session: Session, sdk: Path, apk: Path | None, on_step: Callable[[Step], None]) -> list[Step]:
     sm = _Smoke(session, apk, on_step)
@@ -199,6 +279,9 @@ def run(session: Session, sdk: Path, apk: Path | None, on_step: Callable[[Step],
         sm.step("install", sm.install)
         sm.step("tap", sm.tap)
         sm.step("paste", sm.paste)
+        sm.step("shake", sm.shake)
+        sm.step("rotate", sm.rotate)
+        sm.step("location", sm.location)
         sm.step("reset", sm.reset)
     sm.step("stop", lambda: sm.stop(sdk))
     return sm.steps

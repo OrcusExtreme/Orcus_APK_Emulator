@@ -41,7 +41,8 @@ def test_settings_defaults_follow_section_11_3() -> None:
     assert s.input.paste_method == "paste_key" and s.input.esc_is_back and s.input.right_click_back
     assert (s.frame.flip_rows, s.frame.max_fps) == (False, 60)
     assert s.sensors.shake_default is c.Sensitivity.MODERATE and dict(s.sensors.shake_sensitivity) == {}
-    assert s.sensors.location_presets == ((37.5665, 126.9780, "서울시청"),)
+    assert s.sensors.location_presets[0] == (37.5665, 126.9780, "서울시청")   # SESSION_INIT's place comes first
+    assert [name for _, _, name in s.sensors.location_presets] == ["서울시청", "남산서울타워", "부산시청"]
     assert s.privacy.mic_allowed_packages == () and s.ui.confirm_close_data and not s.session.keep_state
 
 

@@ -92,14 +92,27 @@ class FakeLogcat:
 class FakeControls:
     def __init__(self) -> None:
         self.rotations: list[Rotation] = []
+        self.gradual: list[bool] = []
+        self.mics: list[bool] = []
+        self.resent = 0
+        self.posture = Rotation.PORTRAIT
+        self.microphone = False
 
-    def rotate(self, to: Rotation) -> None:
+    def rotate(self, to: Rotation, *, gradual: bool = True) -> None:
         self.rotations.append(to)
+        self.gradual.append(gradual)
+        self.posture = to
 
     def shake(self, sensitivity: object) -> None: ...
     def tilt(self, pitch_deg: float, roll_deg: float) -> None: ...
     def set_location(self, lat: float, lon: float, alt_m: float = 30.0) -> None: ...
-    def set_microphone(self, enabled: bool) -> None: ...
+
+    def resend_location(self) -> None:
+        self.resent += 1
+
+    def set_microphone(self, enabled: bool) -> None:
+        self.mics.append(enabled)
+        self.microphone = enabled
 
 
 class FakeSession:
@@ -141,6 +154,7 @@ class Phone:
         self.on_start: Callable[[str, int], None] | None = None
         self.crash_text = ""
         self.no_process = False
+        self.display = "ROTATION_0"   # `dumpsys window displays`: a locked or turned app screen
 
     def wipe(self) -> None:
         self.packages.clear()
@@ -193,7 +207,7 @@ class Phone:
             case ("logcat", "-d", "-b", "crash", *_rest):
                 return 0, self.crash_text
             case ("dumpsys", "window", "displays"):
-                return 0, "  mCurrentRotation=ROTATION_90\n"
+                return 0, f"  mCurrentRotation={self.display}\n"
             case _:
                 pass
         return 0, ""
@@ -337,6 +351,10 @@ class Events:
     def mark(self) -> int:
         with self._cond:
             return len(self.items)
+
+    def since(self, after: int) -> list[RunEvent]:
+        with self._cond:
+            return self.items[after:]
 
     def wait(self, pred: Callable[[RunEvent], bool], timeout_s: float = 5.0, *, after: int = 0) -> RunEvent:
         """The first event since index `after` (see mark()) that matches."""

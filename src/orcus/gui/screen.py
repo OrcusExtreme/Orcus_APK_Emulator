@@ -3,20 +3,30 @@
 Pointer positions go out as normalized coordinates inside the frame on screen plus that frame's seq; the device
 package maps them to panel pixels with that frame's rotation (§9.2). A held finger is always lifted (§9.3): on
 release, when the pointer leaves the screen (at the edge), on focus loss, and when the frame rotation changes.
+The wheel scrolls (a real scroll event, 3b); the 한/영 key opens the Korean input bar (§9.6).
 """
 
 import time
 from collections import deque
 from collections.abc import Callable
 
-from PySide6.QtCore import QPointF, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFocusEvent, QGuiApplication, QKeyEvent, QMouseEvent, QPainter, QPaintEvent
+from PySide6.QtCore import QPointF, QRect, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFocusEvent,
+    QGuiApplication,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QWidget
 
 from orcus.contracts import HwKey, InputSettings, InputSink, PointerAt, Rotation
 
 from .frame_pump import FramePump, Shown
-from .keymap import CHORD_KEYS, NAMED_KEYS
+from .keymap import CHORD_KEYS, NAMED_KEYS, VK_HANGUL
 
 BACKGROUND = QColor(14, 14, 18)
 
@@ -31,6 +41,8 @@ def fit(avail: QSize, *, chrome: QSize, landscape: bool, dpr: float) -> QSize:
 
 
 class ScreenView(QWidget):
+    hangul = Signal()   # the 한/영 key: open the Korean input bar
+
     def __init__(self, pump: FramePump, settings: Callable[[], InputSettings]) -> None:
         super().__init__()
         self._pump = pump
@@ -133,6 +145,13 @@ class ScreenView(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._pressed = False
 
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        sink = self._input
+        dy = event.angleDelta().y()
+        if sink is not None and dy and not self._pressed:   # not in the middle of a drag
+            sink.wheel(self._at(event.position()), dy)
+        event.accept()
+
     def release(self) -> None:
         """Lift a held finger (focus lost, window deactivated, rotation, epoch change)."""
         if self._pressed and self._input is not None and self._last_at is not None:
@@ -148,6 +167,9 @@ class ScreenView(QWidget):
         return False   # Tab belongs to the phone while the screen has focus
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.nativeVirtualKey() == VK_HANGUL or event.key() == Qt.Key.Key_Hangul:
+            self.hangul.emit()
+            return
         sink = self._input
         if sink is None:
             super().keyPressEvent(event)

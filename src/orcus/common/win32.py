@@ -170,16 +170,62 @@ ERROR_ALREADY_EXISTS = 183
 TokenUser = 1
 
 
+kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.OpenMutexW.restype = wintypes.HANDLE
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.GetNamedPipeServerProcessId.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.ULONG)]
+kernel32.GetNamedPipeServerProcessId.restype = wintypes.BOOL
+SYNCHRONIZE = 0x00100000
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
 def named_mutex(name: str) -> tuple[int, bool]:
     """(handle, already existed). Keep the handle for the life of the process; the OS frees it at exit."""
     handle = kernel32.CreateMutexW(None, False, name)
     return int(handle or 0), ctypes.get_last_error() == ERROR_ALREADY_EXISTS
 
 
+def mutex_exists(name: str) -> bool:
+    """Whether any process still holds the named mutex (it is gone once the last handle closes)."""
+    handle = kernel32.OpenMutexW(SYNCHRONIZE, False, name)
+    close_handle(handle)
+    return bool(handle)
+
+
 def user_sid() -> str:
     """S-1-5-21-... of this process's user (names per-user IPC endpoints, §1.3); '' if unavailable."""
+    return _process_sid(kernel32.GetCurrentProcess())
+
+
+def pipe_server_sid(pipe: int) -> str:
+    """User of the process serving a connected named pipe, '' if it cannot be read (another account's process).
+    A second start hands its file only to its own account's Orcus: anyone can create a pipe under our name first,
+    and the name with our SID in it is no secret (3a review)."""
+    pid = wintypes.ULONG()
+    if not kernel32.GetNamedPipeServerProcessId(pipe, ctypes.byref(pid)):
+        return ""
+    process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not process:
+        return ""
+    try:
+        return _process_sid(process)
+    finally:
+        close_handle(process)
+
+
+def capture_device_count() -> int:
+    """Recording devices Windows offers (waveIn). With none the emulator logs `dsound: Could not initialize
+    DirectSoundCapture` and the guest records silence even with the microphone on (S3)."""
+    winmm = ctypes.WinDLL("winmm")
+    winmm.waveInGetNumDevs.argtypes = []
+    winmm.waveInGetNumDevs.restype = wintypes.UINT
+    return int(winmm.waveInGetNumDevs())
+
+
+def _process_sid(process: int) -> str:
     token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)):
+    if not advapi32.OpenProcessToken(process, TOKEN_QUERY, ctypes.byref(token)):
         return ""
     try:
         size = wintypes.DWORD()

@@ -68,6 +68,7 @@ class ErrorCode(StrEnum):
     APP_AI_RUNTIME_ERROR = auto()
     APP_TTS_MISSING = auto()
     APP_SPEECH_MISSING = auto()
+    APP_ORIENTATION_MISMATCH = auto()   # warning: the app's screen is drawn turned against the posture (3b)
 
 
 class RemedyAction(StrEnum):
@@ -82,6 +83,7 @@ class RemedyAction(StrEnum):
     CHANGE_GPU_MODE = auto()
     FREE_DISK = auto()
     CONTINUE_ANYWAY = auto()
+    MATCH_ORIENTATION = auto()
 
 
 @dataclass(frozen=True)

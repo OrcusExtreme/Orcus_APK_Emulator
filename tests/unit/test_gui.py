@@ -51,7 +51,8 @@ class Sink:
     def pointer(self, at: PointerAt, pressed: bool) -> None:
         self.calls.append(("pointer", round(at.u, 3), round(at.v, 3), pressed))
 
-    def wheel(self, at: PointerAt, dy: int) -> None: ...
+    def wheel(self, at: PointerAt, dy: int) -> None:
+        self.calls.append(("wheel", round(at.u, 3), round(at.v, 3), dy))
 
     def key(self, key: object, *, long_press: bool = False) -> None:
         self.calls.append(("key", str(key), long_press))
@@ -79,7 +80,8 @@ def test_shortcuts_are_unique_and_leave_the_phone_keys_alone() -> None:
     seqs = [QKeySequence(v).toString() for v in keymap.SHORTCUTS.values()]
     assert len(seqs) == len(set(seqs))
     assert not set(seqs) & {QKeySequence(k).toString() for k in keymap.PHONE_EDIT_KEYS}
-    assert not set(seqs) & {QKeySequence(k).toString() for k in keymap.RESERVED_P3B}
+    wanted = {keymap.SHORTCUTS[k] for k in ("shake", "rotate_left", "rotate_right", "hangul_bar")}
+    assert wanted == {"F6", "F7", "F8", "Ctrl+T"}   # §9.5
 
 
 def test_fit_gives_exact_9_by_16_like_the_design_example() -> None:
@@ -253,7 +255,8 @@ def test_window_wiring(qapp: QApplication, tmp_path: Path) -> None:
     assert "실행 중" in w.status_app.text() and "4.8" in w.status_app.text()
     w.show_problem(messages_ko.error(ErrorCode.APP_AI_COMPONENT_ERROR, "601 · ActivityStarter.StartActivity: x",
                                      message_key="app.error.601"))
-    assert w.log_panel.count == 1 and "로그 (1)" == w.tabs.tabText(1)
+    assert w.log_panel.count == 1 and "로그 (1)" == w.tabs.tabText(w.tabs.indexOf(w.log_panel))
+    assert [w.tabs.tabText(i) for i in range(2)] == ["앱", "센서"]
     w.remedy(RemedyAction.RUN_AGAIN)
     w.remedy(RemedyAction.GRANT_ALL)
     assert s.apps.calls == ["rerun", "grant_all"]
@@ -268,6 +271,7 @@ def test_window_wiring(qapp: QApplication, tmp_path: Path) -> None:
     w.on_engine(s.engine.st)
     assert list(w.banner_widgets) == [str(ErrorCode.ENGINE_GPU_SOFTWARE)] and len(s.dev.frames.started) == 2
     assert w.toast.text() == window.CRASH_NOTICE[SessionMode.GOLDEN]   # B11: golden data went back to the start
+    w.quiet_close = True   # an app ran in GOLDEN: the close notice is test_gui_3b's
     w.close()
 
 

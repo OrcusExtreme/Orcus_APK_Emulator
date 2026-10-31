@@ -48,19 +48,34 @@ class Session:
         self._setup: SetupService | None = None
         self._engine = EngineManager(paths, self.settings, seams or Seams.real(paths), self._connect,
                                      owner_kind=owner_kind)
-        self._apps = ApkPipeline(self._engine, paths.staging, lambda: self.settings().apk)
+        self._apps = ApkPipeline(self._engine, paths.staging, lambda: self.settings().apk,
+                                 mic_allowed=lambda pkg: pkg in self.settings().privacy.mic_allowed_packages)
 
     # --- wiring ---------------------------------------------------------------------------------------------------
     def _connect(self, endpoint: DeviceEndpoint) -> DeviceSession:
         """The DeviceSessionFactory the engine calls in SESSION_INIT. Logcat comes through the engine's adb:
         gRPC streamLogcat goes silent after a snapshot load ([Reset phone], Phase 3a)."""
-        return device_session.connect(endpoint, location=self._locate, logcat_source=self._engine.logcat)
+        presets = self.settings().sensors.location_presets   # SESSION_INIT put the phone at the first one
+        return device_session.connect(endpoint, location=self._locate, logcat_source=self._engine.logcat,
+                                      scroll=self._scroll, home=(presets[0][0], presets[0][1]) if presets else None)
 
     def _locate(self, lat: float, lon: float, alt_m: float) -> None:
-        """device-controls thread: the framework's test providers, through adb (S7)."""
-        sh = self._engine.shell()
-        for cmd in provision.location_commands(lat, lon):
-            sh.shell(cmd.split(), timeout_s=10)
+        """device-controls thread: the framework's test providers, through adb (S7). A repeat that meets a reset
+        is dropped: the new session starts at Seoul City Hall again (§6.6)."""
+        try:
+            sh = self._engine.shell()
+            for cmd in provision.location_commands(lat, lon):
+                sh.shell(cmd.split(), timeout_s=10)
+        except EngineNotReady as e:
+            _log.info("location dropped: %s", e)
+
+    def _scroll(self, x: int, y: int, amount: float) -> None:
+        """device-wheel thread: ACTION_SCROLL through `input` (the guest has no wheel device, §9.3)."""
+        try:
+            self._engine.shell().shell(["cmd", "input", "mouse", "scroll", str(x), str(y), "--axis",
+                                        f"VSCROLL,{amount:g}"], timeout_s=5)
+        except EngineNotReady as e:
+            _log.info("scroll dropped: %s", e)
 
     # --- SessionApi -----------------------------------------------------------------------------------------------
     @property

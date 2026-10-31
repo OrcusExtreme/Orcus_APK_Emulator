@@ -60,6 +60,7 @@ class IssueCode(StrEnum):
     ORIENTATION_LOCKED = auto()
     TTS_STATUS = auto()
     SPEECH_STATUS = auto()
+    COLD_FRESH_APP = auto()   # "reset before each run" became "clear the app's data" in COLD (§6.2)
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ class RunEvent:
     elapsed_s: float
     pid: int | None
     epoch: int
+    warnings: tuple[ErrorCode, ...] = ()   # banners while RUNNING, replaced by every event (orientation, 3b)
 
 
 class ApkService(Protocol):

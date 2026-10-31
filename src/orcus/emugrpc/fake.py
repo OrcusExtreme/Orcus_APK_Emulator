@@ -38,6 +38,8 @@ _HANDLER_FOR = {
 }
 
 
+BREAK_KEY = "OrcusTestBreak"   # a key that makes streamInputEvent fail after recording it
+
 class _TokenCheck(grpc.ServerInterceptor):
     def __init__(self, token: str) -> None:
         self._expected = f"Bearer {token}"
@@ -116,6 +118,8 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
         self.f.record("streamInputEvent")
         for event in request_iterator:
             self.f.input_events.append(event)
+            if event.key_event.key == BREAK_KEY:   # tests: the emulator ends the call, as a broken connection does
+                context.abort(grpc.StatusCode.UNAVAILABLE, "input stream broken by the test")
         return Empty()
 
     def sendKey(self, request: ec.KeyboardEvent, context: grpc.ServicerContext) -> Empty:
@@ -140,7 +144,7 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
         return Empty()
 
     def setClipboard(self, request: ec.ClipData, context: grpc.ServicerContext) -> Empty:
-        self.f.record("setClipboard")
+        self.f.record("setClipboard", request.text)
         self.f.clipboard = request.text
         return Empty()
 
