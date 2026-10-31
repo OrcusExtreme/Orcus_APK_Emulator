@@ -33,7 +33,7 @@ py tools/ai2/build_fixtures.py --build    APK 빌드 → D:\OrcusDev\fixtures\<�
 | `BallBounce.apk` | 공식 튜토리얼(Flung → Heading·Speed, EdgeReached → Bounce). `projects.ball_bounce` | 3a 수용 시험 전(B2) |
 | `MoleMash.apk` | 공식 튜토리얼 짧은 판(1 s마다 두더지 이동, 맞히면 점수). 두더지 그림은 직접 그림. `projects.mole_mash` | 3a 수용 시험 전 |
 | `HelloPurrKo.apk` | HelloPurr의 앱 이름(AppName)만 "고양이 쓰다듬기" | 3a 수용 시험 전(B8) |
-| `HelloPurrMin36.apk` | HelloPurr + Screen1 속성 AndroidMinSdk = 36(웹 IDE [프로젝트 속성] > Publishing). `.aia` 가져오기는 `project.properties`의 `androidminsdk`를 읽지 않아(App Inventor `YoungAndroidSettingsBuilder`는 쓰기만 함) Screen1 `.scm`에도 넣는다. 처음 빌드는 이 때문에 minSdk 14였다 | 3a 수용 시험 전(B8) |
+| `HelloPurrMin36.apk` | HelloPurr + Screen1 속성 AndroidMinSdk = 36. 웹 IDE의 Project Properties 대화상자 > Publishing에서 고른다(14–36). 새 화면에서는 [프로젝트] 메뉴에 없고 디자이너 도구 막대의 − 버튼 오른쪽 아이콘으로 열며, 오른쪽 속성 패널에는 나오지 않는다. `.aia` 가져오기는 `project.properties`의 `androidminsdk`를 읽지 않아(App Inventor `YoungAndroidSettingsBuilder`는 쓰기만 함) Screen1 `.scm`에도 넣는다. 처음 빌드는 이 때문에 minSdk 14였고, 대화상자에서 고쳐 다시 빌드했다 | 3a 수용 시험 전(B8) |
 | `HelloPurrLand.apk` | HelloPurr의 Screen1 ScreenOrientation만 landscape | 3a 수용 시험 전(B8) |
 
 3a 수용 시험용 6개(위 표의 PaintPot부터)는 `py tools/ai2/build_fixtures.py`가 `D:\OrcusDev\fixtures\src\<이름>.aia`로 만들어 둡니다(2026-10-30 생성).

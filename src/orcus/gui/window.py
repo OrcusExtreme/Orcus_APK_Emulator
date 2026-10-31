@@ -11,7 +11,6 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QGuiApplication, \
     QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -40,6 +39,7 @@ from orcus.contracts import (
     SessionMode,
 )
 
+from . import dialogs
 from .bridge import Bridge
 from .frame_pump import FramePump
 from .gpu_dialog import GpuDialog
@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
 
     # --- toolbar actions ---------------------------------------------------------------------------------------------
     def open_apk(self) -> None:
-        name, _ = QFileDialog.getOpenFileName(self, "APK 열기", str(Path.home()), "Android 앱 (*.apk);;모든 파일 (*)")
+        name = dialogs.open_file(self, "APK 열기", str(Path.home()), "Android 앱 (*.apk);;모든 파일 (*)")
         if name:
             self.s.open_paths([Path(name)])
 
@@ -430,8 +430,7 @@ class MainWindow(QMainWindow):
         if png is None:
             self.toast.show_text("스크린샷을 받지 못했습니다")
             return
-        name, _ = QFileDialog.getSaveFileName(self, "스크린샷 저장", str(Path.home() / "Pictures" / "orcus.png"),
-                                              "PNG (*.png)")
+        name = dialogs.save_file(self, "스크린샷 저장", str(Path.home() / "Pictures" / "orcus.png"), "PNG (*.png)")
         if name:
             Path(name).write_bytes(png)
             self.toast.show_text("스크린샷을 저장했습니다")

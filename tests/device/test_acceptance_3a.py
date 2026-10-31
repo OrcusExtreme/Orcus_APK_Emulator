@@ -3,7 +3,8 @@ B12 is test_apk_real.py; B7, B9 and the packaging smoke need the window and are 
 
 Run: py tools/dev.py test -m device tests/device/test_acceptance_3a.py -s
 Needs D:\\OrcusDev\\fixtures: HelloPurr, TalkToMe, OrcusProbe, PaintPot, BallBounce, MoleMash, HelloPurrKo,
-HelloPurrLand (built in the App Inventor web IDE). The GPU test rebuilds the phone twice (software, then host):
+HelloPurrLand, HelloPurrMin36 (built in the App Inventor web IDE). The Drive-folder test runs only with
+ORCUS_DRIVE_DIR set to a Google Drive folder: it uploads a copy there and deletes it (it lands in Drive's trash). The GPU test rebuilds the phone twice (software, then host):
 about 7 minutes. Lines starting with RESULT are the measurements for plan.md §4.
 """
 
@@ -42,12 +43,13 @@ from orcus.contracts import (
 )
 from test_apk_real import FIX, HELLO, PROBE, H, Phone, W
 
-PAINT, BALL, LAND, KO = (FIX / f"{n}.apk" for n in ("PaintPot", "BallBounce", "HelloPurrLand", "HelloPurrKo"))
+PAINT, BALL, LAND, KO, MIN36 = (FIX / f"{n}.apk"
+                                for n in ("PaintPot", "BallBounce", "HelloPurrLand", "HelloPurrKo", "HelloPurrMin36"))
 B1_APPS = [FIX / f"{n}.apk" for n in ("HelloPurr", "TalkToMe", "PaintPot", "BallBounce", "MoleMash")]
 OUT = Path(r"D:\OrcusDev\pytest")
 
 pytestmark = [pytest.mark.device,
-              pytest.mark.skipif(not all(p.exists() for p in (*B1_APPS, PROBE, LAND, KO)),
+              pytest.mark.skipif(not all(p.exists() for p in (*B1_APPS, PROBE, LAND, KO, MIN36)),
                                  reason="3a acceptance fixtures live in D:\\OrcusDev\\fixtures")]
 
 
@@ -372,6 +374,44 @@ def test_b8_wrong_files_and_a_korean_path(ph: Phone, tmp_path: Path) -> None:
     ev, _ = ph.run(korean, RunPolicy.FRESH_APP)
     assert ev.info is not None and ev.info.label == "고양이 쓰다듬기"
     result("B8 files", **seen, korean_path=f"running in {ev.elapsed_s:.1f}s, label {ev.info.label}")
+
+
+# --- B8 / §12.3 item 7 ---------------------------------------------------------------------------------------------
+@pytest.mark.timeout(300)
+def test_b8_min_sdk_36_installs_and_runs(ph: Phone) -> None:
+    ev, _ = ph.run(MIN36, RunPolicy.FRESH_APP)
+    assert ev.info is not None and ev.info.min_sdk == 36   # a web IDE build that ignored AndroidMinSdk says 14
+    api = ph.sh("getprop", "ro.build.version.sdk").strip()
+    declared = next((x.strip() for x in ph.sh("dumpsys", "package", ev.info.package).splitlines()
+                     if "minSdk=" in x), "")               # "versionCode=1 minSdk=36 targetSdk=36"
+    result("B8 minSdk 36", running=f"{ev.elapsed_s:.1f}s", device_api=api, installed=declared)
+    assert "minSdk=36" in declared
+
+
+DRIVE = os.environ.get("ORCUS_DRIVE_DIR")
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.skipif(not DRIVE, reason="set ORCUS_DRIVE_DIR to a Google Drive folder; the test uploads a copy there")
+def test_b8_korean_apk_in_a_drive_folder(ph: Phone) -> None:
+    assert DRIVE is not None
+    folder = Path(DRIVE) / "Orcus 시험"
+    folder.mkdir()                                         # never reuse (and later delete) a folder that was there
+    apk = folder / "고양이 쓰다듬기.apk"
+    try:
+        shutil.copy(KO, apk)
+        ev, _ = ph.run(apk, RunPolicy.FRESH_APP)           # right after the copy, while Drive may still upload it
+        assert ev.info is not None and ev.info.label == "고양이 쓰다듬기"
+        result("B8 Drive folder", path=apk, running=f"{ev.elapsed_s:.1f}s", label=ev.info.label)
+    finally:
+        for _ in range(20):                                # Drive may hold the new file for a moment
+            try:
+                apk.unlink(missing_ok=True)
+                folder.rmdir()
+                break
+            except OSError:
+                time.sleep(0.5)
+    assert not folder.exists(), f"left behind: {folder}"
 
 
 # --- B11 / §12.3 item 12 -------------------------------------------------------------------------------------------

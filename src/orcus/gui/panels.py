@@ -8,7 +8,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -25,6 +24,8 @@ from PySide6.QtWidgets import (
 
 from orcus.common.messages_ko import text
 from orcus.contracts import ApkInfo, Issue, IssueLevel, LogEntry, OrcusError
+
+from . import dialogs
 
 LEVEL_STYLE = {IssueLevel.BLOCK: "background:#b3261e;color:white", IssueLevel.WARN: "background:#f9dea0;color:#3b2f00",
                IssueLevel.INFO: "background:#dde3ea;color:#1f2933"}
@@ -210,6 +211,6 @@ class LogPanel(QWidget):
             self.count = 0
 
     def _save(self) -> None:
-        name, _ = QFileDialog.getSaveFileName(self, "로그 저장", str(Path.home() / "orcus-log.txt"), "텍스트 (*.txt)")
+        name = dialogs.save_file(self, "로그 저장", str(Path.home() / "orcus-log.txt"), "텍스트 (*.txt)")
         if name:
             Path(name).write_text(self.raw.toPlainText(), encoding="utf-8")

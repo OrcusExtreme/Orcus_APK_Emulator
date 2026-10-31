@@ -1,6 +1,6 @@
 # Orcus APK Emulator — 계획
 
-> **상태: Phase 3a 진행 중 — 작업 순서 1–8 측정 완료, 사용자 확인 3건 남음(§4 끝).** Phase 2는 2026-10-30에 끝났다(A9 승인). Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
+> **상태: Phase 3a 진행 중 — 작업 순서 1–8 측정 완료, 사용자 확인 1건 남음(§4 끝).** Phase 2는 2026-10-30에 끝났다(A9 승인). Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
 > 라이선스 동의(★D2)와 UAC 승인·재부팅(★D1)은 사용자가 직접 한다. 에이전트는 이 둘을 대신하지 않는다.
 >
 > - 상세 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 적대적 검토 66건과 수정 점검 52건을 반영했다. 추적 표는 §16에 있다.
@@ -498,11 +498,11 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
     | B2 | PaintPot 선 끊김 0열, 마우스→화면 88–100 ms, 프레임 나이 p95 7.7 ms, 드래그 중 44 fps. BallBounce 플링 91 → 284 px/s(마우스 1,000 → 3,000 px/s). Probe 300 px 드래그 Dragged 27회 |
     | B4 | Back → BackPressed, Home → 런처, Recents → 개요 화면 |
     | B7 | PaintPot에 손가락을 누른 채 창 프로세스를 강제 종료 → 3 s 뒤 SDK 프로세스 0개. 다시 켜서 탭하면 점만 찍힘(이전 손가락의 선 없음) |
-    | B8 | ARM 전용·AAB·AIA·AIX·손상 파일에 각각 맞는 안내. 한글 경로(로컬 폴더) 1.6 s 실행, 라벨 "고양이 쓰다듬기". 초기화 뒤 재드롭은 재설치. 가로 고정 launcher는 실행 전에 LANDSCAPE, 표시 ROTATION_90, 1280×720. **minSdk 36은 빌드가 minSdk 14로 나와 미확인**(발견 12). 레거시 APK는 구하지 못해 해당 없음. Drive 폴더는 사용자 확인 대기 |
+    | B8 | ARM 전용·AAB·AIA·AIX·손상 파일에 각각 맞는 안내. 한글 경로(로컬 폴더) 1.6 s 실행, 라벨 "고양이 쓰다듬기". 초기화 뒤 재드롭은 재설치. 가로 고정 launcher는 실행 전에 LANDSCAPE, 표시 ROTATION_90, 1280×720. minSdk 36은 다시 빌드한 APK(2026-10-31, 발견 12)가 4.4 s에 실행, 설치된 패키지 `minSdk=36 targetSdk=36`(기기 API 36). 레거시 APK는 구하지 못해 해당 없음. Drive 폴더(`G:\내 드라이브`, 스트리밍)의 한글 이름 APK는 복사 직후 드롭해 3.5 s에 실행(사용자 허락 2026-10-31, 시험 뒤 삭제, `ORCUS_DRIVE_DIR`를 줄 때만 도는 시험). 로컬 캐시에 없는 온라인 전용 파일은 시험하지 않음 |
     | B9 | 정지 화면 창 CPU 0.31%(한 코어 기준, 16코어 전체 0.02%). 애니메이션(BallBounce) 35–47 fps. 작업 집합 174–179 MB. 유휴 RAM 합계 3,328 MB(qemu 3,081, 창 174, adb 28, netsimd 22, emulator 12, crashpad 11) → 목표(VM 2.5 GB + GUI ≤ 250 MB ≈ 2.8 GB)보다 약 0.5 GB 많다. qemu 작업 집합이 게스트 RAM 2,560 MB보다 약 520 MB 크다 |
     | B11 | `ENGINE_IN_USE`, 첫 VM 유지. 초기화 epoch +1(RESET, 재설치 없음). qemu 강제 종료 → 16.4–18.5 s에 CRASH_RESTART, 마지막 앱 재설치. 골든 모드 크래시 안내는 유닛 시험. GPU software → COLD READY 131–147 s + 배너·칩, host로 돌아와 골든 재구축 264–354 s |
     | B12 | `test_apk_real.py` 3개 통과 |
-    | B15 | 유닛 320개·pyright 0건. 기기 시험 §12.3 1–4·6·8–15 통과(7은 minSdk 36 남음). 패키징본 3a 스모크 8단계 PASS. 패키징본 두 번째 실행이 0.7 s에 첫 창으로 넘김. 로그오프는 패키징본 창에 WM_QUERYENDSESSION/WM_ENDSESSION을 보내 흉내 → 2.83 s에 빠른 정지(Windows 대기 약 5 s 안), SDK 프로세스 0개, 스냅샷 파일 변화 없음. 실제 로그오프는 수동 점검 |
+    | B15 | 유닛 320개·pyright 0건. 기기 시험 §12.3 1–4·6–15 통과(7은 minSdk 36·ARM 전용, 레거시는 해당 없음). 패키징본 3a 스모크 8단계 PASS. 패키징본 두 번째 실행이 0.7 s에 첫 창으로 넘김. 로그오프는 패키징본 창에 WM_QUERYENDSESSION/WM_ENDSESSION을 보내 흉내 → 2.83 s에 빠른 정지(Windows 대기 약 5 s 안), SDK 프로세스 0개, 스냅샷 파일 변화 없음. 실제 로그오프는 수동 점검 |
     | 패키징 스모크 | 빌드 44–66 s, 앱 폴더 121.9 MB. selftest 2개, `--boot-check` host·host_hidden(WHPX), 창 READY 8.5–8.8 s → 강제 종료 뒤 SDK 프로세스 0개 |
 
     - **발견 7 — 게스트가 바쁠 때 저장한 골든은 로드 뒤 프레임워크를 잃는다.** 재구축 직후의 골든으로 시험하다 초기화에서 표식이 빈 값으로 보이고 `svc power stayon`이 멈췄다. 로드 뒤 system_server가 Watchdog으로 죽어 `package`는 Broken pipe, `power`는 DEAD_OBJECT였다. 저장 때 load average가 약 12(첫 부팅의 앱 컴파일)였다. → 저장 전에 CPU 사용률 대기(0.35 미만 2회 연속, 최대 180 s)와 프레임워크 확인, 검증 부팅은 로드 60 s 뒤 확인, 모든 GOLDEN SESSION_INIT에서 프레임워크 확인(망가졌으면 재구축). ARCHITECTURE §5.1·§6.5. 재구축 294 s(68 s에 조용해짐), 이후 재구축 264 s(58 s).
@@ -510,11 +510,11 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
     - **발견 9 — 입력 스트림이 끊길 때 눌린 손가락이 남을 수 있었다.** → 새 스트림이 먼저 손가락을 뗀다(§12.3 6 통과).
     - **발견 10 — 패키징:** 단일 인스턴스(`gui/instance.py`)가 쓰는 QtNetwork를 빌드가 빼고 있었다 → 포함하고 selftest에 `PySide6.QtNetwork`·`orcus.gui.app` import를 넣었다. `build.py --gui-check`는 SDK 프로세스를 이름으로 찾다가 Google Drive가 띄운 `crashpad_handler.exe`에 걸렸다 → 이미지 경로(`D:\OrcusAPK\sdk` 아래)로 찾는다.
     - **발견 11 — BallBounce:** 0.6 s 드래그는 플링으로 잡히지 않았다 → 시험은 같은 240 px를 0.25 s와 0.08 s에.
-    - **발견 12 — App Inventor `.aia` 가져오기는 `project.properties`의 `androidminsdk`를 읽지 않는다**(`YoungAndroidSettingsBuilder`는 쓰기만 한다). 그래서 HelloPurrMin36이 minSdk 14로 빌드됐다. AndroidMinSdk는 Screen1 속성(웹 IDE [프로젝트 속성] > Publishing)이라 생성기가 Screen1 `.scm`에도 넣도록 고쳤다(nb207 릴리스 노트에 이 속성의 버그 수정이 있음). 다시 빌드해야 한다.
+    - **발견 12 — App Inventor `.aia` 가져오기는 `project.properties`의 `androidminsdk`를 읽지 않는다**(`YoungAndroidSettingsBuilder`는 쓰기만 한다). 그래서 HelloPurrMin36이 minSdk 14로 빌드됐다. AndroidMinSdk는 Screen1 속성(웹 IDE [프로젝트 속성] > Publishing)이라 생성기가 Screen1 `.scm`에도 넣도록 고쳤다(nb207 릴리스 노트에 이 속성의 버그 수정이 있음). 사용자가 Project Properties 대화상자에서 36으로 바꿔 다시 빌드했고, minSdk 36과 B8을 확인했다(2026-10-31). `.scm`에 넣은 값이 가져오기에서 살아남는지는 시험하지 않았다. 웹 IDE 새 화면에서는 이 대화상자가 [프로젝트] 메뉴에 없고, 디자이너 도구 막대의 − 버튼 오른쪽 아이콘으로 연다. 오른쪽 속성 패널에도 나오지 않는다.
     - **발견 13 — B1에서 한 번 22.6 s:** BallBounce 설치(0.7 s) 뒤 실행까지 21.7 s가 걸렸고 그 사이 로그가 없었다. 같은 조건(골든 로드 직후 5개 연속)으로 45회와 B1 재실행 5회는 모두 1.8–6.0 s여서 재현되지 않았다. 원인을 모른다. `am start -W` 첫 시도가 실패하면 출력과 시간을 남기고(재시도가 이를 가렸을 수 있음), 10 s를 넘는 adb 호출과 실행 단계 시간도 로그에 남기게 했다. 다시 나오면 원인을 잡는다.
     - UI 안내 시간을 "약 3분"에서 "약 5분"으로 바꿨다(7a 대기와 60 s 검증 때문).
     - 참고: 다른 프로세스의 `orcus-cli engine status`(`engine/readonly.py`)는 gRPC `booted`를 "준비됨"으로 보여, 소유자가 SESSION_INIT 확인 중인 약 4 s 동안에도 준비됨이다. 소유자 상태를 소유자 기록에 남길지는 3b에서 정한다.
   - **사용자 확인이 필요한 것:**
-    1. HelloPurrMin36 다시 빌드: 웹 IDE에서 HelloPurrMin36 프로젝트를 열고 [프로젝트 속성] > Publishing > AndroidMinSdk = 36으로 바꾼 뒤 APK 빌드(또는 새 `.aia`를 다른 이름으로 가져오기).
-    2. Drive 폴더(`G:\내 드라이브`)의 한글 이름 APK 시험. 파일이 사용자 Google Drive에 올라가므로 허락이 필요하다.
+    1. (끝남, 2026-10-31) HelloPurrMin36 다시 빌드 → minSdk 36 확인, B8 기기 시험 3개 통과.
+    2. (끝남, 2026-10-31) Drive 폴더 한글 이름 APK 시험 → 사용자 허락 뒤 실행, 3.5 s에 실행, 시험 폴더 삭제.
     3. 실제 로그오프와 §12.6 수동 점검(초보 예제 소리·필기감, 배율 125/150%, 다른 모니터, V3 실시간 감시 상태 등).

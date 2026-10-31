@@ -3,11 +3,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.6-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.6)
+[![Release](https://img.shields.io/badge/Release-v0.1.7-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.7)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-320%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-324%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -79,14 +79,14 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.6 / Phase 3a Acceptance & Hardening Completed)
+## 📊 Current Progress & Status (v0.1.7 / Phase 3a Acceptance Finalized & Cleanliness Architecture)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, and **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, and Comprehensive Real-Device Acceptance Testing)**, verified against the master criteria matrix (B1–B15), backed by **320 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, and **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, and Full Real-Device Acceptance Verification)**, verified against the master criteria matrix (B1–B15), backed by **324 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
     A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
-    B --> C["Phase 3a: Runtime & Acceptance<br/>(Completed: v0.1.6)"]
+    B --> C["Phase 3a: Runtime & Acceptance<br/>(Completed: v0.1.7)"]
     C --> D["Phase 3b: Sensors, IME & Settings<br/>(Next Milestone)"]
     D --> E["Phase 4: Inno Setup & Release<br/>(Planned)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
@@ -106,16 +106,16 @@ All Phase 3a acceptance criteria were executed and verified on the real headless
 | **B2** | Low-latency canvas touch, drag line continuity, frame age ≤ 50ms | PaintPot: **0 broken line columns**, mouse-to-screen latency **88–100ms**, frame age p95 **7.7ms**, **44 fps** during active drag. BallBounce: mouse fling 1,000 → 3,000 px/s tracked to ball 91 → 284 px/s. OrcusProbe: 300 px drag produced **27 Dragged events** | **PASS** |
 | **B4** | Hardware bezel key navigation | **Back** → `BackPressed` event; **Home** → Android launcher; **Recents** → system overview deck | **PASS** |
 | **B7** | Win32 Job Object process cleanup, zero stuck pointer on abort | Process killed mid-drag: **0 SDK child processes** remaining after 3s; subsequent app launch starts clean with no residual stuck finger | **PASS** |
-| **B8** | File classification, Korean path support, orientation pre-rotation | Appropriate Korean error dialogs for ARM-only, AAB, AIA, AIX, and corrupted files. Local Korean paths executed in **1.6s** ("고양이 쓰다듬기"). Fixed landscape launcher rotated before launch (`LANDSCAPE`, `ROTATION_90`, 1280×720) | **PASS** |
+| **B8** | File classification, Korean path support, orientation pre-rotation, minSdk 36 | Appropriate Korean error dialogs for ARM-only, AAB, AIA, AIX, and corrupted files. Local Korean paths executed in **1.6s** ("고양이 쓰다듬기"). Fixed landscape launcher rotated before launch (`LANDSCAPE`, `ROTATION_90`, 1280×720). Verified **`minSdk 36`** (`HelloPurrMin36.apk`) runs in **4.4s** (`minSdk=36 targetSdk=36`). Google Drive streaming folder (`G:\내 드라이브`) Korean APK executed in **3.5s** | **PASS** |
 | **B9** | CPU & memory footprint | Idle window host CPU **0.31%** (single core, 0.02% total system on 16 cores); active BallBounce animation **35–47 fps**; GUI working set **174–179 MB** | **PASS** |
 | **B11** | Multi-instance mutex, crash recovery, software GPU fallback | Second session rejected with `ENGINE_IN_USE` while first VM stays `READY`. Process kill recovers via `CRASH_RESTART` in **16.4–18.5s** with auto-reinstallation of last app. Software GPU cold boot in 131–147s with warning banner; host golden rebuild in 264–354s | **PASS** |
 | **B12** | APK lifecycle & staging isolation | Clean staging under `D:\OrcusAPK\staging`, LRU eviction, and `adb install -r` bypass | **PASS** |
 | **B15** | Fast logoff termination & single-instance handover | Packaged app responds to `WM_QUERYENDSESSION`/`WM_ENDSESSION` with clean termination in **2.83s** (well within Windows 5s budget), 0 SDK processes left. CLI hand-off to running window completes in **0.7s** | **PASS** |
 | **Packaging Smoke** | Standalone PyInstaller distribution (`tools/build.py`) | Build time 44–66s, distribution folder **121.9 MB**. Selftests pass (`orcus-cli.exe` & `OrcusAPK.exe`). `--boot-check` passes WHPX host/host_hidden. `--gui-check` launches packaged window, reaches `READY` in **8.5–8.8s**, and terminates cleanly | **PASS** |
 
-### 🔍 Key Engineering Findings & Stabilizations (Findings 7–13)
+### 🔍 Key Engineering Findings & Stabilizations (Findings 7–14)
 
-During real-device acceptance runs and stress scenarios, 7 critical edge cases were discovered and resolved:
+During real-device acceptance runs and stress scenarios, critical edge cases were discovered and resolved:
 
 * **Finding 7 — Golden Snapshot Guest Framework Preservation**: Saving golden snapshots while the guest is compiling dex in the background (load average ~12) caused Android's `system_server` watchdog to terminate on subsequent loads (`cmd package` Broken pipe, `dumpsys power` DEAD_OBJECT).  
   *Fix*: Added guest CPU idle polling via `/proc/stat` (`cpu_busy` < 0.35 twice consecutively, up to 180s) and guest framework verification (`framework_problem` verifying `system_server`, `cmd package`, and `dumpsys power`) before snapshot creation and during session initialization.
@@ -125,15 +125,16 @@ During real-device acceptance runs and stress scenarios, 7 critical edge cases w
   *Fix*: Enforced unconditional pointer lift (`buttons=0`) at the very beginning of every new input stream.
 * **Finding 10 — PyInstaller Packaging Integrity**: Added missing `PySide6.QtNetwork` (required for single-instance IPC) and `orcus.gui.app` to packaging hidden imports; improved SDK process detection via image directory filter (`D:\OrcusAPK\sdk`) to ignore desktop Google Drive crashpad daemons.
 * **Finding 11 — BallBounce Gesture Calibration**: Adjusted fling test gesture duration (0.25s and 0.08s) to accurately trigger Android fling physics.
-* **Finding 12 — App Inventor `.aia` Manifest AST Tuning**: Injected `AndroidMinSdk` attribute directly into Screen1 `.scm` AST specifications so that App Inventor web IDE honors custom minimum SDK constraints.
+* **Finding 12 — App Inventor `.aia` Manifest AST Tuning & minSdk 36 Verification**: Injected `AndroidMinSdk` attribute directly into Screen1 `.scm` AST specifications; verified on real device with rebuilt `HelloPurrMin36.apk` where `minSdk=36 targetSdk=36` installed and executed cleanly on the API 36 emulator.
 * **Finding 13 — Activity Launch Telemetry**: Added diagnostic warning logs capturing `am start -W` raw output on slow launches (> 10s) and command retries.
+* **Finding 14 — Zero-Registry Footprint File Dialogs (`orcus.gui.dialogs`)**: Standard `QFileDialog` invocations permanently pollute `HKCU\Software\QtProject\OrganizationDefaults\FileDialog` with recent folders and history. Implemented `keeping()` registry context manager in `gui/dialogs.py` to restore original registry state and purge any created keys upon dialog close, enforcing ARCHITECTURE §11.5.
 
 ---
 
-### ✅ Implemented Capabilities (v0.1.6)
+### ✅ Implemented Capabilities (v0.1.7)
 
 #### 1. Architecture Specifications ([docs/](docs/))
-* **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Updated with §5.1, §5.5, §6.5 framework validation, `engine-adbwait` supervisor thread, and 60s post-load health verification.
+* **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Updated with §5.1, §5.5, §6.5 framework validation, `engine-adbwait` supervisor thread, 60s post-load health verification, and §11.5 zero-registry file dialog specifications.
 * **[docs/spikes.md](docs/spikes.md)**: Empirical measurement logs covering all Phase 2 spikes (S0a–S9) and Phase 3a acceptance runs.
 * **[docs/fixtures.md](docs/fixtures.md)**: Full fixture specifications for `HelloPurr`, `TalkToMe`, `OrcusProbe`, `PaintPot`, `BallBounce`, `MoleMash`, `HelloPurrKo`, `HelloPurrMin36`, and `HelloPurrLand`.
 * **[plan.md](plan.md)**: Master phase plan with complete B1–B15 real-device acceptance results and empirical data logs.
@@ -171,10 +172,11 @@ During real-device acceptance runs and stress scenarios, 7 critical edge cases w
 * [`session.py`](src/orcus/device/session.py): Integrated `DeviceSession` managing all gRPC stream lifetimes.
 
 #### 6. PySide6 Native Desktop GUI Client (`src/orcus/gui/`)
-* [`window.py`](src/orcus/gui/window.py): Native desktop window housing the 9:16 mobile frame (432×768 on primary 1080p displays) with system tray and logoff fast-shutdown handlers.
+* [`dialogs.py`](src/orcus/gui/dialogs.py): Registry-preserving `open_file` and `save_file` dialog wrappers enforcing ARCHITECTURE §11.5 zero-pollution policy (reverts or purges `HKCU\Software\QtProject\OrganizationDefaults\FileDialog` on dialog close).
+* [`window.py`](src/orcus/gui/window.py): Native desktop window housing the 9:16 mobile frame (432×768 on primary 1080p displays), system tray, logoff fast-shutdown handlers, and zero-registry APK open / screenshot save dialogs.
 * [`phone.py`](src/orcus/gui/phone.py) / [`screen.py`](src/orcus/gui/screen.py) / [`frame_pump.py`](src/orcus/gui/frame_pump.py): 1:1 direct low-latency raster blit rendering viewport, touch input handler, and bezel buttons (Back, Home, Recents).
 * [`keymap.py`](src/orcus/gui/keymap.py): Keyboard navigation mapping (Esc/Right-click = Back, Middle-click = Home, Ctrl+V = Korean text injection).
-* [`panels.py`](src/orcus/gui/panels.py): Collapsible [App Card] (displaying package, launcher, SDK, permissions) and [Diagnostic Logs] inspection drawers.
+* [`panels.py`](src/orcus/gui/panels.py): Collapsible [App Card] (displaying package, launcher, SDK, permissions) and [Diagnostic Logs] inspection drawers with clean text export dialogs.
 * [`overlays.py`](src/orcus/gui/overlays.py): Rich state overlays, non-blocking toast notifications, warning banners, and engine failure recovery cards.
 * [`instance.py`](src/orcus/gui/instance.py): Single-instance enforcement via Win32 Named Mutex and local QtNetwork IPC socket forwarding.
 * [`gpu_dialog.py`](src/orcus/gui/gpu_dialog.py): Interactive GPU fallback and diagnostics dialog.
@@ -195,7 +197,7 @@ During real-device acceptance runs and stress scenarios, 7 critical edge cases w
 #### 9. Developer Toolchain & Testing Infrastructure (`tools/`, `tests/`)
 * **AI2 Project Synthesis Engine (`tools/ai2/`)**: Visual `.bky` XML and `.yail` Scheme code generator, producing valid `.aia` project archives (`HelloPurr`, `TalkToMe`, `OrcusProbe`, `PaintPot`, `BallBounce`, `MoleMash`, `HelloPurrKo`, `HelloPurrMin36`, `HelloPurrLand`).
 * [`bootstrap.py`](tools/bootstrap.py) / [`dev.py`](tools/dev.py) / [`build.py`](tools/build.py): Hash-pinned environment manager, test runner, and PyInstaller onedir distribution builder with `--gui-check` validation.
-* **Automated Test Suite**: **320 pytest unit tests** passing with 100% success rate. Zero Pyright type check diagnostics.
+* **Automated Test Suite**: **324 pytest unit tests** passing with 100% success rate (including `test_gui_dialogs.py` verifying registry isolation and cleanup). Zero Pyright type check diagnostics.
 * **Real-Device Acceptance Test Suite (`tests/device/test_acceptance_3a.py`)**: End-to-end device test harness validating criteria B1, B2, B4, B7, B8, B9, B11, B12, and B15.
 
 ---
@@ -251,6 +253,7 @@ Orcus_APK_Emulator/
 │       ├── gui/                # PySide6 QtWidgets main window and mobile viewport
 │       │   ├── app.py          # Native GUI application runner
 │       │   ├── bridge.py       # Thread-safe SessionApi event bridge
+│       │   ├── dialogs.py      # Registry-neutral QFileDialog keeping wrappers (ARCHITECTURE §11.5)
 │       │   ├── frame_pump.py   # Low-latency frame pump
 │       │   ├── gpu_dialog.py   # Software GPU fallback dialog
 │       │   ├── instance.py     # Single-instance mutex and IPC forwarder
@@ -264,7 +267,7 @@ Orcus_APK_Emulator/
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   ├── unit/                   # 313 unit test suites covering contracts, engine, apk, device, gui, app
+│   ├── unit/                   # 324 unit test suites covering contracts, engine, apk, device, gui, app
 │   └── device/                 # Real emulator device integration test suites
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
@@ -308,7 +311,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (320 tests)
+# 4. Run the automated unit test suite (324 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -339,14 +342,17 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] `apk`: Drag-and-drop staging pipeline, `adb install -r`, `am start`, logcat monitors
   - [x] `device`: Low-latency frame streaming, touch pointer normalization, Korean clipboard paste
   - [x] `gui`: PySide6 9:16 mobile frame, raster frame blit, [App Card] and [Logs] panels
-- [x] **Phase 3a Acceptance & Stability Hardening** (Completed: v0.1.6)
+- [x] **Phase 3a Acceptance & Stability Hardening** (Completed: v0.1.7)
   - [x] Real-device acceptance suite (`tests/device/test_acceptance_3a.py`) validating criteria B1, B2, B4, B7, B8, B9, B11, B12, B15
+  - [x] Verified `minSdk=36` APK installation and execution on API 36 (`HelloPurrMin36.apk`)
+  - [x] Verified Google Drive streaming folder Korean path APK execution (`G:\내 드라이브`, 3.5s)
+  - [x] Zero-registry pollution file dialog architecture (ARCHITECTURE §11.5, `orcus.gui.dialogs`)
   - [x] Guest framework preservation & CPU idle check before golden snapshot save (Finding 7)
   - [x] Private ADB daemon autonomous recovery supervisor (`engine-adbwait`, Finding 8)
   - [x] Guaranteed pointer release on gRPC input stream restart (Finding 9)
   - [x] PyInstaller onedir distribution packaging with `--gui-check` validation (Finding 10)
   - [x] App Inventor `.aia` Screen1 AST generator with `AndroidMinSdk` support (Finding 12)
-  - [x] 320 automated unit tests passing with 100% success rate & 0 Pyright issues
+  - [x] 324 automated unit tests passing with 100% success rate & 0 Pyright issues
 - [ ] **Phase 3b: Sensor Integration, IME & Settings** (Next Milestone)
   - [ ] [Sensors] panel: Shake sensitivity presets, rotation, 20° tilt pad, GPS coordinates
   - [ ] Korean IME text composition input bar with guest clipboard synchronization

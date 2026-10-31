@@ -1456,6 +1456,7 @@ firstboot.bootFromLocalSnapshot=no
   - 남는 변화는 경로와 시각으로 우리 프로세스(python/OrcusAPK, emulator, qemu, adb, dism, emulator-check, powershell)가 만든 것인지 판단해 기록한다.
   - 사용자가 허용하면 Process Monitor로 우리 프로세스의 쓰기만 걸러 확인한다.
 - 이미 설치된 Python 3.14 런타임(개발용)은 예외다. QSettings는 쓰지 않는다.
+- **[3a 추가] Qt 파일 대화상자:** QFileDialog는 네이티브 대화상자를 쓸 때도 닫힐 때 `HKCU\Software\QtProject\OrganizationDefaults\FileDialog`에 마지막 폴더·보기 방식·Qt 버전을 쓴다(3a 수동 점검에서 발견). 그래서 대화상자는 모두 `gui/dialogs.py`를 거친다. 열기 전 그 키를 기억했다가, 닫힌 뒤 원래 값으로 되돌리거나 우리가 만든 키(와 그때 생긴 상위 키)를 지운다. 공용 대화상자가 남기는 `ComDlg32`·`RecentDocs`·`Recent\*.lnk`·Shell Bags는 OS 기록이라 비교에서 뺀다.
 - **개발 캐시는 모두 `D:\OrcusDev`로 돌린다**(§11.7). pip, pyright(npm), npm 캐시를 기본값으로 두면 C:에 수십~수백 MB가 생긴다.
 
 ### 11.6 설치 순서 [P2]
