@@ -391,6 +391,7 @@ class Service:
     def _launch(self, run: _Run, shell: DeviceShell) -> None:
         assert run.package is not None
         run.pid = None
+        started = time.monotonic()
         self._emit(run, RunStage.LAUNCHING)
         self._turn_for(run, shell.epoch)
         self._ensure_logcat(shell.epoch).wait(LOG_LIVE_WAIT_S)
@@ -411,8 +412,8 @@ class Service:
         run.pid = out.pid
         self._attach(run, mark)
         self._emit(run, RunStage.RUNNING)
-        _log.info("%s running %.1f s after the drop (am start %s ms)", run.package, time.monotonic() - run.t0,
-                  out.total_ms)
+        _log.info("%s running %.1f s after the drop (launching %.1f s, am start %s ms)", run.package,
+                  time.monotonic() - run.t0, time.monotonic() - started, out.total_ms)
 
     def _turn_for(self, run: _Run, epoch: int) -> None:
         """Pre-rotation (§7.6 step 2). A new epoch starts in the golden's portrait posture."""

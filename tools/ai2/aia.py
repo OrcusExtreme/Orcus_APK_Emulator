@@ -36,7 +36,7 @@ COMPONENT_VERSIONS = {           # YaVersion.<TYPE>_COMPONENT_VERSION
 # YAIL type of every designer property used here (the Java setter's type via ComponentProcessor.javaTypeToYailType).
 PROP_TYPES = {
     **dict.fromkeys(("AppName", "Title", "Theme", "ScreenOrientation", "Sizing", "VersionName", "Text", "Image",
-                     "Source", "Hint", "HomeUrl", "Language", "Action", "Picture"), "text"),
+                     "Source", "Hint", "HomeUrl", "Language", "Action", "Picture", "AndroidMinSdk"), "text"),
     **dict.fromkeys(("ActionBar", "Scrollable", "ShowListsAsJson", "MultiLine", "NumbersOnly", "UseLegacy"),
                     "boolean"),
     **dict.fromkeys(("Width", "Height", "FontSize", "BackgroundColor", "TextColor", "VersionCode", "TimeInterval",

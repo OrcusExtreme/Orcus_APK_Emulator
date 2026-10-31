@@ -119,6 +119,46 @@ def missing(sh: Sh, steps: tuple[tuple[str, str, str], ...] = PROVISION) -> list
     return [check for _, check, want in steps if want not in sh(check, 15).out]
 
 
+def framework_problem(sh: Sh) -> str | None:
+    """None while system_server runs and the package and power services answer.
+
+    A golden saved at a bad moment came back without them on every load: system_server killed by its Watchdog
+    and not restarted, `cmd package` Broken pipe, `dumpsys power` DEAD_OBJECT, `svc power stayon` hanging
+    (Phase 3a, 2026-10-30). adb and `echo ok` still worked, so the old checks passed it.
+    """
+    if not sh("pidof system_server", 5).out.strip():
+        return "system_server is not running"
+    r = sh("cmd package list packages android", 10)
+    if r.code != 0 or "package:android" not in r.out:
+        return f"package service: {_text(r)[:80] or 'no answer'}"
+    r = sh("dumpsys power | grep -m1 mWakefulness=", 10)
+    if "mWakefulness=" not in r.out:
+        return f"power service: {_text(r)[:80] or 'no answer'}"
+    return None
+
+
+def load_average(sh: Sh) -> float | None:
+    """The guest's 1-minute load average (logged; too slow to react to decide anything)."""
+    try:
+        return float(sh("cat /proc/loadavg", 5).out.split()[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def cpu_busy(sh: Sh, window_s: int = 2) -> float | None:
+    """Share of guest CPU time not idle over the next window_s seconds (from /proc/stat, 0..1)."""
+    out = sh(f"head -1 /proc/stat; sleep {window_s}; head -1 /proc/stat", window_s + 10).out.splitlines()
+    try:
+        a, b = ([int(v) for v in line.split()[1:]] for line in out[:2])
+    except ValueError:
+        return None
+    if len(a) < 4 or len(a) != len(b):
+        return None
+    total = sum(b) - sum(a)
+    idle = (b[3] + (b[4] if len(b) > 4 else 0)) - (a[3] + (a[4] if len(a) > 4 else 0))   # idle + iowait
+    return None if total <= 0 else max(0.0, min(1.0, 1 - idle / total))
+
+
 def set_markers(sh: Sh, provision_id: str) -> bool:
     a = sh("setprop debug.orcus.session ''", 10)
     b = sh(f"setprop debug.orcus.golden {provision_id}", 10)

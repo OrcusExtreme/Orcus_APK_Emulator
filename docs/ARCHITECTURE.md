@@ -449,7 +449,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 | `engine-supervisor` | engine.manager | 엔진 상태를 바꾸는 **유일한** 스레드다. 명령 큐(start/stop/reset/rebuild)와 주입된 `Clock`이 주는 1 s tick을 처리한다. 이 스레드에서 2 s를 넘는 블로킹 호출은 금지 |
 | `engine-worker` | engine | 오래 걸리는 단계를 cancel Event와 함께 실행하고 결과를 supervisor 큐로 보낸다: 부팅 대기, 준비 단계, Save/LoadSnapshot, 정지 |
 | `proc-wait` ×N | engine | `emulator.exe`·qemu 핸들을 기다리다 종료되면 supervisor 큐로 이벤트를 보낸다(직접 아무것도 바꾸지 않음) |
-| `adb-server-wait` | engine | adb 서버 핸들을 기다리다 종료되면 supervisor 큐로 이벤트를 보낸다. 재시작은 supervisor가 결정한다 |
+| `engine-adbwait` | engine | READY 동안 adb 서버 핸들을 기다리다 종료되면 supervisor 큐로 이벤트를 보낸다. 재시작은 supervisor가 결정하고 `engine-worker` 작업으로 한다(§5.5) |
 | `grpc-notify` | engine | `streamNotification`(부팅 완료, 화면 전원)을 받아 supervisor 큐로 보낸다 |
 | `frames` | device (콜백은 gui.frame_pump) | `streamScreenshot` 수신. 크기는 `Image.format.width/height`에서 읽는다(37.2.12는 `Image.width/height`를 항상 0으로 보낸다, S2). 데이터 길이가 크기와 맞지 않는 프레임만 버린다. QImage로 감싸고 필요하면 RGB32로 바꾼다. 1칸 우편함에 최신 프레임만 두고, 페인트가 대기 중이면 신호를 생략한다 |
 | `grpc-input` | device | `streamInputEvent`의 요청 제너레이터가 큐를 소비한다. 붙여넣기 순서(setClipboard → 대기 → Paste)도 여기서 보장한다 |
@@ -520,6 +520,7 @@ class HeadlessSession(SessionApi, Protocol):            # cli 전용: wait_ready
 |---|---|
 | adb 상태가 `device` | 재등록(§5.5) 후 10 s 동안 재시도 → FAILED(`ENGINE_ADB_LOST`) |
 | GOLDEN: `debug.orcus.golden` = provision id | 골든이 로드되지 않음 → STOPPING(rebuild, 한도 적용). 한도를 넘으면 FAILED(`ENGINE_GOLDEN_LOAD_FAILED`) |
+| GOLDEN: 프레임워크가 살아 있음(`provision.framework_problem`: `pidof system_server`, `cmd package list packages android`, `dumpsys power`의 `mWakefulness=`) **[3a 추가]** | 망가진 골든 → 위와 같이 재구축. Phase 3a에서 게스트가 바쁠 때 저장한 골든이 로드 뒤 system_server를 Watchdog으로 잃었는데 표식은 맞았다(§6.5 7a) |
 | host 모드: 렌더러가 host GPU | READY + 경고 `ENGINE_GPU_SOFTWARE`(배너 + [GPU 모드 바꾸기]) |
 | 에뮬레이터 로그에 `Windows Hypervisor Platform accelerator is operational`이 있음. `getStatus.vmConfig.hypervisorType`은 37.2.12에서 항상 UNKNOWN이라 쓰지 않는다(S0b) | FAILED(`PRE_WHPX_OFF`) |
 | 10 s 안에 크기(`format.width×height`)와 길이가 맞는 프레임이 옴. 스트림은 시작하자마자 현재 화면 1장을 보낸다(S2) | FAILED(`ENGINE_NO_FRAMES`) |
@@ -630,6 +631,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 15037을 우리가 띄우지 않은 adb가 쓰고 있으면 채택하지 않는다. 우리 서버가 없을 때 에뮬레이터 쪽에서 adb 서버를 스스로 띄우는데(S6 실측), 이 서버에는 `ADB_USB=0`·스캔 끄기·공유 키가 없다. 우리 Job 안의 그런 adb는 종료하고 우리 서버를 다시 띄운 뒤 재등록한다. Job 밖이면 다음 포트로 간다.
   - 재시작은 5분에 3회까지다. 넘으면 FAILED.
   - 최후 수단은 `adb connect 127.0.0.1:5641`이다. serial이 바뀌므로 `DeviceShell`을 갱신한다.
+  - **구현(3a):** READY 동안 `engine-adbwait`가 서버 핸들을 기다린다. 서버가 끝나면 supervisor가 경고 `ENGINE_ADB_LOST`를 알리고, worker 작업으로 서버를 다시 띄워 재등록한다. 돌아오면 경고를 거둔다. 실측: 서버를 죽이고 0.6 s 뒤 `emulator-5640`이 다시 `device`(§12.3 11). 최후 수단(`adb connect`)은 넣지 않았다.
 - **격리 테스트(양방향):**
   - 외부 5037 서버 목록에 `emulator-5640`이 보이지 않아야 한다.
   - 우리 서버 목록에는 USB 기기와 다른 에뮬레이터가 보이지 않아야 한다.
@@ -814,6 +816,8 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    - **4단계 명령이 하나라도 실패했거나 이 확인에서 하나라도 빠지면 저장하지 않고 실패로 끝낸다.** 기존 골든도 지우지 않는다. Phase 2에서 준비 세션이 부팅 7 s 뒤 사라졌는데 스크립트가 다음 세션에서 저장해, 로드 뒤 adb가 붙지 않는 골든이 생긴 적이 있다.
    - **이유(S4 실측):** 준비 세션(로캘 변경 → 프레임워크 재시작 직후)에서 저장한 골든은 로드할 때 게스트 시계가 저장 시각에 멈춰 있고, **로드 약 21 s 뒤 게스트 전체가 멈췄다**(adb·화면·logcat 모두. 3회 재현). 일반 세션에서 저장한 스냅샷은 4분 뒤 로드해도 시계가 맞고(−0.1 s) 90 s 넘게 멀쩡했다. 저장 방식(gRPC·콘솔)과 GPU 모드(host·host_hidden·software)는 원인이 아니었다.
    - 비용: 콜드 부팅 1회(약 25 s). 1회성 준비 전체는 약 90 s.
+   - **저장 전 대기와 확인 [3a 추가]:** RAM 속성·표식을 넣은 뒤 `/proc/stat`으로 게스트 CPU 사용률(2 s 창)을 재서 0.35 미만이 **2회 연속**이 될 때까지 기다린다(최대 180 s, 넘으면 로그에 남기고 진행). 그다음 `provision.framework_problem`(system_server·package·power 서비스)이 문제를 찾으면 저장하지 않고 실패로 끝낸다.
+     - **이유(Phase 3a 실측):** `-wipe-data` 뒤 첫 부팅의 게스트는 몇 분 동안 앱 컴파일로 바쁘다(load average 약 12). 그때 저장한 골든은 표식·설정 확인을 모두 통과했지만, 로드한 뒤 system_server가 Watchdog으로 죽어 `package`가 Broken pipe, `power`가 DEAD_OBJECT를 냈고 `svc power stayon`이 멈췄다. 그 상태에서 초기화하면 표식이 빈 값으로 보였다. 대기를 넣은 뒤: 68 s에 조용해짐(CPU 0.03), 재구축 전체 294 s, 초기화 2회 정상.
 8. **표식:**
    - `setprop debug.orcus.session ''`로 세션 nonce를 비운다(§6.7). `DeviceShell`이 argv 요소마다 따옴표 처리를 하므로 빈 값이 그대로 전달된다. 종료 코드도 확인한다.
    - `setprop debug.orcus.golden <provision_id>`를 설정한다.
@@ -823,10 +827,10 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
    2. `SnapshotService.SaveSnapshot("orcus_golden")`을 부르고 **응답의 `success`와 `err`를 확인한다.** 실패도 정상 응답으로 오기 때문이다(P).
    3. 실패하면 `adb -H 127.0.0.1 -P 15037 -s emulator-5640 emu avd snapshot save orcus_golden`로 저장한다.
    4. `ListSnapshots`에서 Compatible 또는 Loaded인지 확인한다.
-10. **검증 부팅:** `setVmState(SHUTDOWN)` → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식과 4단계 설정 확인 → **로드 30 s 뒤에도 adb가 답하는지 확인**(S4의 "로드 20–25 s 뒤 멈춤" 검사) → `provision.json` 기록 → READY. 실패하면 골든을 지우고 `ENGINE_PROVISION_FAILED`로 끝낸다.
-    - 실측(Phase 2, `-wipe-data`부터): 첫 부팅 92 s, 재시작 대기 9 s, 설정 약 10 s, 콜드 부팅 22 s, 저장 2 s, 검증 부팅 6 s → 약 3분 30초.
-    - UI 문구: "처음 준비하는 중 (약 3분) — 한 번만 합니다".
-    - 재구축이면 이유를 보여준다. 예: "그래픽 드라이버가 바뀌어 휴대폰을 다시 준비합니다 (약 3분)".
+10. **검증 부팅:** `setVmState(SHUTDOWN)` → GOLDEN 모드로 부팅 → SESSION_INIT에서 표식·프레임워크와 4단계 설정 확인 → **로드 60 s 뒤에도 adb가 답하고 `framework_problem`이 없는지 확인**(S4의 "로드 20–25 s 뒤 멈춤"과 system_server Watchdog의 60 s를 지나서. 3a에서 30 s → 60 s) → `provision.json` 기록 → READY. 실패하면 골든을 지우고 `ENGINE_PROVISION_FAILED`로 끝낸다.
+    - 실측(Phase 2, `-wipe-data`부터): 첫 부팅 92 s, 재시작 대기 9 s, 설정 약 10 s, 콜드 부팅 22 s, 저장 2 s, 검증 부팅 6 s → 약 3분 30초. 3a에서 7a 대기(약 70 s)와 검증 60 s가 더해져 **약 5분**(실측 294 s).
+    - UI 문구: "처음 준비하는 중 (약 5분) — 한 번만 합니다".
+    - 재구축이면 이유를 보여준다. 예: "그래픽 드라이버가 바뀌어 휴대폰을 다시 준비합니다 (약 5분)".
 
 ### 6.6 `session_init()` (매 부팅과 초기화 뒤, 멱등, 약 1 s)
 

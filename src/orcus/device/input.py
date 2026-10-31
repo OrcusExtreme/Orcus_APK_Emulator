@@ -3,6 +3,7 @@
 - Pointer: frame-normalized point + that frame's seq -> panel pixels (§9.2) -> MouseEvent. S7 showed the guest
   keeps a finger down until buttons=0 arrives, and a later "press" elsewhere is only a move of that finger, so
   release_all() sends the release whenever a button is held (focus loss, rotation, reconnect, epoch change).
+  A broken stream is not trusted to have lifted it either: a new stream starts with the release (§12.3 item 6).
 - Keys: always keypress (the default keydown never comes up). Long press = keydown, 700 ms, keyup.
 - Text: Korean and ASCII alike go through paste — setClipboard, 100 ms, the Paste key, in queue order
   (S8: Ctrl+V types 'ㅍ', and ASCII key events turn into jamo on the ko-KR Gboard).
@@ -28,6 +29,10 @@ PASTE_SETTLE_S = 0.1
 LONG_PRESS_S = 0.7
 
 _KP, _DOWN, _UP = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
+
+
+class _Restart(Exception):
+    """Ends the request iterator: gRPC fails the call and _pump opens a new stream."""
 
 
 class InputQueue:
@@ -74,6 +79,10 @@ class InputQueue:
         self._closed.set()
         self._thread.join(3)
 
+    def restart_stream(self) -> None:
+        """Drop the stream in queue order and open a new one, as after a broken connection (device test hook)."""
+        self._q.put(("restart", None))
+
     # grpc-input --------------------------------------------------------------------------------------------------
     def _pump(self) -> None:
         backoff = 0.2
@@ -85,11 +94,13 @@ class InputQueue:
                 if self._closed.is_set():
                     return
                 _log.warning("input stream broke (%s); reconnecting", e.code())
-                self._pressed = False   # the guest released with the stream, nothing to release
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 3.0)
 
     def _events(self) -> Iterator[ec.InputEvent]:
+        if self._pressed:   # the old stream may have left the finger down: lift it before anything else
+            self._pressed = False
+            yield self._mouse(*self._last, 0)
         while True:
             item = self._q.get()
             if item is None:
@@ -110,6 +121,8 @@ class InputQueue:
                     if self._pressed:
                         self._pressed = False
                         yield self._mouse(*self._last, 0)
+                case "restart":
+                    raise _Restart()
                 case "key":
                     name, long_press = payload
                     if long_press:

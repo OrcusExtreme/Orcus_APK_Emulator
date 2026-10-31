@@ -21,7 +21,7 @@ class GpuDialog(QDialog):
         self.s = session
         self.setWindowTitle("GPU 모드")
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("휴대폰 화면을 그리는 방법을 고르세요. 바꾸면 휴대폰을 다시 준비합니다(약 3분)."))
+        lay.addWidget(QLabel("휴대폰 화면을 그리는 방법을 고르세요. 바꾸면 휴대폰을 다시 준비합니다(약 5분)."))
         self.group = QButtonGroup(self)
         current = session.settings().engine.gpu_mode
         for i, (mode, name, about) in enumerate(CHOICES):
@@ -45,7 +45,7 @@ class GpuDialog(QDialog):
         change = {"engine.gpu_mode": mode.value}
         if self.s.preview_settings(change).needs_rebuild:
             answer = QMessageBox.question(self, "휴대폰 다시 준비",
-                                          "GPU 모드를 바꾸면 휴대폰을 다시 준비합니다(약 3분). 저장된 앱과 데이터는 "
+                                          "GPU 모드를 바꾸면 휴대폰을 다시 준비합니다(약 5분). 저장된 앱과 데이터는 "
                                           "지워집니다. 계속할까요?")
             if answer != QMessageBox.StandardButton.Yes:
                 return

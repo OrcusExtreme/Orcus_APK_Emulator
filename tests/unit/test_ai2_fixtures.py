@@ -129,6 +129,14 @@ def test_project_properties_are_ascii() -> None:
     text.encode("ascii")
 
 
+def test_min_sdk_is_set_on_screen1() -> None:
+    """The .aia import ignores project.properties' androidminsdk: only Screen1's AndroidMinSdk reaches the build."""
+    p = ALL["HelloPurrMin36"]
+    src = p.files(with_yail=False)
+    assert '"AndroidMinSdk":"36"' in src[f"{p.src_dir()}/Screen1.scm"].decode("utf-8")
+    assert "androidminsdk=36\n" in p.properties()
+
+
 def test_media_are_valid() -> None:
     import wave
 

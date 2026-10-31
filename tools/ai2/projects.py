@@ -276,8 +276,11 @@ def hello_purr_variant(name: str, **screen: str) -> Callable[[], Project]:
 
 
 def hello_purr_min36() -> Project:
-    p = hello_purr_variant("HelloPurrMin36")()
-    p.settings = {"androidminsdk": "36"}   # Project Properties > AndroidMinSdk (stored in project.properties)
+    # AndroidMinSdk is a Screen1 designer property (Project Properties > Publishing) kept in the project settings.
+    # The .aia import reads project.properties without `androidminsdk` (YoungAndroidSettingsBuilder only writes it),
+    # so it has to be on Screen1: a build of the properties-only .aia came out with minSdk 14.
+    p = hello_purr_variant("HelloPurrMin36", AndroidMinSdk="36")()
+    p.settings = {"androidminsdk": "36"}
     return p
 
 

@@ -7,6 +7,7 @@
 
 import os
 import shlex
+import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from orcus.contracts import CmdResult, EngineNotReady, ErrorCode, LogEntry
 from .seams import LineStream, ProcessHandle, Seams
 
 _log = log.get("engine.adb")
+SLOW_CMD_S = 10.0   # an adb or guest stall worth a log line (one launch took 22 s in the 3a acceptance run)
 
 
 def client(server_port: int, serial: str | None, *args: str) -> list[str]:
@@ -70,6 +72,14 @@ class AdbServer:
         except OSError as e:
             return f"{type(e).__name__}: {e}"
 
+    def wait(self, timeout_s: float) -> int | None:
+        """The server's exit code once it has ended; None while it runs (engine-adbwait, §4)."""
+        proc = self._proc
+        if proc is None:
+            time.sleep(timeout_s)
+            return None
+        return proc.wait(timeout_s)
+
     def recent_restarts(self, window_s: float = 300) -> int:
         now = self._seams.clock.monotonic()
         return sum(1 for t in self.restarts if now - t <= window_s)
@@ -114,7 +124,11 @@ class EpochShell:
 
     def _run(self, timeout_s: float, *args: str) -> CmdResult:
         self._guard(self.epoch)
-        return self._adb(client(self._port, self.serial, *args), timeout_s)
+        r = self._adb(client(self._port, self.serial, *args), timeout_s)
+        if r.elapsed_s >= SLOW_CMD_S or r.timed_out:
+            _log.warning("adb %s took %.1f s (code %d%s)", " ".join(args)[:160], r.elapsed_s, r.code,
+                         ", timed out" if r.timed_out else "")
+        return r
 
     def get_state(self) -> str:
         r = self._run(10, "get-state")

@@ -15,7 +15,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-RUNTIME_MODULES = ("PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", "grpc", "google.protobuf", "apkInspector")
+RUNTIME_MODULES = ("PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", "PySide6.QtNetwork", "grpc",
+                   "google.protobuf", "apkInspector",
+                   "orcus.gui.app")   # by name only (engine never imports gui): the whole window stack loads
 
 
 @dataclass

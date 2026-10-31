@@ -267,4 +267,5 @@ def test_window_wiring(qapp: QApplication, tmp_path: Path) -> None:
                           epoch=2, epoch_cause=EpochCause.CRASH_RESTART)
     w.on_engine(s.engine.st)
     assert list(w.banner_widgets) == [str(ErrorCode.ENGINE_GPU_SOFTWARE)] and len(s.dev.frames.started) == 2
+    assert w.toast.text() == window.CRASH_NOTICE[SessionMode.GOLDEN]   # B11: golden data went back to the start
     w.close()

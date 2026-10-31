@@ -58,7 +58,10 @@ PROVISION_LIMIT_S = 600.0
 SETTLE_BEFORE_SAVE_S = 10.0
 ADB_DEVICE_S = 10.0
 FRAME_CHECK_S = 10.0
-POST_LOAD_HEALTH_S = 30.0          # §6.5 step 10: adb must still answer 30 s after a load (S4 freeze)
+POST_LOAD_HEALTH_S = 60.0          # §6.5 step 10: after a load, past S4's 20-25 s freeze and the Watchdog's 60 s
+QUIET_BUSY = 0.35                  # 7a: save once guest CPU is below this busy share twice in a row...
+QUIET_WAIT_S = 180.0               # ...or after this long anyway (logged). A golden saved at load ~12 came
+                                   # back with system_server killed by its Watchdog (Phase 3a)
 STOP_GRACE_S, STOP_FAST_S = 5.0, 2.0
 CRASH_WINDOW_S = 300.0
 KEEPALIVE_FAILS = 3
@@ -141,6 +144,16 @@ class _ResetFailed(_Outcome):
 @dataclass
 class _Stopped(_Outcome):
     pass
+
+
+@dataclass
+class _AdbBack(_Outcome):
+    vm: _Vm
+
+
+@dataclass
+class _AdbGone(_Outcome):
+    error: OrcusError
 
 
 class _Abort(Exception):
@@ -403,6 +416,14 @@ class EngineManager:
             case "keepalive_lost":
                 if payload is self._vm and state == S.READY:
                     self._on_crash("gRPC keepalive failed 3 times")
+            case "adb_lost":
+                vm, adb = payload
+                cur = self._vm
+                if cur is not None and vm is cur and adb is self._adb and state == S.READY:
+                    _log.warning("private adb server ended; restarting it (§5.5)")
+                    self._warnings = (*self._warnings, ErrorCode.ENGINE_ADB_LOST)
+                    self._publish()
+                    self._run(lambda c: self._job_adb_back(cur, c))
             case _:
                 pass
 
@@ -507,6 +528,13 @@ class EngineManager:
                 self._fail(out.error)
             case _Stopped():
                 self._after_teardown()
+            case _AdbBack():
+                if out.vm is self._vm:
+                    self._warnings = tuple(w for w in self._warnings if w != ErrorCode.ENGINE_ADB_LOST)
+                    self._watch_adb(out.vm)
+                    self._publish()
+            case _AdbGone():
+                self._stopping(("fail", out.error))   # the READY VM is ours to tear down
             case _:
                 _log.warning("unknown outcome %s", out)
 
@@ -570,6 +598,31 @@ class EngineManager:
                         return
         threading.Thread(target=procwait, name="engine-procwait", daemon=True).start()
         threading.Thread(target=keepalive, name="engine-keepalive", daemon=True).start()
+        self._watch_adb(vm)
+
+    def _watch_adb(self, vm: _Vm) -> None:
+        """§4 adb-server-wait: our adb server ending while READY is reported; the supervisor decides."""
+        adb = self._adb
+        if adb is None:
+            return
+
+        def adbwait() -> None:
+            while not vm.done.is_set():
+                if adb.wait(0.5) is not None:
+                    if not vm.done.is_set():
+                        self._q.put(("adb_lost", (vm, adb)))
+                    return
+        threading.Thread(target=adbwait, name="engine-adbwait", daemon=True).start()
+
+    def _job_adb_back(self, vm: _Vm, cancel: threading.Event) -> _Outcome:
+        """Restart the private adb server (3 times per 5 minutes) and re-register the emulator (§5.5, S9)."""
+        try:
+            self._ensure_adb(vm.ports)
+            self._adb_device(vm, cancel)
+        except _Abort as a:
+            return _AdbGone(a.outcome.error) if isinstance(a.outcome, _Fail) else a.outcome
+        _log.info("private adb server back (pid %s)", self._adb.pid if self._adb else None)
+        return _AdbBack(vm)
 
     # --- worker -------------------------------------------------------------------------------------------------
     def _work(self) -> None:
@@ -796,6 +849,9 @@ class EngineManager:
             marker = sh.text("getprop debug.orcus.golden", 10)
             if marker != self._provision_id:
                 raise _Abort(_GoldenBad(f"golden marker {marker!r}, expected {self._provision_id!r}"))
+            problem = provision.framework_problem(sh)   # a golden that comes back without its framework
+            if problem is not None:
+                raise _Abort(_GoldenBad(f"after the load: {problem}"))
         try:
             log_text = vm.log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -823,7 +879,10 @@ class EngineManager:
             if vm.mode == args.LaunchMode.GOLDEN:
                 self._sleep(cancel, POST_LOAD_HEALTH_S - (self._clock.monotonic() - vm.booted_at))
                 if sh.text("echo ok", 10) != "ok":
-                    raise _Abort(_GoldenBad("adb stopped answering 30 s after the golden load"))
+                    raise _Abort(_GoldenBad(f"adb stopped answering {POST_LOAD_HEALTH_S:.0f} s after the load"))
+                problem = provision.framework_problem(sh)
+                if problem is not None:
+                    raise _Abort(_GoldenBad(f"{POST_LOAD_HEALTH_S:.0f} s after the load: {problem}"))
             snapshots.write(self._paths, self._verify)
             self._verify = None
         if self._factory is not None:
@@ -930,6 +989,23 @@ class EngineManager:
             ram = provision.apply_checked(vm.shell, self._clock, provision.RAM_PROPS, cancel)
             if any(v != "ok" for v in ram.values()) or not provision.set_markers(vm.shell, provision_id):
                 raise failed(str(ram))
+            step[0] = "quiet"   # first-boot compilation still running: wait for the guest to settle
+            quiet_start = self._clock.monotonic()
+            calm = 0
+            busy = provision.cpu_busy(vm.shell)
+            while self._clock.monotonic() - quiet_start < QUIET_WAIT_S:
+                self._check(cancel)
+                calm = calm + 1 if busy is not None and busy < QUIET_BUSY else 0
+                if calm >= 2 or busy is None:
+                    break
+                self._clock.sleep(1.0)
+                busy = provision.cpu_busy(vm.shell)
+            _log.info("guest %s before the save after %.0f s (cpu busy %s, load average %s)",
+                      "quiet" if calm >= 2 else "still busy", self._clock.monotonic() - quiet_start,
+                      None if busy is None else round(busy, 2), provision.load_average(vm.shell))
+            problem = provision.framework_problem(vm.shell)
+            if problem is not None:
+                raise failed(problem)
             step[0] = "save"
             snapshots.clear(self._paths)   # never point at a golden that is being replaced
             vm.snap.DeleteSnapshot(ss.SnapshotPackage(snapshot_id=GOLDEN_SNAPSHOT), timeout=60)

@@ -10,10 +10,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from orcus.common import log
 from orcus.contracts import DeviceShell, ErrorCode, Rotation
 
 from .inspect import LANDSCAPE, PORTRAIT
 
+_log = log.get("apk.launch")
 PID_WAIT_S = 5.0
 _EXACT = {"landscape": Rotation.LANDSCAPE, "reverseLandscape": Rotation.REVERSE_LANDSCAPE,
           "portrait": Rotation.PORTRAIT, "reversePortrait": Rotation.REVERSE_PORTRAIT}
@@ -69,7 +71,9 @@ def launch(shell: DeviceShell, package: str, launcher: str | None, *,
     if component is None:
         return LaunchOutcome(False, ErrorCode.APP_LAUNCH_NOT_FOUND, None, None, None, "no launcher activity")
     r = shell.shell(["am", "start", "-W", "-n", component], timeout_s=60)
-    if "Status: ok" not in r.out:
+    if "Status: ok" not in r.out:   # the retry below would hide this attempt and its time
+        _log.warning("am start -W %s: no 'Status: ok' after %.1f s: %s", component, r.elapsed_s,
+                     (r.out + r.err).strip()[-300:].replace("\n", " | "))
         again = resolve_launcher(shell, package)
         if again and again != component:
             component = again

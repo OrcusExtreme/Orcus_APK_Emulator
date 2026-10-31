@@ -105,6 +105,16 @@ def test_release_all_lifts_a_held_finger_once(fake: FakeEmulatorServer, session:
     assert mouse(fake) == [(360, 640, 1), (360, 640, 0)]
 
 
+def test_new_stream_lifts_a_finger_the_broken_one_held(fake: FakeEmulatorServer,
+                                                       session: GrpcDeviceSession) -> None:
+    session.input.pointer(PointerAt(0.25, 0.25, 0), True)
+    session._input.restart_stream()                    # broken mid-drag (§12.3 item 6)
+    session.input.pointer(PointerAt(0.75, 0.75, 0), True)
+    session.input.pointer(PointerAt(0.75, 0.75, 0), False)
+    until(lambda: len(mouse(fake)) == 4, 10)
+    assert mouse(fake) == [(180, 320, 1), (180, 320, 0), (540, 960, 1), (540, 960, 0)]
+
+
 def test_close_releases_a_held_finger(fake: FakeEmulatorServer) -> None:
     s = GrpcDeviceSession(DeviceEndpoint(f"localhost:{fake.port}", fake.token, "emulator-5640", 1))
     s.input.pointer(PointerAt(0.1, 0.1, 0), True)

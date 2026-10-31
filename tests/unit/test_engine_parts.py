@@ -35,6 +35,18 @@ class _Lines:
         self.closed = True
 
 
+def test_framework_problem_and_cpu_busy() -> None:
+    dev = FakeDevice()
+    sh = sh_for(dev)
+    assert provision.framework_problem(sh) is None
+    dev.framework_up = False
+    assert provision.framework_problem(sh) == "system_server is not running"
+    dev.busy = 0.25
+    busy = provision.cpu_busy(sh)
+    assert busy is not None and abs(busy - 0.25) < 0.01
+    assert provision.load_average(sh) == 0.4
+
+
 def test_adb_logcat_parses_threadtime_and_ends_the_process_on_cancel() -> None:
     lines = _Lines(["--------- beginning of main",
                     "10-30 19:30:01.123  4242  4242 E Form    : Form Screen1 ErrorOccurred, errorNumber = 601",

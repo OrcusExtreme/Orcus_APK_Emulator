@@ -163,6 +163,64 @@ def test_crash_restarts_once_then_fails(env: EngineEnv) -> None:
     assert st.error is not None and st.error.code == ErrorCode.ENGINE_CRASHED
 
 
+def test_golden_without_its_framework_is_rebuilt_once(env: EngineEnv) -> None:
+    """Phase 3a: a golden came back with system_server dead (package Broken pipe, power DEAD_OBJECT)."""
+    env.manager.start()
+    ready(env)
+    env.manager.stop()
+    wait_for(env, S.STOPPED)
+    env.device.dead_golden = True               # what is on disk now loads without its framework
+    env.procs.spawned.clear()
+    env.manager.start()
+    st = env.manager.wait_ready(60)
+    assert st.epoch_cause == EpochCause.REBUILD and env.device.framework_up
+    assert env.modes() == ["GOLDEN", "REBUILD", "COLD", "GOLDEN"]
+
+
+def test_framework_down_before_the_save_never_saves(env: EngineEnv) -> None:
+    env.device.kill_framework_on_clean_boot = True
+    env.manager.start()
+    wait_for(env, S.FAILED, timeout_s=60)
+    st = env.manager.status()
+    assert st.error is not None and st.error.code == ErrorCode.ENGINE_PROVISION_FAILED
+    assert "system_server" in st.error.detail and GOLDEN_SNAPSHOT not in env.fake.snapshots
+
+
+def test_save_waits_for_the_guest_to_quiet_down(env: EngineEnv) -> None:
+    env.device.busy = 0.9                        # first-boot compilation: the save waits (capped at 180 s)
+    env.manager.start()
+    st = env.manager.wait_ready(60)
+    samples = sum(c.startswith("head -1 /proc/stat") for c in env.device.commands)
+    assert st.state == S.READY and samples > 20  # waited the whole cap, then saved anyway
+    env.manager.stop()
+    wait_for(env, S.STOPPED)
+    env.device.busy = 0.1
+    env.device.commands.clear()
+    env.manager.rebuild("quiet guest")
+    env.manager.wait_ready(60, min_epoch=2)
+    assert sum(c.startswith("head -1 /proc/stat") for c in env.device.commands) == 2   # two calm samples
+
+
+def test_dead_adb_server_comes_back_while_ready(env: EngineEnv) -> None:
+    """§5.5/§12.3 item 11: our adb server dies -> banner, restart, re-registration; the phone stays READY."""
+    env.manager.start()
+    st = ready(env)
+    servers = [p for p, image in env.procs.procs.values() if image.endswith("adb.exe")]
+    assert len(servers) == 1
+    seen: list[tuple[ErrorCode, ...]] = []
+    env.manager.subscribe(lambda s: seen.append(s.warnings))
+    servers[0].kill()
+    end = time.monotonic() + 10
+    while time.monotonic() < end and not (seen and ErrorCode.ENGINE_ADB_LOST in seen[0]
+                                          and ErrorCode.ENGINE_ADB_LOST not in env.manager.status().warnings):
+        time.sleep(0.02)
+    now = env.manager.status()
+    assert ErrorCode.ENGINE_ADB_LOST in seen[0] and ErrorCode.ENGINE_ADB_LOST not in now.warnings
+    assert (now.state, now.epoch) == (S.READY, st.epoch)   # no restart of the phone
+    assert env.procs.adb_server_alive() and sum("nodaemon" in a for a in env.procs.spawned) == 2
+    assert env.manager.shell().shell(["echo", "ok"]).out.strip() == "ok"
+
+
 def test_wrong_golden_marker_rebuilds_once_then_fails(env: EngineEnv) -> None:
     env.manager.start()
     ready(env)

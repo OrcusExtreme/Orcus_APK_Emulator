@@ -65,6 +65,11 @@ class FakeDevice:
         self.drop_unflushed_on_power_off = True
         self.commands: list[str] = []
         self.lock = threading.Lock()
+        self.framework_up = True          # system_server alive, package and power services answer
+        self.dead_golden = False          # the saved golden comes back without its framework (Phase 3a)
+        self.kill_framework_on_clean_boot = False
+        self.load = 0.4                   # /proc/loadavg
+        self.busy = 0.1                   # share of CPU time not idle (/proc/stat)
 
     # lifecycle ------------------------------------------------------------------------------------------------
     def power_off(self) -> None:
@@ -80,14 +85,17 @@ class FakeDevice:
         self.restart_pending = change_locale is not None
         if change_locale:
             self.persist["persist.sys.locale"] = change_locale
+        self.framework_up = not (self.kill_framework_on_clean_boot and change_locale is None)
 
     def save_golden(self) -> None:
         self.golden_props = dict(self.props)
+        self.dead_golden = not self.framework_up
 
     def load_golden(self) -> bool:
         if self.golden_props is None:
             return False
         self.props = dict(self.golden_props)
+        self.framework_up = not self.dead_golden
         return True
 
     # shell ----------------------------------------------------------------------------------------------------
@@ -150,6 +158,18 @@ class FakeDevice:
         if cmd == "cmd bluetooth_manager disable":
             self._put_setting("global", "bluetooth_on", "0")
             return 0, ""
+        if cmd == "pidof system_server":
+            return (0, "691") if self.framework_up else (1, "")
+        if cmd == "cmd package list packages android":
+            return (0, "package:android\npackage:com.android.systemui") if self.framework_up else \
+                (224, "cmd: Failure calling service package: Broken pipe (32)")
+        if cmd == "dumpsys power | grep -m1 mWakefulness=":
+            return (0, "  mWakefulness=Awake") if self.framework_up else (0, "")
+        if cmd == "cat /proc/loadavg":
+            return 0, f"{self.load:.2f} 0.50 0.40 1/300 1234"
+        if cmd.startswith("head -1 /proc/stat; sleep"):
+            busy = int(1000 * self.busy)
+            return 0, f"cpu  100 0 100 800 0 0 0 0 0 0\ncpu  {100 + busy} 0 100 {800 + 1000 - busy} 0 0 0 0 0 0"
         if cmd == "date +%s":
             return 0, str(int(time.time()))
         if cmd == "echo ok":

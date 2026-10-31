@@ -5,7 +5,9 @@
 3. Run the packaged checks: orcus-cli.exe selftest, OrcusAPK.exe --selftest, and with --boot-check also
    OrcusAPK.exe --boot-check (host and host_hidden cold boots).
 
-Usage: py tools/dev.py build [--boot-check]
+4. With --gui-check: start the packaged window, wait for READY, kill it, and check no SDK process is left.
+
+Usage: py tools/dev.py build [--boot-check] [--gui-check]
 """
 
 import json
@@ -18,6 +20,10 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 import devenv  # noqa: E402
 
+sys.path.insert(0, str(devenv.REPO / "src"))
+from orcus.common import winjob  # noqa: E402
+
+ORCUS_ROOT = Path(r"D:\OrcusAPK")
 SRC_COPY = devenv.DEV_ROOT / "src-copy"
 WORK = devenv.DEV_ROOT / "build"
 DIST = devenv.DEV_ROOT / "dist"
@@ -31,9 +37,10 @@ src = {src!r}
 datas = [({lock!r}, "."), ({notice!r}, "."), ({manifest!r}, "orcus/emugrpc/generated")]
 for dist in {dists!r}:
     datas += copy_metadata(dist)
-excludes = ["tkinter", "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtOpenGL"]
-# --selftest imports these by name; until the Phase 3a GUI imports them for real, static analysis misses them
-hiddenimports = ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", "apkInspector"]
+excludes = ["tkinter", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtOpenGL"]
+# --selftest imports these by name (the GUI imports them for real too; QtNetwork = single-instance hand-over)
+hiddenimports = ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets", "PySide6.QtNetwork", "apkInspector",
+                 "orcus.gui.app"]
 
 
 def analysis(script):
@@ -63,7 +70,7 @@ def folder_mb(path: Path) -> float:
 
 
 def newest(pattern: str, since: float) -> Path | None:
-    logs = Path(r"D:\OrcusAPK\logs")
+    logs = ORCUS_ROOT / "logs"
     files = [p for p in logs.glob(pattern) if p.stat().st_mtime >= since]
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
@@ -105,10 +112,45 @@ def main() -> int:
             result["gui_boot_check"] = [{k: r[k] for k in ("gpu", "ok", "hypervisor", "t_discovery_s", "t_status_s",
                                                            "stop_s", "leftovers", "error")}
                                         for r in json.loads(report.read_text(encoding="utf-8"))]
+    window: dict[str, object] = {"ok": True}
+    if "--gui-check" in sys.argv:
+        window = result["gui_window"] = gui_check()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     ok = (result["cli_selftest_exit"] == 0 and result["gui_selftest_exit"] == 0
-          and result.get("gui_boot_check_exit", 0) == 0)
+          and result.get("gui_boot_check_exit", 0) == 0 and window.get("ok") is True)
     return 0 if ok else 1
+
+
+def sdk_processes() -> list[str]:
+    """By image path, as A5: Google Drive for desktop runs its own crashpad_handler.exe."""
+    return sorted({Path(image).name for _pid, image in winjob.processes_under(ORCUS_ROOT / "sdk")})
+
+
+def gui_check() -> dict[str, object]:
+    """The packaged window for real: start OrcusAPK.exe, wait for READY through the read-only `engine status`,
+    then kill it the way a crash would and check that its Job took every SDK process along (§1.2)."""
+    if sdk_processes():
+        return {"ok": False, "error": f"SDK processes already running: {sdk_processes()}"}
+    started = time.monotonic()
+    gui = subprocess.Popen([str(APP / "OrcusAPK.exe")])
+    ready_s = None
+    status = ""
+    while time.monotonic() - started < 600:
+        status = subprocess.run([str(APP / "orcus-cli.exe"), "engine", "status"], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60).stdout
+        if "준비됨" in status:
+            ready_s = round(time.monotonic() - started, 1)
+            break
+        if gui.poll() is not None:
+            break
+        time.sleep(2)
+    running = sdk_processes()
+    gui.kill()
+    gui.wait(10)
+    time.sleep(5)
+    left = sdk_processes()
+    return {"ok": ready_s is not None and not left, "ready_s": ready_s, "status": status.strip().splitlines()[-1:],
+            "sdk_while_running": running, "sdk_after_kill": left}
 
 
 if __name__ == "__main__":
