@@ -3,14 +3,14 @@
 Pointer positions go out as normalized coordinates inside the frame on screen plus that frame's seq; the device
 package maps them to panel pixels with that frame's rotation (§9.2). A held finger is always lifted (§9.3): on
 release, when the pointer leaves the screen (at the edge), on focus loss, and when the frame rotation changes.
-The wheel scrolls (a real scroll event, 3b). [P4] Ctrl+drag is a two-finger pinch: the second finger mirrors the
-pointer through the screen centre (as in the emulator's own window), so dragging out spreads and in pinches.
-[P4] When the app vibrates, a pill at the top says so: the PC cannot shake.
+The wheel scrolls (a real scroll event). Ctrl+drag is a two-finger pinch: the second finger mirrors the pointer
+through the screen centre (as in the emulator's own window), so dragging out spreads and in pinches. When the app
+vibrates, a pill at the top says so: the PC cannot shake.
 
-Korean straight on the screen (§9.6, moved up from P4 at the user's request in 3b): the screen takes the Windows
-IME, which composes here. A finished syllable comes as the event's commit string and goes to the phone by paste,
-in the queue with the keys; the syllable still being composed shows in a bubble near the bottom, where the IME's
-candidate window opens too. The phone cannot show half a syllable: its own keyboard is not involved.
+Korean straight on the screen (§9.6): the screen takes the Windows IME, which composes here. A finished syllable
+comes as the event's commit string and goes to the phone by paste, in the queue with the keys; the syllable still
+being composed shows in a bubble near the bottom, where the IME's candidate window opens too. The phone cannot
+show half a syllable: its own keyboard is not involved.
 """
 
 import time
@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QWidget
 
+from orcus.common.i18n import t
 from orcus.contracts import HwKey, InputSettings, InputSink, PointerAt, Rotation
 
 from .frame_pump import FramePump, Shown
@@ -62,7 +63,7 @@ class ScreenView(QWidget):
         self._shown: Shown | None = None
         self._pressed = False
         self._last_at: PointerAt | None = None
-        self._pinch: tuple[PointerAt, PointerAt] | None = None   # [P4] two fingers down (Ctrl+drag)
+        self._pinch: tuple[PointerAt, PointerAt] | None = None   # two fingers down (Ctrl+drag)
         self._paints: deque[float] = deque(maxlen=60)
         self.overlay = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -109,8 +110,8 @@ class ScreenView(QWidget):
         self.update()
 
     def buzz(self, ms: int) -> None:
-        """[P4] The app vibrated for `ms` (-1: still going): the pill stays that long, at least 1.2 s."""
-        self.buzzing.setText("진동" if ms < 0 else f"진동 {ms / 1000:.1f}초")
+        """The app vibrated for `ms` (-1: still going): the pill stays that long, at least 1.2 s."""
+        self.buzzing.setText(t("진동") if ms < 0 else t("진동 {s:.1f}초", s=ms / 1000))
         self.buzzing.adjustSize()
         self.buzzing.move((self.width() - self.buzzing.width()) // 2, 12)
         self.buzzing.show()

@@ -5,15 +5,15 @@
   release_all() sends the release whenever a button is held (focus loss, rotation, reconnect, epoch change).
   A broken stream is not trusted to have lifted it either: a new stream starts with the release (§12.3 item 6).
 - Only the current stream takes from the queue: gRPC keeps pulling a broken call's request iterator once more,
-  and that pull swallowed the first input after a reconnect (3a review).
+  and that pull would swallow the first input after a reconnect.
 - Keys: always keypress (the default keydown never comes up). Long press = keydown, 700 ms, keyup.
 - Text: Korean and ASCII alike go through paste — setClipboard, 100 ms, the Paste key, in queue order
   (S8: Ctrl+V types 'ㅍ', and ASCII key events turn into jamo on the ko-KR Gboard). Pastes waiting in the queue
-  go as one, and the next setClipboard waits 100 ms after a Paste: fast typing came out of order (3a review).
+  go as one, and the next setClipboard waits 100 ms after a Paste, or fast typing comes out of order.
 - Wheel: the guest has no wheel device and gRPC injectWheel does not scroll (S7). `input mouse scroll` does: it
-  injects ACTION_SCROLL, which lists and scrollable screens take and a Canvas ignores (3b). It needs adb, so the
+  injects ACTION_SCROLL, which lists and scrollable screens take and a Canvas ignores. It needs adb, so the
   app injects the sink; notches add up on their own thread while one command (~60 ms) runs.
-- [P4] Several fingers (a pinch): TouchEvent, one Touch per finger with ids 0..n-1, in the same panel pixels as
+- Several fingers (a pinch): TouchEvent, one Touch per finger with ids 0..n-1, in the same panel pixels as
   the mouse; pressure 0 lifts a finger (the emulator keeps it down otherwise). The mouse finger and the touch
   fingers are never down together: whichever comes lifts the other first. Lifted like the mouse finger on
   release_all, at a new stream and at the end.
@@ -35,9 +35,9 @@ from .rotation import to_panel
 
 _log = log.get("device.input")
 PASTE_SETTLE_S = 0.1
-PASTE_MAX = 64 * 1024   # characters; more blocked taps behind it and flooded a text box (3a review)
+PASTE_MAX = 64 * 1024   # characters; more would block taps behind it and flood a text box
 LONG_PRESS_S = 0.7
-WHEEL_NOTCH = 120       # Qt angleDelta units per notch; one notch = VSCROLL 1 = 128 px in a ScrollView (3b)
+WHEEL_NOTCH = 120       # Qt angleDelta units per notch; one notch = VSCROLL 1 = 128 px in a ScrollView
 TOUCH_PRESSURE = 512    # any non-zero value is a finger down (0..1024)
 
 _KP, _DOWN, _UP = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
@@ -133,7 +133,7 @@ class InputQueue:
         self.paste_text(text)   # key events become jamo with the Korean keyboard (S8)
 
     def paste_text(self, text: str) -> None:
-        if len(text) > PASTE_MAX:   # a huge clipboard blocked the input queue for seconds and flooded the guest (3a)
+        if len(text) > PASTE_MAX:   # a huge clipboard would block the input queue for seconds and flood the guest
             _log.info("paste cut from %d to %d characters", len(text), PASTE_MAX)
             text = text[:PASTE_MAX]
         if text:

@@ -1,5 +1,6 @@
-"""Phase 4a extensions on the real phone (plan.md §3 Phase 4 item 3): light, proximity, battery, an incoming text
-and call, two fingers, the vibration indicator. The App Inventor events are read off OrcusWorld's labels.
+"""Extensions on the real phone: light, proximity, battery, an incoming text and call, two fingers, the vibration
+indicator, dropped pictures and sounds, the installed-app list and the camera picture. The App Inventor events are
+read off OrcusWorld's labels.
 
 Run: py tools/dev.py test -m device tests/device/test_extensions_4a.py -s
 Needs D:\\OrcusDev\\fixtures\\OrcusWorld.apk (py tools/ai2/build_fixtures.py --build OrcusWorld) and HelloPurr.
@@ -76,7 +77,7 @@ def wait(ph: Phone, pred: Callable[[], bool], timeout_s: float, what: str) -> No
 
 
 @pytest.mark.timeout(600)
-def test_p4_light_and_proximity_reach_the_app(ph: Phone, world: str) -> None:
+def test_light_and_proximity_reach_the_app(ph: Phone, world: str) -> None:
     c = controls(ph)
     t = time.monotonic()
     c.set_light(1234.0)
@@ -88,13 +89,13 @@ def test_p4_light_and_proximity_reach_the_app(ph: Phone, world: str) -> None:
     until(lambda: label(ph, world, "near") == "near 1.0", 15, "ProximityChanged 1")
     c.set_light(0.0)
     until(lambda: label(ph, world, "light") == "light 0", 15, "LightChanged 0")
-    result("P4 light and proximity", light_changed_within_s=round(light_s, 1))
+    result("light and proximity", light_changed_within_s=round(light_s, 1))
 
 
 @pytest.mark.timeout(300)
-def test_p4_battery_level_and_charger_and_systemui_stays_up(ph: Phone) -> None:
-    """Unplugged, not below 21 %: at 20 % the image's SystemUI crashed (Extreme Battery Saver's provider is missing,
-    4a); charging, any level."""
+def test_battery_level_and_charger_and_systemui_stays_up(ph: Phone) -> None:
+    """Unplugged, not below 21 %: at 20 % the image's SystemUI crashed (Extreme Battery Saver's provider is missing);
+    charging, any level."""
     c = controls(ph)
     sysui = ph.sh("pidof", "com.android.systemui").strip()
     c.set_battery(15, False)
@@ -111,7 +112,7 @@ def test_p4_battery_level_and_charger_and_systemui_stays_up(ph: Phone) -> None:
 
 
 @pytest.mark.timeout(600)
-def test_p4_a_text_reaches_texting_and_the_inbox(ph: Phone, world: str) -> None:
+def test_a_text_reaches_texting_and_the_inbox(ph: Phone, world: str) -> None:
     text = "안녕 Orcus 문자"
     t = time.monotonic()
     mark = len(ph.log)
@@ -128,11 +129,11 @@ def test_p4_a_text_reaches_texting_and_the_inbox(ph: Phone, world: str) -> None:
     assert digits(got).endswith(SENDER[1:]), got
     inbox = ph.sh("content", "query", "--uri", "content://sms/inbox", "--projection", "address:body")
     assert text in inbox
-    result("P4 text", message_received_within_s=round(time.monotonic() - t, 1), label=got)
+    result("text", message_received_within_s=round(time.monotonic() - t, 1), label=got)
 
 
 @pytest.mark.timeout(600)
-def test_p4_an_incoming_call_rings_in_phonecall_and_ends_missed(ph: Phone, world: str) -> None:
+def test_an_incoming_call_rings_in_phonecall_and_ends_missed(ph: Phone, world: str) -> None:
     c = controls(ph)
     c.call_in(CALLER)
     until(lambda: "mCallState=1" in ph.sh("dumpsys", "telephony.registry"), 20, "ringing")
@@ -143,7 +144,7 @@ def test_p4_an_incoming_call_rings_in_phonecall_and_ends_missed(ph: Phone, world
     started, ended = label(ph, world, "call"), label(ph, world, "callend")
     assert started is not None and started.startswith("call 1 ") and digits(started).endswith(CALLER[1:]), started
     assert digits(ended).endswith(CALLER[1:]), ended
-    result("P4 call", started=started, ended=ended)
+    result("call", started=started, ended=ended)
 
 
 def at(x: float, y: float) -> PointerAt:
@@ -151,7 +152,7 @@ def at(x: float, y: float) -> PointerAt:
 
 
 @pytest.mark.timeout(600)
-def test_p4_two_fingers_spread_and_pinch_in_a_web_page(ph: Phone, world: str) -> None:
+def test_two_fingers_spread_and_pinch_in_a_web_page(ph: Phone, world: str) -> None:
     web = next(n for n in ph.dump(world) if n.cls == "android.webkit.WebView")
     cx, cy = web.center
     dev = ph.s.device()
@@ -170,11 +171,11 @@ def test_p4_two_fingers_spread_and_pinch_in_a_web_page(ph: Phone, world: str) ->
     wait(ph, lambda: label(ph, world, "pinch") != f"pinch 2 {spread:.2f}", 15, "pinched")
     pinched = float((label(ph, world, "pinch") or "0 0 0").split()[2])
     assert spread > 3.0 and pinched < 0.4, (spread, pinched)
-    result("P4 two fingers", spread=spread, pinched=pinched)
+    result("two fingers", spread=spread, pinched=pinched)
 
 
 @pytest.mark.timeout(600)
-def test_p4_a_vibration_of_the_app_is_reported(ph: Phone) -> None:
+def test_a_vibration_of_the_app_is_reported(ph: Phone) -> None:
     got: list[tuple[float, int]] = []
     unsubscribe = ph.s.apps.subscribe_vibration(lambda ms: got.append((time.monotonic(), ms)))
     try:
@@ -190,13 +191,13 @@ def test_p4_a_vibration_of_the_app_is_reported(ph: Phone) -> None:
         wait(ph, lambda: bool(got), 10, "vibration reported")
         time.sleep(3.0)
         assert len(got) == 1, got                 # running, then listed as ended: one vibration
-        result("P4 vibration", reported_after_s=round(got[0][0] - t, 1), ms=got[0][1])
+        result("vibration", reported_after_s=round(got[0][0] - t, 1), ms=got[0][1])
     finally:
         unsubscribe()
 
 
 @pytest.mark.timeout(300)
-def test_p4_dropped_pictures_and_sounds_are_in_the_phones_media(ph: Phone, tmp_path: Path) -> None:
+def test_dropped_pictures_and_sounds_are_in_the_phones_media(ph: Phone, tmp_path: Path) -> None:
     """Through the window's path (open_paths): staged, pushed under the dropped names, listed by MediaStore."""
     photo, sound = tmp_path / "고양이 사진.png", tmp_path / "야옹 소리.wav"
     photo.write_bytes(projects.kitty_png())   # the fixtures' own drawing and sound (tools/ai2)
@@ -214,13 +215,13 @@ def test_p4_dropped_pictures_and_sounds_are_in_the_phones_media(ph: Phone, tmp_p
         audio = ph.sh("content", "query", "--uri", "content://media/external/audio/media", "--projection",
                       "_display_name")
         assert "고양이 사진.png" in images and "야옹 소리.wav" in audio
-        result("P4 dropped media", both_in_s=round(time.monotonic() - t, 1))
+        result("dropped media", both_in_s=round(time.monotonic() - t, 1))
     finally:
         unsubscribe()
 
 
 @pytest.mark.timeout(300)
-def test_p4_an_installed_app_runs_again_from_the_list(ph: Phone) -> None:
+def test_an_installed_app_runs_again_from_the_list(ph: Phone) -> None:
     """[App] tab: the list has the apps put in the phone; [Run] pulls the APK and goes the usual way."""
     lists: list[tuple[InstalledApp, ...]] = []
     unsubscribe = ph.s.apps.subscribe_apps(lists.append)
@@ -235,7 +236,7 @@ def test_p4_an_installed_app_runs_again_from_the_list(ph: Phone) -> None:
         ph.s.apps.run_installed(pkg)
         again = ph.wait(lambda e: e.stage is RunStage.RUNNING and e.info is not None and e.info.package == pkg, m, 60)
         assert again.run_id != ev.run_id and "INSTALLING" not in ph.stages(again.run_id, m)   # same file: no install
-        result("P4 installed apps", listed=names, run_again_s=round(time.monotonic() - t, 1))
+        result("installed apps", listed=names, run_again_s=round(time.monotonic() - t, 1))
     finally:
         unsubscribe()
 
@@ -260,7 +261,7 @@ def is_red(rgb: tuple[int, int, int]) -> bool:
 
 
 @pytest.mark.timeout(300)
-def test_p4_the_camera_shows_the_chosen_picture_and_a_new_one_when_reopened(ph: Phone) -> None:
+def test_the_camera_shows_the_chosen_picture_and_a_new_one_when_reopened(ph: Phone) -> None:
     """[Sensors] > Camera: the camera app (what Camera.TakePicture opens) shows the picture; a new one once reopened."""
     blue = projects._png(320, 240, lambda x, y: (20, 60, 230, 255))   # noqa: SLF001
     red = projects._png(320, 240, lambda x, y: (230, 30, 30, 255))    # noqa: SLF001
@@ -272,7 +273,7 @@ def test_p4_the_camera_shows_the_chosen_picture_and_a_new_one_when_reopened(ph: 
         ph.sh("am", "force-stop", "com.android.camera2")
         ph.sh("am", "start", "-a", "android.media.action.IMAGE_CAPTURE")
         until(lambda: is_red(camera_center(ph)), 20, "red once reopened")
-        result("P4 camera picture", blue_then_red="ok")
+        result("camera picture", blue_then_red="ok")
     finally:
         ph.s.set_camera_image(None)
         ph.sh("am", "force-stop", "com.android.camera2")

@@ -31,16 +31,16 @@ class BearerAuth(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterce
         return _CallDetails(details.method, details.timeout, metadata, details.credentials,
                             getattr(details, "wait_for_ready", None), getattr(details, "compression", None))
 
-    def intercept_unary_unary(self, continuation, client_call_details, request):   # type: ignore[no-untyped-def]
+    def intercept_unary_unary(self, continuation, client_call_details, request):
         return continuation(self._with_token(client_call_details), request)
 
-    def intercept_unary_stream(self, continuation, client_call_details, request):   # type: ignore[no-untyped-def]
+    def intercept_unary_stream(self, continuation, client_call_details, request):
         return continuation(self._with_token(client_call_details), request)
 
-    def intercept_stream_unary(self, continuation, client_call_details, request_iterator):   # type: ignore[no-untyped-def]
+    def intercept_stream_unary(self, continuation, client_call_details, request_iterator):
         return continuation(self._with_token(client_call_details), request_iterator)
 
-    def intercept_stream_stream(self, continuation, client_call_details, request_iterator):   # type: ignore[no-untyped-def]
+    def intercept_stream_stream(self, continuation, client_call_details, request_iterator):
         return continuation(self._with_token(client_call_details), request_iterator)
 
 

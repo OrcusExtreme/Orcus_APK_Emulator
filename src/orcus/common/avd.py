@@ -37,7 +37,7 @@ def config_ini_text(engine: EngineSettings) -> str:
         f"hw.cpu.ncore={engine.cores}",
         f"disk.dataPartition.size={USERDATA_GIB}G",
         "hw.keyboard=yes",
-        "hw.mainKeys=yes",               # hides the guest nav bar (D7); bezel keys send Back/Home/Recents
+        "hw.mainKeys=yes",               # the guest shows its nav bar anyway (S7); bezel keys send Back/Home/Recents
         "hw.gpu.enabled=yes",
         "hw.gpu.mode=host",              # the command line -gpu decides the real mode
         "hw.audioInput=yes",

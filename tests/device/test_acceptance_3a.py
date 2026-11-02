@@ -1,11 +1,12 @@
-"""Phase 3a acceptance on the real phone (plan.md §3: B1, B2, B4, B8, B11; ARCHITECTURE.md §12.3 items 6, 10, 11, 12, 15).
+"""Acceptance on the real phone: B1, B2, B4, B8, B11 (plan.md §3) and ARCHITECTURE.md §12.3 items 6, 10, 11, 12, 15.
 B12 is test_apk_real.py; B7, B9 and the packaging smoke need the window and are scripted separately.
 
 Run: py tools/dev.py test -m device tests/device/test_acceptance_3a.py -s
 Needs D:\\OrcusDev\\fixtures: HelloPurr, TalkToMe, OrcusProbe, PaintPot, BallBounce, MoleMash, HelloPurrKo,
 HelloPurrLand, HelloPurrMin36 (built in the App Inventor web IDE). The Drive-folder test runs only with
-ORCUS_DRIVE_DIR set to a Google Drive folder: it uploads a copy there and deletes it (it lands in Drive's trash). The GPU test rebuilds the phone twice (software, then host):
-about 7 minutes. Lines starting with RESULT are the measurements for plan.md §4.
+ORCUS_DRIVE_DIR set to a Google Drive folder: it uploads a copy there and deletes it (it lands in Drive's trash).
+The GPU test rebuilds the phone twice (software, then host): about 7 minutes. Lines starting with RESULT are the
+measurements for plan.md §4.
 """
 
 import json
@@ -286,7 +287,7 @@ def test_b2_paintpot_line_latency_and_frame_age(ph: Phone) -> None:
 @pytest.mark.timeout(300)
 def test_b2_ballbounce_follows_the_mouse(ph: Phone) -> None:
     speeds: list[float] = []
-    for i, seconds in enumerate((0.25, 0.08)):   # the same 240 px at ~1,000 then ~3,000 px/s (0.6 s was no fling)
+    for i, seconds in enumerate((0.25, 0.08)):   # the same 240 px at ~1,000 then ~3,000 px/s (0.6 s is no fling)
         if i == 0:
             ph.run(BALL, RunPolicy.FRESH_APP)
         else:

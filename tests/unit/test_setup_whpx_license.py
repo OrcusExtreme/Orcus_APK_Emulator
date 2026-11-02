@@ -40,8 +40,8 @@ LT2 = LicenseText("android-sdk-license", "text v2", "sha-v2", ("platform-tools",
 def test_license_records(tmp_path: Path) -> None:
     p = OrcusPaths(tmp_path)
     assert license.pending(license.load_records(p), [LT]) == [LT]
-    rec = license.record_acceptance(p, LT, r"LAB\knuser")
-    assert rec.accepted_by == r"LAB\knuser" and rec.packages == LT.packages
+    rec = license.record_acceptance(p, LT, r"LAB\student1")
+    assert rec.accepted_by == r"LAB\student1" and rec.packages == LT.packages
     records = license.load_records(p)
     assert license.is_accepted(records, LT) and license.pending(records, [LT]) == []
     assert license.covers(records, ["platform-tools", "emulator"])

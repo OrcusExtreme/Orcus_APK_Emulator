@@ -44,7 +44,7 @@ class _TokenCheck(grpc.ServerInterceptor):
     def __init__(self, token: str) -> None:
         self._expected = f"Bearer {token}"
 
-    def intercept_service(self, continuation, handler_call_details):   # type: ignore[no-untyped-def]
+    def intercept_service(self, continuation, handler_call_details):
         handler = continuation(handler_call_details)
         metadata = dict(handler_call_details.invocation_metadata or ())
         if handler is None or metadata.get("authorization") == self._expected:
@@ -110,13 +110,13 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
         self.f.record("getScreenshot")
         return self._frame(request)
 
-    def streamScreenshot(self, request: ec.ImageFormat, context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
+    def streamScreenshot(self, request: ec.ImageFormat, context: grpc.ServicerContext):
         self.f.record("streamScreenshot", (request.width, request.height))
         while context.is_active() and not self.f.stopping.is_set():
             yield self._frame(request)
             time.sleep(1 / self.f.fps)
 
-    def streamInputEvent(self, request_iterator, context: grpc.ServicerContext) -> Empty:   # type: ignore[no-untyped-def]
+    def streamInputEvent(self, request_iterator, context: grpc.ServicerContext) -> Empty:
         self.f.record("streamInputEvent")
         for event in request_iterator:
             self.f.input_events.append(event)
@@ -191,20 +191,20 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
         self.f.record("sendPhone", (request.operation, request.number))
         return ec.PhoneResponse(response=ec.PhoneResponse.OK)
 
-    def streamNotification(self, request: Empty, context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
+    def streamNotification(self, request: Empty, context: grpc.ServicerContext):
         self.f.record("streamNotification")
         if self.f.booted:
             yield ec.Notification(booted=ec.BootCompletedNotification())
         yield from self._drain(self.f.notifications, context)
 
-    def streamLogcat(self, request: ec.LogMessage, context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
+    def streamLogcat(self, request: ec.LogMessage, context: grpc.ServicerContext):
         self.f.record("streamLogcat")
         for item in self._drain(self.f.logcat, context):
             # str = threadtime text, as the real Text mode sends it in `contents` (S5: one entry per message,
-            # no newline); entries are kept for older tests, the real Parsed mode sends nothing
+            # no newline); a LogcatEntry goes in `entries`, though the real Parsed mode sends nothing
             yield ec.LogMessage(contents=item) if isinstance(item, str) else ec.LogMessage(entries=[item])
 
-    def _drain(self, q: "queue.Queue[Any]", context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
+    def _drain(self, q: "queue.Queue[Any]", context: grpc.ServicerContext):
         while context.is_active() and not self.f.stopping.is_set():
             try:
                 yield q.get(timeout=0.05)
@@ -271,7 +271,7 @@ class FakeEmulatorServer:
         self.sensors: dict[int, ec.SensorValue] = {}
         self.physical: list[ec.PhysicalModelValue] = []
         P = ec.PhysicalModelValue   # noqa: N806
-        # what getPhysicalModel answers; the real golden's rotation is [-4.75, 0, 0] (P4)
+        # what getPhysicalModel answers; the real golden's rotation is [-4.75, 0, 0]
         self.models: dict[int, list[float]] = {P.ROTATION: [0.0, 0.0, 0.0], P.LIGHT: [0.0], P.PROXIMITY: [1.0]}
         self.battery = ec.BatteryState(hasBattery=True, isPresent=True, charger=ec.BatteryState.AC, chargeLevel=100,
                                        health=ec.BatteryState.GOOD, status=ec.BatteryState.CHARGING)

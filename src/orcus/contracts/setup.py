@@ -1,4 +1,4 @@
-"""Setup surface shared by `orcus-cli setup` and the [P4] GUI wizard."""
+"""Setup surface shared by `orcus-cli setup` and the GUI wizard."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -6,6 +6,8 @@ from enum import StrEnum, auto
 from typing import Protocol
 
 from .errors import OrcusError
+
+SETUP_FREE_GIB = 24   # free space setup needs: the downloads and the unpacked files side by side
 
 
 class SetupStep(StrEnum):
@@ -31,6 +33,7 @@ class SetupEvent:
     rate_bps: float
     eta_s: float | None
     problem: OrcusError | None
+    can_continue: bool = False   # failed, and the worker waits for resume() (WHPX: download anyway)
 
 
 @dataclass(frozen=True)
@@ -42,7 +45,7 @@ class LicenseText:
 
 
 class SetupApi(Protocol):
-    """The CLI and the [P4] wizard render the same step model. Every method is non-blocking."""
+    """The CLI and the GUI wizard render the same step model. Every method is non-blocking."""
 
     def events(self) -> tuple[SetupEvent, ...]: ...
     def run(self) -> None: ...   # a step that needs a human decision stops in waiting_user
@@ -53,4 +56,5 @@ class SetupApi(Protocol):
     def enable_whpx(self) -> None: ...   # asks for UAC and returns; the result arrives as a SetupEvent
     def pause(self) -> None: ...
     def resume(self) -> None: ...
+    def cancel(self) -> None: ...   # stop at the next safe point; setup.json keeps what was done
     def subscribe(self, cb: Callable[[SetupEvent], None]) -> Callable[[], None]: ...

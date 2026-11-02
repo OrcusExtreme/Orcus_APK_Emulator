@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from orcus.common import log, messages_ko
+from orcus.common.i18n import t
 from orcus.contracts import (
     ApkInfo,
     ApkSettings,
@@ -66,8 +67,8 @@ MAX_FILE = 1 << 30       # nothing App Inventor builds comes near 1 GiB: refuse 
 UNKNOWN_TARGET_SDK = 36  # unreadable manifest: install retries with the legacy flag by itself if needed
 ORIENT_CHECK_S = 3.0     # while an app runs: its display rotation against the posture (§9.7, 0.06 s each)
 ORIENT_SOON_S = 1.2      # right after a launch or a screen switch: two quick checks (the display settles in ~1 s)
-BUZZ_CHECK_S = 1.5       # [P4] while an app that may vibrate runs: what the vibrator lists (0.05 s each)
-MEDIA_WAIT_S = 300.0     # [P4] a picture dropped while the phone starts waits for it this long
+BUZZ_CHECK_S = 1.5       # while an app that may vibrate runs: what the vibrator lists (0.05 s each)
+MEDIA_WAIT_S = 300.0     # a picture dropped while the phone starts waits for it this long
 MEDIA_KEEP = 10          # staged pictures, sounds and videos kept
 VIBRATE = "android.permission.VIBRATE"
 RECORD_AUDIO = "android.permission.RECORD_AUDIO"
@@ -142,7 +143,7 @@ class Service:
         self._next_check = 0.0
         self._quick_checks = 0   # quick ones still due after a launch or a screen switch
         self._buzzes: set[str] | None = None   # vibrations already listed, while the current app may vibrate
-        self._apks: dict[str, str] = {}        # package -> its APK in the phone, from the last list (P4)
+        self._apks: dict[str, str] = {}        # package -> its APK in the phone, from the last list
         self._next_buzz = 0.0
         # logcat thread + pipeline, under _watch_lock
         self._watch_lock = threading.Lock()
@@ -276,26 +277,29 @@ class Service:
         """[Copy report] lines about the current app (§7.9). Any thread: a slightly stale view is fine."""
         run = self._current
         if run is None:
-            return ["앱: 없음"]
+            return [t("앱: 없음")]
         info = run.info
         if info is not None:
-            lines = [f"앱: {info.label} ({info.package}) {info.version_name or '-'} ({info.version_code}) · "
-                     f"minSdk {info.min_sdk} · targetSdk {info.target_sdk} · {info.ai_era or '시기 모름'} · "
-                     f"방향 {info.launcher_orientation or '-'}"]
+            lines = [t("앱: {label} ({package}) {version} ({code}) · minSdk {min_sdk} · targetSdk {target_sdk} · "
+                       "{era} · 방향 {orientation}", label=info.label, package=info.package,
+                       version=info.version_name or "-", code=info.version_code, min_sdk=info.min_sdk,
+                       target_sdk=info.target_sdk, era=info.ai_era or t("시기 모름"),
+                       orientation=info.launcher_orientation or "-")]
         else:
-            lines = [f"앱: {run.package or run.path.name} (매니페스트를 읽지 못함)"]
-        lines.append(f"실행: {run.stage} · epoch {run.epoch} · pid {run.pid or '-'} · SHA-256 {run.sha[:16]}")
-        lines += [f"점검: {i.level} {i.code}" for i in run.issues]
+            lines = [t("앱: {name} (매니페스트를 읽지 못함)", name=run.package or run.path.name)]
+        lines.append(t("실행: {stage} · epoch {epoch} · pid {pid} · SHA-256 {sha}", stage=run.stage, epoch=run.epoch,
+                       pid=run.pid or "-", sha=run.sha[:16]))
+        lines += [t("점검: {level} {code}", level=i.level, code=i.code) for i in run.issues]
         if run.problem is not None:
-            lines.append(f"문제: {run.problem.code} {run.problem.detail}")
+            lines.append(t("문제: {code} {detail}", code=run.problem.code, detail=run.problem.detail))
         with self._watch_lock:
             log_lines, warn_lines = list(self._app_log), list(self._app_warn)
-        return [*lines, f"--- 앱 경고·오류 최근 {len(warn_lines)}줄 ---", *warn_lines,
-                f"--- 앱 로그 최근 {len(log_lines)}줄 (I 이상) ---", *log_lines]
+        return [*lines, t("--- 앱 경고·오류 최근 {n}줄 ---", n=len(warn_lines)), *warn_lines,
+                t("--- 앱 로그 최근 {n}줄 (I 이상) ---", n=len(log_lines)), *log_lines]
 
     def close(self, *, fast: bool = False) -> None:
         """Shutdown step 2 (§4): cancel the pipeline and the log stream. Fast (logoff): do not wait for an install
-        or launch in flight; the thread is a daemon and the engine's stop ends its adb calls (3a review)."""
+        or launch in flight; the thread is a daemon and the engine's stop ends its adb calls."""
         self._unsubscribe()
         with self._lock:
             self._latest = None
@@ -380,7 +384,7 @@ class Service:
             self._emit(run, RunStage.CANCELLED)
         except OrcusFailure as f:
             self._emit(run, RunStage.FAILED, problem=f.error)
-        except Exception as e:   # any other error still ends the run: the GUI's busy overlay waits for it (3a review)
+        except Exception as e:   # any other error still ends the run: the GUI's busy overlay waits for it
             _log.exception("run %s", run.run_id)
             self._emit(run, RunStage.FAILED, problem=messages_ko.error(ErrorCode.STAGE_UNEXPECTED, repr(e)[:300]))
         finally:
@@ -481,7 +485,7 @@ class Service:
         grant = self._settings().grant_all
         out = install.install(shell, run.staged, grant_all=grant, target_sdk=target)
         if out.needs_uninstall_prompt:
-            # only the package we parsed ourselves: adb's output can echo text a crafted manifest put there (3a)
+            # only the package we parsed ourselves: adb's output can echo text a crafted manifest put there
             pkg = run.package
             if pkg is None:
                 raise OrcusFailure(messages_ko.error(ErrorCode.INSTALL_INCOMPATIBLE, out.detail))
@@ -554,15 +558,15 @@ class Service:
     def _screen_shown(self, run: _Run) -> None:
         """A launch or an App Inventor screen coming back (Screen2, the permission dialog closing): the display
         may have turned, and a LocationSensor starts listening. The polls stay at 3 s otherwise (B9: each check
-        is an adb process, 0.6% of a core every 2 s in 3b)."""
+        is an adb process)."""
         self._quick_checks = 2
         self._next_check = min(self._next_check, time.monotonic() + self._orient_soon_s)
         self._relocate(run)
 
     def _relocate(self, run: _Run) -> None:
         """A LocationSensor asks for updates when its screen starts or resumes (also after the permission dialog),
-        and a test provider reports only when told: send the phone's location again for the first fix (3b device
-        test: the app showed no location until a preset was chosen)."""
+        and a test provider reports only when told: send the phone's location again for the first fix. Otherwise
+        the app shows no location until a preset is chosen."""
         if run.info is None or not run.info.permissions & LOCATION:
             return
         controls = self._engine.session().controls
@@ -595,7 +599,7 @@ class Service:
             self._emit(run, run.stage)
 
     def _buzz_baseline(self, run: _Run, shell: DeviceShell) -> set[str] | None:
-        """[P4] What the vibrator listed before the launch is old: only newer ones of this app show (§9.7). An app
+        """What the vibrator listed before the launch is old: only newer ones of this app show (§9.7). An app
         without the VIBRATE permission cannot vibrate, so nothing is looked up for it."""
         if run.info is None or VIBRATE not in run.info.permissions:
             return None
@@ -634,7 +638,7 @@ class Service:
                         _log.exception("vibration subscriber failed")
 
     def _push_one(self, path: Path) -> MediaResult:
-        """[P4] Stage, wait for the phone, push (§7.1). The app pipeline waits meanwhile, as for an install."""
+        """Stage, wait for the phone, push (§7.1). The app pipeline waits meanwhile, as for an install."""
         where = media_folder(path)
         try:
             if where is None:
@@ -657,7 +661,7 @@ class Service:
             return MediaResult(path.name, None, f.error)
 
     def _list_apps(self) -> None:
-        """[P4] The apps in the phone for the [App] tab: after a refresh, an install, a removal and a new phone."""
+        """The apps in the phone for the [App] tab: after a refresh, an install, a removal and a new phone."""
         try:
             self._apks = install.apks(install.third_party(self._engine.shell()))
         except EngineNotReady as e:
@@ -674,7 +678,7 @@ class Service:
                 _log.exception("app list subscriber failed")
 
     def _run_installed(self, package: str) -> None:
-        """[P4] Its APK out of the phone into staging, then the usual path: a drop of that file (§8). In this epoch the
+        """Its APK out of the phone into staging, then the usual path: a drop of that file (§8). In this epoch the
         install is skipped (same SHA-256); a kept phone (§6.3) gets it reinstalled with its data kept."""
         run = _Run(uuid.uuid4().hex[:12], Path(package), RunPolicy.KEEP_DATA, time.monotonic(), package=package)
         try:
@@ -748,7 +752,7 @@ class Service:
             self._ensure_logcat(st.epoch)
         except OrcusFailure as e:
             _log.info("no logcat in epoch %d: %s", st.epoch, e)
-        self._list_apps()   # a new phone: the golden's none, a kept phone's own (P4)
+        self._list_apps()   # a new phone: the golden's none, a kept phone's own
         run = self._current
         if run is None or run.epoch >= st.epoch or run.stage != RunStage.RUNNING:
             return
@@ -805,7 +809,7 @@ class Service:
         if cmd in ("rerun", "clear_data"):
             with self._lock:
                 newer = submits is not None and submits != self._submits
-            if newer:   # a file dropped after this press wins; running the old app now would cancel it (3a review)
+            if newer:   # a file dropped after this press wins; running the old app now would cancel it
                 _log.info("%s skipped: a newer drop is queued", cmd)
                 return
             self._again(run, clear=cmd == "clear_data")

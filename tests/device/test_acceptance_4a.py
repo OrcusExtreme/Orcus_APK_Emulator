@@ -1,4 +1,4 @@
-"""Phase 4a acceptance on the real phone (plan.md §3 Phase 4): keep-state (§6.3).
+"""Acceptance on the real phone (plan.md §3): keep-state (§6.3) and the GPU ladder (§5.6).
 
 Run: py tools/dev.py test -m device tests/device/test_acceptance_4a.py -s
 The tests turn keeping on in memory only (settings.json is not touched) and drop the kept phones they made at the
@@ -6,7 +6,8 @@ end, so the next ordinary start is the golden again. Lines starting with RESULT 
 - round trip: a normal stop keeps the phone (RAM and disk), the next start opens it;
 - a stop killed while saving leaves the previous kept phone, said at the next start;
 - a kept phone that does not open (its ram.bin cut short, no forced load) starts clean and is left alone;
-- a phone kept turned comes back turned, and the controls know it.
+- a phone kept turned comes back turned, and the controls know it;
+- with the GPU ladder, a PC whose GPU draws starts on the golden at host.
 """
 
 import dataclasses
@@ -44,7 +45,7 @@ class Kept:
         self.s = Session(self.paths, dataclasses.replace(settings, session=SessionSettings(keep_state=True)),
                          owner_kind="test")
 
-    def start(self, timeout_s: float = 900):   # type: ignore[no-untyped-def]
+    def start(self, timeout_s: float = 900):
         t = time.monotonic()
         self.s.engine.start()
         st = self.s.engine.wait_ready(timeout_s)
@@ -80,7 +81,7 @@ def kept() -> Iterator[Kept]:
 
 
 @pytest.mark.timeout(1200)
-def test_p4_a_normal_stop_keeps_the_phone_and_the_next_start_opens_it(kept: Kept) -> None:
+def test_a_normal_stop_keeps_the_phone_and_the_next_start_opens_it(kept: Kept) -> None:
     st, _ = kept.start()
     assert st.mode == SessionMode.KEEP_STATE
     token = uuid.uuid4().hex[:8]
@@ -90,7 +91,7 @@ def test_p4_a_normal_stop_keeps_the_phone_and_the_next_start_opens_it(kept: Kept
     assert p is not None and p.slot == "a" and keepstate.exists(kept.paths, "a")
     st, boot_s = kept.start()
     assert st.mode == SessionMode.KEEP_STATE and kept.marks() == (token, token)   # disk and RAM came back
-    result("P4 keep-state round trip", stop_with_save_s=round(stop_s, 1), open_s=round(boot_s, 1),
+    result("keep-state round trip", stop_with_save_s=round(stop_s, 1), open_s=round(boot_s, 1),
            slot_mb=kept.slot_mb("a"))
     token2 = uuid.uuid4().hex[:8]
     kept.mark(token2)
@@ -106,7 +107,7 @@ def qemu_pids(paths: OrcusPaths) -> list[int]:
 
 
 @pytest.mark.timeout(1200)
-def test_p4_a_stop_killed_while_saving_leaves_the_previous_kept_phone(kept: Kept) -> None:
+def test_a_stop_killed_while_saving_leaves_the_previous_kept_phone(kept: Kept) -> None:
     before = kept.marks()                        # the phone kept in b by the test above, opened again
     kept.mark("unsaved")
     kept.s.engine.stop()
@@ -120,11 +121,11 @@ def test_p4_a_stop_killed_while_saving_leaves_the_previous_kept_phone(kept: Kept
     assert p is not None and p.slot == "b" and p.save_failed and keepstate.exists(kept.paths, "b")
     st, _ = kept.start()
     assert kept.marks() == before and ErrorCode.ENGINE_KEEP_SAVE_FAILED in st.warnings
-    result("P4 kill while saving", killed=pids, failure=p.save_failed[:80], reopened="previous kept phone")
+    result("kill while saving", killed=pids, failure=p.save_failed[:80], reopened="previous kept phone")
 
 
 @pytest.mark.timeout(1200)
-def test_p4_a_kept_phone_that_does_not_open_starts_clean_and_stays(kept: Kept) -> None:
+def test_a_kept_phone_that_does_not_open_starts_clean_and_stays(kept: Kept) -> None:
     kept.stop()                                  # keeps the current phone (b -> a)
     p = keepstate.read(kept.paths)
     assert p is not None and p.slot == "a"
@@ -135,7 +136,7 @@ def test_p4_a_kept_phone_that_does_not_open_starts_clean_and_stays(kept: Kept) -
     assert ErrorCode.ENGINE_KEEP_FAILED in st.warnings and st.mode == SessionMode.KEEP_STATE
     assert kept.marks()[0] in ("", "unsaved") or "No such file" in kept.marks()[0]
     slot_left = keepstate.slot_dir(kept.paths, "a").exists()
-    result("P4 broken kept phone", started_clean_after_s=round(boot_s, 1), slot_dir_left=slot_left,
+    result("broken kept phone", started_clean_after_s=round(boot_s, 1), slot_dir_left=slot_left,
            ram_left=ram.exists())
     kept.stop()                                  # that clean session is not kept over the slot
     p = keepstate.read(kept.paths)
@@ -143,8 +144,8 @@ def test_p4_a_kept_phone_that_does_not_open_starts_clean_and_stays(kept: Kept) -
 
 
 @pytest.mark.timeout(1200)
-def test_p4_a_kept_phone_comes_back_turned_and_the_controls_know_it(kept: Kept) -> None:
-    """A phone kept in landscape, lit and low comes back so (4a device check); the controls read it at the start,
+def test_a_kept_phone_comes_back_turned_and_the_controls_know_it(kept: Kept) -> None:
+    """A phone kept in landscape, lit and low comes back that way; the controls read it at the start,
     so the next turn starts there and the [Sensors] tab shows its light and battery."""
     keepstate.drop(kept.paths)                   # the broken slot of the test above
     kept.start()
@@ -163,13 +164,13 @@ def test_p4_a_kept_phone_comes_back_turned_and_the_controls_know_it(kept: Kept) 
     dev.controls.rotate(Rotation.PORTRAIT)
     shell = kept.s.engine.shell()
     until(lambda: launch.display_rotation(shell) == Rotation.PORTRAIT, 15, "display back to portrait")
-    result("P4 kept phone turned", posture="LANDSCAPE", world=dev.controls.world)
+    result("kept phone turned", posture="LANDSCAPE", world=dev.controls.world)
     kept.stop()
 
 
 @pytest.mark.timeout(900)
-def test_p4_the_gpu_ladder_starts_on_the_golden_at_host() -> None:
-    """[P4] §5.6: switching to the ladder keeps the golden (host and host_hidden share it); here the GPU draws, so
+def test_the_gpu_ladder_starts_on_the_golden_at_host() -> None:
+    """§5.6: switching to the ladder keeps the golden (host and host_hidden share it); here the GPU draws, so
     it stays at host and keeps no level."""
     from orcus.contracts import GpuMode
     compose.ensure_job()
@@ -185,6 +186,6 @@ def test_p4_the_gpu_ladder_starts_on_the_golden_at_host() -> None:
         assert st.caps is not None and st.caps.gpu_mode == GpuMode.HOST and st.epoch_cause.name == "BOOT"
         assert ErrorCode.ENGINE_GPU_LADDER not in st.warnings
         assert not paths.state_file("gpu.json").exists()
-        result("P4 ladder on this PC", ready_s=round(time.monotonic() - t, 1), renderer=st.caps.renderer[-40:])
+        result("ladder on this PC", ready_s=round(time.monotonic() - t, 1), renderer=st.caps.renderer[-40:])
     finally:
         s.shutdown()

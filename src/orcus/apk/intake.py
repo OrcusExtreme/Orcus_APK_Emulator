@@ -19,7 +19,7 @@ from orcus.contracts import ErrorCode, FileKind, OrcusFailure
 _log = log.get("apk.intake")
 DRIVE_TIMEOUT_S = 120.0
 CHUNK = 1 << 20
-MAX_ENTRIES = 50_000      # App Inventor APKs hold a few thousand; millions of tiny entries exhaust memory (3a)
+MAX_ENTRIES = 50_000      # App Inventor APKs hold a few thousand; millions of tiny entries exhaust memory
 STALE_PART_S = 3600.0     # a .part this old belongs to no copy any more
 
 _KIND_ERROR = {FileKind.AAB: ErrorCode.FILE_IS_AAB, FileKind.AIA: ErrorCode.FILE_IS_AIA,
@@ -47,7 +47,7 @@ def entry_count(path: Path) -> int | None:
 
 
 def classify(path: Path) -> FileKind:
-    """Never raises: anything that is not a readable zip of a sane size is NOT_ANDROID (3a review)."""
+    """Never raises: anything that is not a readable zip of a sane size is NOT_ANDROID."""
     count = entry_count(path)
     if count is None or count > MAX_ENTRIES:
         return FileKind.NOT_ANDROID
@@ -90,11 +90,11 @@ def _copy_hashing(src: Path, tmp: Path, out: dict[str, object], stop: threading.
 
 def stage(path: Path, staging: Path, *, keep: int = 20, timeout_s: float = DRIVE_TIMEOUT_S,
           suffix: str = ".apk") -> tuple[str, Path]:
-    """Copy while hashing into staging/<sha256><suffix> (a dropped picture keeps its extension, P4). Raises
+    """Copy while hashing into staging/<sha256><suffix> (a dropped picture keeps its extension). Raises
     OrcusFailure (STAGE_*).
 
     Each call has its own temporary file: a copy abandoned at the Drive deadline keeps writing for a while, and a
-    shared name let the next drop's file mix with it (3a review)."""
+    shared name would let the next drop's file mix with it."""
     staging.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(dir=staging, prefix=".incoming-", suffix=".part")
     os.close(fd)

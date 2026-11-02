@@ -42,7 +42,7 @@ type Progress = Callable[[int, int], None]   # (bytes_done, bytes_total)
 
 
 def default_opener(req: urllib.request.Request) -> Response:
-    return urllib.request.urlopen(req, timeout=30)   # type: ignore[return-value]
+    return urllib.request.urlopen(req, timeout=30)
 
 
 def _sha1_of(path: Path, upto: int | None = None) -> Hasher:

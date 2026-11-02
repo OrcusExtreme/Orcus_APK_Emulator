@@ -14,6 +14,7 @@ from pathlib import Path
 from orcus import __version__
 from orcus.apk.service import Service as ApkPipeline
 from orcus.common import config, log
+from orcus.common.i18n import t
 from orcus.common.paths import OrcusPaths
 from orcus.common.pins import EMULATOR, EMULATOR_BUILD, SYSTEM_IMAGE
 from orcus.contracts import (
@@ -47,6 +48,7 @@ class Session:
         self._settings = settings
         self._lock = threading.Lock()
         self._setup: SetupService | None = None
+        self._gui = owner_kind == "gui"   # setup started here resumes in the window after a reboot
         self._engine = EngineManager(paths, self.settings, seams or Seams.real(paths), self._connect,
                                      owner_kind=owner_kind)
         self._apps = ApkPipeline(self._engine, paths.staging, lambda: self.settings().apk,
@@ -55,7 +57,7 @@ class Session:
     # --- wiring ---------------------------------------------------------------------------------------------------
     def _connect(self, endpoint: DeviceEndpoint) -> DeviceSession:
         """The DeviceSessionFactory the engine calls in SESSION_INIT. Logcat comes through the engine's adb:
-        gRPC streamLogcat goes silent after a snapshot load ([Reset phone], Phase 3a)."""
+        gRPC streamLogcat goes silent after a snapshot load ([Reset phone])."""
         presets = self.settings().sensors.location_presets   # SESSION_INIT put the phone at the first one
         return device_session.connect(endpoint, location=self._locate, logcat_source=self._engine.logcat,
                                       scroll=self._scroll, home=(presets[0][0], presets[0][1]) if presets else None)
@@ -91,7 +93,7 @@ class Session:
     def setup(self) -> SetupService:
         with self._lock:
             if self._setup is None:
-                self._setup = compose.build_setup(self._paths, self._settings)
+                self._setup = compose.build_setup(self._paths, self._settings, gui=self._gui)
             return self._setup
 
     def device(self) -> DeviceSession | None:
@@ -120,19 +122,23 @@ class Session:
     def report(self) -> str:
         """[Copy report] (§7.9)."""
         st = self._engine.status()
-        lines = [f"Orcus APK Emulator 보고서 ({time.strftime('%Y-%m-%d %H:%M:%S')})",
+        none = t("없음")
+        lines = [t("Orcus APK Emulator 보고서 ({when})", when=time.strftime("%Y-%m-%d %H:%M:%S")),
                  f"Orcus {__version__} · Python {platform.python_version()} · Windows {platform.version()}",
-                 f"에뮬레이터 {EMULATOR.revision} (build {EMULATOR_BUILD}) · 이미지 {SYSTEM_IMAGE.package_path} "
-                 f"r{SYSTEM_IMAGE.revision}",
-                 f"엔진: {st.state} · {st.mode} · epoch {st.epoch} ({st.epoch_cause}) · "
-                 f"경고 {', '.join(st.warnings) or '없음'}"]
+                 t("에뮬레이터 {revision} (build {build}) · 이미지 {image} r{image_revision}",
+                   revision=EMULATOR.revision, build=EMULATOR_BUILD, image=SYSTEM_IMAGE.package_path,
+                   image_revision=SYSTEM_IMAGE.revision),
+                 t("엔진: {state} · {mode} · epoch {epoch} ({cause}) · 경고 {warnings}", state=st.state, mode=st.mode,
+                   epoch=st.epoch, cause=st.epoch_cause, warnings=", ".join(st.warnings) or none)]
         if st.error is not None:
-            lines.append(f"엔진 오류: {st.error.code} {st.error.detail}")
+            lines.append(t("엔진 오류: {code} {detail}", code=st.error.code, detail=st.error.detail))
         c = st.caps
         if c is not None:
-            lines.append(f"기기: API {c.api} · {','.join(c.abis)} · {c.panel[0]}x{c.panel[1]} {c.panel[2]}dpi · "
-                         f"{c.hypervisor} · GPU {c.gpu_mode} · {c.renderer} · TTS {c.tts_engine or '없음'} · "
-                         f"음성 인식 {'있음' if c.speech_recognizer else '없음'}")
+            lines.append(t("기기: API {api} · {abis} · {width}x{height} {dpi}dpi · {hypervisor} · GPU {gpu} · "
+                           "{renderer} · TTS {tts} · 음성 인식 {speech}", api=c.api, abis=",".join(c.abis),
+                           width=c.panel[0], height=c.panel[1], dpi=c.panel[2], hypervisor=c.hypervisor,
+                           gpu=c.gpu_mode, renderer=c.renderer, tts=c.tts_engine or none,
+                           speech=t("있음") if c.speech_recognizer else none))
         return "\n".join([*lines, *self._apps.report_lines()])
 
     def set_camera_image(self, png: bytes | None) -> None:
@@ -144,7 +150,7 @@ class Session:
         return diag.make_bundle(self._paths, self.report(), doctor)
 
     def open_paths(self, paths: Sequence[Path]) -> None:
-        """[P4] Pictures, sounds and videos go into the phone, all of them; otherwise the last file is an app (the
+        """Pictures, sounds and videos go into the phone, all of them; otherwise the last file is an app (the
         newest drop wins anyway: only it is worth staging)."""
         files = [Path(p) for p in paths]
         if files and all(media_folder(p) for p in files):

@@ -5,7 +5,7 @@ from enum import StrEnum, auto
 
 
 class ErrorCode(StrEnum):
-    # SETUP_*: installation (orcus-cli setup, [P4] wizard)
+    # SETUP_*: installation (orcus-cli setup, the GUI wizard)
     SETUP_PATH = auto()
     SETUP_DISK = auto()
     SETUP_NETWORK = auto()
@@ -16,7 +16,7 @@ class ErrorCode(StrEnum):
     SETUP_DISM_FAILED = auto()
     SETUP_REBOOT_PENDING = auto()
     SETUP_WHPX_REVERTED = auto()
-    SETUP_PERMISSIONS = auto()    # the root could not be made this account's only (3a, common/acl.py)
+    SETUP_PERMISSIONS = auto()    # the root could not be made this account's only (common/acl.py)
     SETUP_QUARANTINE = auto()
     SETUP_ACCEL_FAILED = auto()
     # PRE_*: checks before the emulator starts
@@ -26,7 +26,7 @@ class ErrorCode(StrEnum):
     PRE_DISK = auto()
     PRE_PATH = auto()
     PRE_PORTS = auto()
-    PRE_NO_DISPLAY = auto()       # no display device (disconnected Remote Desktop): no golden is saved (3a)
+    PRE_NO_DISPLAY = auto()       # no display device (disconnected Remote Desktop): no golden is saved
     # ENGINE_*: the emulator
     ENGINE_IN_USE = auto()
     ENGINE_EXIT = auto()
@@ -42,20 +42,20 @@ class ErrorCode(StrEnum):
     ENGINE_UNAVAILABLE = auto()
     ENGINE_NO_FRAMES = auto()
     ENGINE_DISK_LOW = auto()
-    ENGINE_NO_DISPLAY = auto()    # warning: booted COLD this once to keep the golden (3a finding 18)
-    ENGINE_KEEP_FAILED = auto()   # [P4] warning: the kept phone did not open; started clean, the slot is left alone
-    ENGINE_KEEP_GONE = auto()     # [P4] warning: the kept phone no longer fits (new golden) or is gone
-    ENGINE_KEEP_SAVE_FAILED = auto()   # [P4] warning: the last stop could not keep the phone
-    ENGINE_GPU_LADDER = auto()    # [P4] warning: the GPU ladder stepped below host (§5.6)
+    ENGINE_NO_DISPLAY = auto()    # warning: booted COLD this once to keep the golden
+    ENGINE_KEEP_FAILED = auto()   # warning: the kept phone did not open; started clean, the slot is left alone
+    ENGINE_KEEP_GONE = auto()     # warning: the kept phone no longer fits (new golden) or is gone
+    ENGINE_KEEP_SAVE_FAILED = auto()   # warning: the last stop could not keep the phone
+    ENGINE_GPU_LADDER = auto()    # warning: the GPU ladder stepped below host (§5.6)
     # FILE_* / STAGE_*: the dropped file
     FILE_NOT_ANDROID = auto()
-    STAGE_UNEXPECTED = auto()     # an error the pipeline did not expect: the run still ends (3a review)
+    STAGE_UNEXPECTED = auto()     # an error the pipeline did not expect: the run still ends
     FILE_IS_AAB = auto()
     FILE_IS_AIA = auto()
     FILE_IS_AIX = auto()
     STAGE_DRIVE_TIMEOUT = auto()
     STAGE_COPY_FAILED = auto()
-    FILE_PUSH_FAILED = auto()    # [P4] a dropped picture, sound or video did not go into the phone
+    FILE_PUSH_FAILED = auto()    # a dropped picture, sound or video did not go into the phone
     APK_PARSE = auto()
     # INSTALL_*: installing the app
     INSTALL_OLDER_SDK = auto()
@@ -73,7 +73,7 @@ class ErrorCode(StrEnum):
     APP_AI_RUNTIME_ERROR = auto()
     APP_TTS_MISSING = auto()
     APP_SPEECH_MISSING = auto()
-    APP_ORIENTATION_MISMATCH = auto()   # warning: the app's screen is drawn turned against the posture (3b)
+    APP_ORIENTATION_MISMATCH = auto()   # warning: the app's screen is drawn turned against the posture
 
 
 class RemedyAction(StrEnum):
@@ -89,7 +89,7 @@ class RemedyAction(StrEnum):
     FREE_DISK = auto()
     CONTINUE_ANYWAY = auto()
     MATCH_ORIENTATION = auto()
-    RETRY_GPU = auto()   # [P4] the GPU ladder starts at host again
+    RETRY_GPU = auto()   # the GPU ladder starts at host again
 
 
 @dataclass(frozen=True)

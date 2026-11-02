@@ -62,7 +62,7 @@ from .session import (
     Settings,
     UiSettings,
 )
-from .setup import LicenseText, SetupApi, SetupEvent, SetupStep
+from .setup import SETUP_FREE_GIB, LicenseText, SetupApi, SetupEvent, SetupStep
 
 __all__ = [
     "ApkInfo", "ApkService", "ApkSettings", "ApplyResult", "CancellableIter", "CmdResult",
@@ -75,5 +75,5 @@ __all__ = [
     "PrivacySettings", "Prompt", "ReadOnlyEngine", "Remedy", "RemedyAction", "Rotation", "RunEvent",
     "RunPolicy", "RunStage", "SensorSettings", "Sensitivity", "SessionApi", "SessionMode",
     "SessionSettings", "Settings", "SetupApi", "SetupEvent", "SetupStep", "UiSettings", "media_folder",
-    "BATTERY_MIN_UNPLUGGED",
+    "BATTERY_MIN_UNPLUGGED", "SETUP_FREE_GIB",
 ]

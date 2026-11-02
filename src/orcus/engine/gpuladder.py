@@ -1,4 +1,4 @@
-"""[P4] GPU auto ladder (ARCHITECTURE.md §5.6): host -> host_hidden -> software, one step at a time.
+"""GPU auto ladder (ARCHITECTURE.md §5.6): host -> host_hidden -> software, one step at a time.
 
 A step down takes a software renderer twice in a row: in a boot and again in the re-check boot right after it
 (a provisioning boot counts at once: it is long, and a golden cannot be made on a software renderer). The level

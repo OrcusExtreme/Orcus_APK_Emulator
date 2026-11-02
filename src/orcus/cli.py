@@ -2,6 +2,8 @@
 
     orcus-cli setup  [--home DIR] [--resume]   install steps 1-8 (the license needs a human at the console)
     orcus-cli doctor [--home DIR]              read-only health report
+    orcus-cli selftest                         built-in checks of this build (no phone needed)
+    orcus-cli diag [--home DIR]                diagnostic bundle (logs, state, doctor; names masked)
     orcus-cli run APK [--policy P] [--watch S] boot the phone, install and launch, print problems for S seconds
     orcus-cli smoke [--apk HelloPurr.apk]      start, frame, key, install, tap, paste, shake, rotate, location,
                                                reset, stop (§12.5)
@@ -27,7 +29,6 @@ from orcus.common.pins import EMULATOR, EMULATOR_BUILD
 from orcus.contracts import (
     EngineState,
     EngineStatus,
-    ErrorCode,
     GpuMode,
     IssueLevel,
     OrcusError,
@@ -101,7 +102,7 @@ class Renderer:
             _out(f"    알림: {text(ev.problem.message_key)}")
 
 
-def _show_failure(ev: SetupEvent) -> None:
+def _show_failure(ev: SetupEvent, home: Path) -> None:
     err = ev.problem
     if err is None:
         return
@@ -109,12 +110,8 @@ def _show_failure(ev: SetupEvent) -> None:
     if err.detail:
         _out(f"    ({err.code}: {err.detail})")
     if err.remedy is not None and err.remedy.action is RemedyAction.COPY_IT_REQUEST:
-        if err.code is ErrorCode.SETUP_QUARANTINE:
-            request = T.it_request(T.IT_REQUEST_V3, err.detail, build=f"{EMULATOR.revision} ({EMULATOR_BUILD})")
-        else:
-            request = T.it_request(T.IT_REQUEST_WHPX, err.detail)
         _out("\n----- IT 요청문 (복사해서 보내세요) -----")
-        _out(request)
+        _out(T.it_request_for(err, str(home)))
         _out("------------------------------------------")
 
 
@@ -198,8 +195,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
                     return 2
             elif ev.state == "failed":
                 renderer.end_inline()
-                _show_failure(ev)
-                if ev.step is SetupStep.WHPX and (_ask(text("setup.whpx.continue_prompt")) or "") in ("예", "y", "yes"):
+                _show_failure(ev, p.root)
+                if ev.can_continue and (_ask(text("setup.whpx.continue_prompt")) or "") in ("예", "y", "yes"):
                     api.resume()
                     continue
                 return 1
@@ -255,7 +252,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_diag(args: argparse.Namespace) -> int:
-    """[P4] The diagnostic bundle without the window (it may be what does not start)."""
+    """The diagnostic bundle without the window (it may be what does not start)."""
     p = compose.make_paths(args.home)
     lines = [f"{line.status:<4} {line.name:<20} {line.detail}" for line in compose.doctor(p, compose.load_settings(p))]
     out = diag.make_bundle(p, f"orcus-cli diag ({time.strftime('%Y-%m-%d %H:%M:%S')}): 창 없이 만든 묶음", lines)

@@ -1,4 +1,4 @@
-"""Folder permissions (3a review; the user's decision on 2026-10-31): the runtime folder belongs to one account.
+"""Folder permissions: the runtime folder belongs to one account.
 
 D:\\ grants "Authenticated Users: Modify" and new folders inherit it, so on a shared lab PC another account could
 replace the SDK binaries (adb.exe, qemu, their DLLs) and have them run as whoever starts Orcus next. Setup cuts

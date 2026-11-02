@@ -87,12 +87,12 @@ def test_stage_names_by_sha_from_a_korean_path_and_prunes(tmp_path: Path) -> Non
 
 def test_stage_keeps_what_it_just_staged_and_leaves_no_temp_file(tmp_path: Path) -> None:
     src = _zip(tmp_path / "a.apk", ["AndroidManifest.xml"])
-    _, staged = intake.stage(src, tmp_path / "staging", keep=0)   # a bad staging_keep (3a review)
+    _, staged = intake.stage(src, tmp_path / "staging", keep=0)   # a bad staging_keep
     assert staged.exists() and not list((tmp_path / "staging").glob(".incoming-*"))
 
 
 def test_a_zip_claiming_too_many_entries_is_not_android(tmp_path: Path) -> None:
-    """zipfile would build an object per claimed entry: millions of tiny ones exhaust memory (3a review)."""
+    """zipfile would build an object per claimed entry: millions of tiny ones exhaust memory."""
     z = _zip(tmp_path / "a.apk", ["AndroidManifest.xml", "classes.dex"])
     assert intake.entry_count(z) == 2 and intake.classify(z) is FileKind.APK
     raw = bytearray(z.read_bytes())
@@ -168,7 +168,7 @@ def app(**kw: object) -> ApkInfo:
                    target_sdk=36, permissions=frozenset(), queries=frozenset(), features=frozenset(),
                    native_abis=frozenset(), asset_elf=False, is_app_inventor=True, is_companion=False,
                    ai_era="nb206+", icon_png=None)
-    return replace(base, **kw)  # type: ignore[arg-type]
+    return replace(base, **kw)
 
 
 def codes(info: ApkInfo, caps: DeviceCaps | None = CAPS) -> dict[object, IssueLevel]:
@@ -318,7 +318,7 @@ def test_install_incompatible_asks_and_offline_retries_once() -> None:
 
 
 def test_install_failure_is_read_from_its_code_only() -> None:
-    """adb's output can echo manifest text: a crafted sharedUserId must not fake 'replace?' (3a review)."""
+    """adb's output can echo manifest text: a crafted sharedUserId must not fake 'replace?'."""
     sh = ScriptShell()
     sh.install_results = [(1, "Failure [INSTALL_PARSE_FAILED_BAD_SHARED_USER_ID: bad sharedUserId x "
                               "INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.victim signatures]", False)]

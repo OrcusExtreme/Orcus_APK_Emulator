@@ -1,4 +1,4 @@
-"""[P4] GPU auto ladder on the fake engine (ARCHITECTURE.md §5.6): host -> host_hidden -> software, a step only
+"""GPU auto ladder on the fake engine (ARCHITECTURE.md §5.6): host -> host_hidden -> software, a step only
 after a software renderer twice in a row (at once in a provisioning boot), remote steps not kept, a retry at host."""
 
 import time
@@ -32,7 +32,7 @@ def wait_for(env: EngineEnv, *states: EngineState, timeout_s: float = 60) -> Non
     raise AssertionError(f"still {env.manager.status().state}, wanted {states}")
 
 
-def boot(env: EngineEnv):   # type: ignore[no-untyped-def]
+def boot(env: EngineEnv):
     env.procs.spawned.clear()
     env.manager.start()
     return env.manager.wait_ready(120)

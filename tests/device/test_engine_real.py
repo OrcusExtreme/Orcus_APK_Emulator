@@ -55,7 +55,7 @@ def test_real_engine_boot_reset_stop() -> None:
             time.sleep(0.1)
         print(f"stopped in {time.monotonic() - t2:.1f} s")
         assert m.status().state == EngineState.STOPPED
-        left = [image for pid, image in winjob.processes_under(paths.sdk) if not image.lower().endswith("adb.exe")]
+        left = [image for _pid, image in winjob.processes_under(paths.sdk) if not image.lower().endswith("adb.exe")]
         assert left == [], left
     finally:
         m.close()

@@ -1,5 +1,5 @@
-"""[P4] The picture camera: the default color bars, the file replaced whole, the flag on every launch, and a golden
-from before the picture camera no longer usable (it would not open with the flag, 4a)."""
+"""The picture camera: the default color bars, the file replaced whole, the flag on every launch, and a golden from
+before the picture camera no longer usable (it would not open with the flag)."""
 
 import json
 import os
@@ -47,6 +47,6 @@ def test_a_golden_from_before_the_picture_camera_is_not_usable(tmp_path: Path) -
     assert key.camera == args.CAMERA_MODE
     snapshots.write(paths, snapshots.Record(SessionMode.GOLDEN, "id1", key, {}))
     data = json.loads(paths.state_file(snapshots.RECORD).read_text(encoding="utf-8"))
-    del data["key"]["camera"]                                  # as 4a's earlier goldens were written
+    del data["key"]["camera"]                                  # as goldens from before the camera were written
     paths.state_file(snapshots.RECORD).write_text(json.dumps(data), encoding="utf-8")
     assert snapshots.read(paths) is None                       # so it is rebuilt once with the camera

@@ -55,7 +55,7 @@ def install(shell: DeviceShell, apk: Path, *, grant_all: bool, target_sdk: int) 
         text = _text(r)
         if r.code == 0 and "Success" in text:
             return InstallOutcome(True, None, text[-200:], total)
-        # the exact `Failure [CODE` when there is one: the rest of the output can echo manifest text (3a review)
+        # the exact `Failure [CODE` when there is one: the rest of the output can echo manifest text
         m = FAILURE.search(text)
         failure = m.group(1) if m else ""
         if failure == "INSTALL_FAILED_DEPRECATED_SDK_VERSION" and BYPASS_LOW_TARGET not in fl:

@@ -133,7 +133,7 @@ def test_protocol_conformance(tmp_path: Path) -> None:
 
 def test_fresh_install_across_a_reboot_then_nothing(tmp_path: Path) -> None:
     w, p = World(), OrcusPaths(tmp_path)
-    leftover = p.tmp / "extract_emulator" / "emulator"   # what the old extract-then-rename code left behind
+    leftover = p.tmp / "extract_emulator" / "emulator"   # left behind by an earlier extract-then-rename install
     leftover.mkdir(parents=True)
     (leftover / "qemu.dll").write_bytes(b"MZ")
     api, rec = start(w, p)
@@ -169,7 +169,7 @@ def test_fresh_install_across_a_reboot_then_nothing(tmp_path: Path) -> None:
     assert states[SetupStep.PROVISION] == "pending"
     assert all(s == "done" for step, s in states.items() if step is not SetupStep.PROVISION)
 
-    api3, rec3 = start(w, p)   # A1: the second complete run changes nothing
+    _, rec3 = start(w, p)   # A1: the second complete run changes nothing
     rec3.until(SetupStep.DONE, "done")
     assert w.calls == {"index": 1, "dism": 1, "job": 1, "emulator_check": 1, "keygen": 1}
     saved = json.loads(p.state_file("setup.json").read_text(encoding="utf-8"))
@@ -198,6 +198,36 @@ def test_uac_refusal_can_continue_with_downloads(tmp_path: Path) -> None:
     assert api.join(5)
 
 
+def test_retry_after_a_failure_the_worker_waits_on(tmp_path: Path) -> None:
+    """The wizard's [Retry] after a UAC refusal: cancel + run returns at once, and the new run starts when the
+    waiting worker has ended."""
+    w, p = World(), OrcusPaths(tmp_path)
+    w.dism = DismOutcome(False, 1223, None, None, 3.0)
+    api, rec = start(w, p)
+    _accept_and_enable(api, rec)
+    assert rec.until(SetupStep.WHPX, "failed").can_continue
+    api.cancel()
+    api.run()
+    rec.until(SetupStep.WHPX, "waiting_user")   # a fresh run asks for UAC again
+    assert w.calls["dism"] == 1
+    api.cancel()
+    assert api.join(5)
+
+
+def test_a_new_run_is_not_paused_by_an_earlier_one(tmp_path: Path) -> None:
+    w, p = World(), OrcusPaths(tmp_path)
+    api, rec = start(w, p)
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    api.pause()
+    api.cancel()
+    assert api.join(5)
+    api.run()
+    rec.until(SetupStep.LICENSE, "waiting_user")
+    assert not api._paused.is_set()   # noqa: SLF001  (a pause belongs to the run that asked for it)
+    api.cancel()
+    assert api.join(5)
+
+
 def preinstalled(w: World, p: OrcusPaths) -> None:
     w.installed = {a.key for a in pins.ARCHIVES}
     license.record_acceptance(p, license.LicenseText("android-sdk-license", LICENSE_TEXT, "x",
@@ -210,7 +240,7 @@ def test_accel_failure_with_reboot_pending(tmp_path: Path) -> None:
     w.whpx = accel.WhpxState.ENABLED
     w.accel_usable = False
     w.reboot_pending = True
-    api, rec = start(w, p)
+    _, rec = start(w, p)
     ev = rec.until(SetupStep.ACCEL, "failed")
     assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_REBOOT_PENDING
     assert "index" not in w.calls   # nothing to download: no network needed
@@ -225,6 +255,7 @@ def test_whpx_reverted_after_reboot(tmp_path: Path) -> None:
     api, rec = start(w, p)
     ev = rec.until(SetupStep.WHPX, "failed")
     assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_WHPX_REVERTED
+    assert not ev.can_continue   # the worker ends: nothing waits for [Download anyway]
     assert api.join(5)
     api2, rec2 = start(w, p)   # the next run offers UAC again
     rec2.until(SetupStep.WHPX, "waiting_user")
@@ -240,7 +271,7 @@ def test_accel_failure_after_enable_and_reboot_is_reverted(tmp_path: Path) -> No
     p.state.mkdir(parents=True, exist_ok=True)
     p.state_file("setup.json").write_text(json.dumps(
         {"version": 1, "dism": {"ok": True, "reboot_needed": True, "boot_time": w.boot - 7200}}), encoding="utf-8")
-    api, rec = start(w, p)
+    _, rec = start(w, p)
     ev = rec.until(SetupStep.ACCEL, "failed")
     assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_WHPX_REVERTED
 
@@ -283,7 +314,7 @@ def _accept_and_enable(api: SetupService, rec: Recorder) -> None:
 
 
 def test_a_zip_that_changed_after_its_download_is_not_extracted(tmp_path: Path) -> None:
-    """The SHA-1 is checked at download; another account could swap the file before EXTRACT (3a review)."""
+    """The SHA-1 is checked at download; another account could swap the file before EXTRACT."""
     w, p = World(), OrcusPaths(tmp_path)
     w.zips_ok = False
     api, rec = start(w, p)
@@ -295,7 +326,7 @@ def test_a_zip_that_changed_after_its_download_is_not_extracted(tmp_path: Path) 
 
 
 def test_a_state_file_that_cannot_be_saved_does_not_stop_setup(tmp_path: Path, monkeypatch: Any) -> None:
-    """D: full while setup runs: steps still report (the next run redoes the unsaved ones) (3a review)."""
+    """D: full while setup runs: steps still report (the next run redoes the unsaved ones)."""
     def disk_full(path: Path, data: Any) -> None:
         if path.name == "setup.json":
             raise OSError(28, "No space left on device")
@@ -310,7 +341,7 @@ def test_a_state_file_that_cannot_be_saved_does_not_stop_setup(tmp_path: Path, m
 
 def test_license_texts_that_failed_are_asked_again(tmp_path: Path, monkeypatch: Any) -> None:
     """A failed license fetch must not leave the archive list cached without its texts: a retry on the same
-    service then passed LICENSE without asking (3a review)."""
+    service would then pass LICENSE without asking."""
     real = steps_mod.repo_index.license_texts
     calls: list[int] = []
 
@@ -333,7 +364,7 @@ def test_license_texts_that_failed_are_asked_again(tmp_path: Path, monkeypatch: 
 
 
 def test_the_root_becomes_this_accounts_only_once(tmp_path: Path) -> None:
-    """Another account on a shared PC could replace the SDK binaries under the drive's inherited ACL (3a decision)."""
+    """Another account on a shared PC could replace the SDK binaries under the drive's inherited ACL."""
     w, p = World(), OrcusPaths(tmp_path)
     api, rec = start(w, p)
     rec.until(SetupStep.LICENSE, "waiting_user")
@@ -348,7 +379,7 @@ def test_the_root_becomes_this_accounts_only_once(tmp_path: Path) -> None:
 def test_a_root_that_cannot_be_locked_stops_setup(tmp_path: Path) -> None:
     w, p = World(), OrcusPaths(tmp_path)
     w.lock_code = 5
-    api, rec = start(w, p)
+    _, rec = start(w, p)
     ev = rec.until(SetupStep.CHECK, "failed")
     assert ev.problem is not None and ev.problem.code is ErrorCode.SETUP_PERMISSIONS
     assert "index" not in w.calls                      # nothing is downloaded into a folder others can change

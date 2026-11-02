@@ -1,4 +1,4 @@
-"""Diagnostic bundle (plan.md Phase 4 "진단 묶음"): one zip for whoever helps, with what Orcus knows.
+"""Diagnostic bundle: one zip for whoever helps, with what Orcus knows.
 
 In it: [Copy report]'s text, `orcus-cli doctor`'s lines, the newest Orcus and emulator logs, the adb server log,
 the state files and the AVD's config.ini. Not in it: the SDK, the phone's disks and snapshots, the staged APKs and
@@ -13,6 +13,7 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+from orcus.common.i18n import t
 from orcus.common.paths import OrcusPaths
 
 KEEP = 5                   # bundles kept in <root>\diag
@@ -77,7 +78,7 @@ def make_bundle(paths: OrcusPaths, report: str, doctor: list[str], *,
             except OSError as e:   # a log being written or locked: say so in its place
                 z.writestr(name + ".unreadable.txt", str(e))
                 continue
-            head = f"[처음 {size - MAX_FILE_BYTES:,} B는 뺐습니다]\n" if size > MAX_FILE_BYTES else ""
+            head = t("[처음 {n:,} B는 뺐습니다]", n=size - MAX_FILE_BYTES) + "\n" if size > MAX_FILE_BYTES else ""
             z.writestr(name, head + mask(data.decode("utf-8", errors="replace")))
     os.replace(tmp, target)
     for old in _newest([f for f in out_dir.glob("orcus-diag-*.zip")], 1000)[KEEP:]:

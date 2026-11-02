@@ -1,7 +1,7 @@
-"""[P2] Minimal composition: wire real dependencies into the setup service and doctor.
+"""Composition: wire real dependencies into the setup service and doctor.
 
-The CLI and (later) the GUI only build things through here, so they never import setup/engine
-directly (layering rule in ARCHITECTURE.md §2).
+The CLI and the GUI only build things through here, so they never import setup/engine directly
+(layering rule in ARCHITECTURE.md §2).
 """
 
 import os
@@ -36,7 +36,7 @@ def load_settings(p: OrcusPaths, warnings: list[str] | None = None) -> Settings:
 
 
 def start_logging(p: OrcusPaths, name: str) -> Path:
-    """File log under <home>\\logs; warnings no longer leak to the console."""
+    """File log under <home>\\logs; from then on warnings go there, not to the console."""
     return log.setup_file_logging(p.logs, name)
 
 
@@ -67,17 +67,22 @@ def child_env(p: OrcusPaths, settings: Settings) -> dict[str, str]:
                              strip_dirs=childenv.app_dirs_to_strip())
 
 
-def resume_command(p: OrcusPaths) -> str:
-    """Command line RunOnce uses to continue setup after the reboot."""
+def resume_command(p: OrcusPaths, *, gui: bool = False) -> str:
+    """Command line RunOnce uses to continue setup after the reboot: `orcus-cli setup --resume`, or the window
+    (its wizard) when the wizard started it."""
     home = [] if p.root == paths.DEFAULT_HOME else ["--home", str(p.root)]
-    if getattr(sys, "frozen", False):
+    frozen = getattr(sys, "frozen", False)
+    if gui:
+        argv = [sys.executable, "--setup-resume", *home] if frozen else [sys.executable, "-X", "utf8", "-m", "orcus",
+                                                                         "--setup-resume", *home]
+    elif frozen:
         argv = [sys.executable, "setup", "--resume", *home]
     else:
         argv = [sys.executable, "-X", "utf8", "-m", "orcus.cli", "setup", "--resume", *home]
     return subprocess.list2cmdline(argv)
 
 
-def build_setup(p: OrcusPaths, settings: Settings) -> SetupService:
+def build_setup(p: OrcusPaths, settings: Settings, *, gui: bool = False) -> SetupService:
     def keygen() -> CmdResult:
         p.android_home.mkdir(parents=True, exist_ok=True)
         return proc.run([str(p.adb_exe), "keygen", str(p.adbkey)], timeout_s=30, env=child_env(p, settings))
@@ -98,7 +103,7 @@ def build_setup(p: OrcusPaths, settings: Settings) -> SetupService:
         adb_keygen=keygen,
         ensure_job=ensure_job,
         disk_free=lambda: hostinfo.disk_free(p.root),
-        register_resume=lambda: whpx.register_runonce(resume_command(p)),
+        register_resume=lambda: whpx.register_runonce(resume_command(p, gui=gui)),
         unregister_resume=whpx.unregister_runonce,
         check_interpreter=not getattr(sys, "frozen", False),
     )

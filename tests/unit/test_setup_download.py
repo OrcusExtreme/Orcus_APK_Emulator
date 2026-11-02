@@ -18,7 +18,7 @@ SHA1 = hashlib.sha1(DATA).hexdigest()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    mode = "ranges"          # "ranges" | "ignore_range" | "drop_once"
+    mode = "ranges"          # "ranges" | "ignore_range" | "drop_once" | "drop_every" | "416_once"
     dropped = False
     requests: list[str | None] = []
 
@@ -98,7 +98,7 @@ def test_dropped_connection_resumes(server: str, tmp_path: Path) -> None:
 
 
 def test_drops_with_progress_keep_the_retry_budget(server: str, tmp_path: Path) -> None:
-    """Six drops over a long download used to end in SETUP_NETWORK although each attempt got further (3a review)."""
+    """Six drops over a long download must not end in SETUP_NETWORK while each attempt gets further."""
     Handler.mode = "drop_every"
     download.download(server, tmp_path / "f.zip", size=len(DATA), sha1=SHA1, retries=2, backoff_s=0.01)
     assert (tmp_path / "f.zip").read_bytes() == DATA and len(Handler.requests) > 3

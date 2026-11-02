@@ -148,7 +148,7 @@ def test_fresh_phone_waits_for_the_new_epoch_and_cold_uses_fresh_app(make: Calla
     cold.phone.packages[PKG] = 1
     ev = cold.stage_is(cold.svc.submit(cold.apk(), RunPolicy.FRESH_PHONE), S.RUNNING)
     assert cold.engine.resets == 0 and cold.phone.uninstalls == [PKG]
-    assert IssueCode.COLD_FRESH_APP in [i.code for i in ev.issues]   # said on the app card (3b)
+    assert IssueCode.COLD_FRESH_APP in [i.code for i in ev.issues]   # said on the app card
 
 
 def test_microphone_follows_the_consent_of_the_app_being_launched(make: Callable[..., World]) -> None:
@@ -165,7 +165,7 @@ def test_microphone_follows_the_consent_of_the_app_being_launched(make: Callable
 
 
 def test_location_apps_get_the_location_again_when_a_screen_starts_or_resumes(make: Callable[..., World]) -> None:
-    """Test providers report only when told: the app that starts listening gets the phone's location again (3b)."""
+    """Test providers report only when told: the app that starts listening gets the phone's location again."""
     w = make()
     rid = w.svc.submit(w.apk(permissions=["android.permission.ACCESS_FINE_LOCATION"]))
     running = w.stage_is(rid, S.RUNNING)
@@ -207,7 +207,7 @@ def test_a_turned_app_screen_raises_the_banner_and_clears_it(make: Callable[...,
 
 
 def test_the_orientation_check_keeps_its_pace_while_commands_keep_coming(make: Callable[..., World]) -> None:
-    """By the clock: a command every 20 ms restarted the 50 ms wait, so the check never ran (3b review)."""
+    """By the clock: a command every 20 ms must not restart the 50 ms wait, or the check would never run."""
     w = make(orient_check_s=0.05, orient_soon_s=0.05)
     rid = w.svc.submit(w.apk())
     w.stage_is(rid, S.RUNNING)
@@ -236,7 +236,7 @@ def test_a_screen_switch_is_checked_soon_whatever_the_slow_pace(make: Callable[.
 
 
 def vibrator(running: tuple[str, str] | None = None, done: tuple[tuple[str, str, int], ...] = ()) -> str:
-    """`dumpsys vibrator_manager` as API 36 prints it (4a device check), cut to what matters."""
+    """`dumpsys vibrator_manager` as API 36 prints it, cut to what matters."""
     text = "VibratorManagerService:\n  Vibrators:\n    Vibrator (id=1):\n"
     if running is not None:
         when, pkg = running
@@ -253,7 +253,7 @@ def vibrator(running: tuple[str, str] | None = None, done: tuple[tuple[str, str,
 
 
 def test_vibrations_of_the_running_app_are_reported_once(make: Callable[..., World]) -> None:
-    """[P4] Listed before the launch: old. The running one and, once it ended, the same one in the list: once.
+    """Listed before the launch: old. The running one and, once it ended, the same one in the list: once.
     Another package (the keyboard's touch feedback) is not the app."""
     w = make(buzz_check_s=0.03)
     got: list[int] = []
@@ -282,7 +282,7 @@ def test_an_app_that_cannot_vibrate_is_not_looked_at(make: Callable[..., World])
 
 
 def test_pictures_and_sounds_go_into_the_phone_under_their_names(make: Callable[..., World]) -> None:
-    """[P4] A staged ASCII copy for adb (§7.2), the dropped name in the phone; one result each, failures too."""
+    """A staged ASCII copy for adb (§7.2), the dropped name in the phone; one result each, failures too."""
     w = make()
     got: list[MediaResult] = []
     w.svc.subscribe_media(got.append)
@@ -305,7 +305,7 @@ def test_pictures_and_sounds_go_into_the_phone_under_their_names(make: Callable[
 
 
 def test_the_app_list_follows_installs_and_runs_an_installed_app_again(make: Callable[..., World]) -> None:
-    """[P4] The [App] tab's list: after an install it has the app; [Run] pulls its APK and goes the usual way (same
+    """The [App] tab's list: after an install it has the app; [Run] pulls its APK and goes the usual way (same
     SHA-256 in the same epoch: no second install); [Remove] uninstalls and the list follows."""
     w = make()
     lists: list[tuple[InstalledApp, ...]] = []

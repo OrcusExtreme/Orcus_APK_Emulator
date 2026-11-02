@@ -2,7 +2,7 @@
 
 No folder is renamed after extraction. On this PC Windows Defender and AhnLab V3 both scan new
 executables on access and briefly hold them open, which makes renaming or deleting their folder
-fail with "access denied" (setup's first run failed that way on 2026-10-30, see docs/spikes.md S0b).
+fail with "access denied" (docs/spikes.md S0b).
 Instead a `<package>.partial` file next to the package folder marks an unfinished extraction; it is
 removed only after verification, so an interrupted install is never mistaken for a complete one.
 Deleting old trees is retried while a scanner holds files.

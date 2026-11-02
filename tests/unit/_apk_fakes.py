@@ -164,9 +164,9 @@ class Phone:
         self.crash_text = ""
         self.no_process = False
         self.display = "ROTATION_0"   # `dumpsys window displays`: a locked or turned app screen
-        self.vibrator = ""            # `dumpsys vibrator_manager` (P4)
-        self.files: dict[str, bytes] = {}   # pushed into the phone: path -> content (P4)
-        self.apk_bytes: dict[str, bytes] = {}   # package -> the APK installed, for `adb pull` (P4)
+        self.vibrator = ""            # `dumpsys vibrator_manager`
+        self.files: dict[str, bytes] = {}   # pushed into the phone: path -> content
+        self.apk_bytes: dict[str, bytes] = {}   # package -> the APK installed, for `adb pull`
         self.push_fails = False
 
     def wipe(self) -> None:

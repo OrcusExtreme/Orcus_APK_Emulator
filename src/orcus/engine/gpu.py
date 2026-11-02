@@ -1,8 +1,8 @@
 """Renderer check (ARCHITECTURE.md §5.6): host GPU or a software fallback, read from SurfaceFlinger.
 
 API 36's dumpsys has a '------------RE GLES (Ganesh)------------' section header before the 'GLES: <vendor>,
-<renderer>, <version>' line (found in Phase 4: since the 3a golden, `grep -m1 GLES` returned the header, so a
-software fallback in a host mode went unseen). Only the line with 'GLES: ' counts.
+<renderer>, <version>' line: a plain `grep -m1 GLES` returns the header, and a software fallback in a host mode
+goes unseen. Only the line with 'GLES: ' counts.
 """
 
 SOFTWARE_MARKERS = ("SwiftShader", "lavapipe", "llvmpipe")

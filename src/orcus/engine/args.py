@@ -8,7 +8,7 @@ from orcus.common.paths import AVD_NAME, GOLDEN_SNAPSHOT
 from orcus.contracts import GpuMode
 
 FEATURES = ("-feature", "-Vulkan")   # changing -feature invalidates snapshots: fixed
-CAMERA_MODE = "imagefile"   # [P4] the back camera shows a file (engine.camera); part of a snapshot's hardware
+CAMERA_MODE = "imagefile"   # the back camera shows a file (engine.camera); part of a snapshot's hardware
 CONSOLE_PORT_RANGE = range(5586, 5683)
 MAX_SERVICE_PORT = 49152
 
@@ -18,7 +18,7 @@ class LaunchMode(StrEnum):
     COLD = auto()         # GPU software: always a cold boot, no snapshots
     PROVISION = auto()    # first preparation
     REBUILD = auto()      # PROVISION + -wipe-data
-    KEEP_STATE = auto()   # [P4] orcus_user_a|b without forced load
+    KEEP_STATE = auto()   # orcus_user_a|b without forced load
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class LaunchConfig:
     locale: str = "ko-KR"
     http_proxy: str | None = None
     avd_name: str = AVD_NAME
-    camera_image: Path | None = None   # [P4] on every launch that makes or opens a snapshot
+    camera_image: Path | None = None   # on every launch that makes or opens a snapshot
 
 
 _GPU_FLAGS: dict[GpuMode, tuple[str, ...]] = {

@@ -2,8 +2,8 @@
 
 A second start with a file (double-click on an .apk, a drop on the shortcut) connects for up to 3 s, sends the
 paths and ends; the first instance opens them through SessionApi.open_paths. It sends only to a server run by its
-own account (anyone can create the pipe name first). A closing first instance stops listening at once; the
-second start then waits for it to end and starts in its place (3a review: the file was acknowledged and lost).
+own account (anyone can create the pipe name first). A closing first instance stops listening at once, so it never
+acknowledges a file it will not open; the second start then waits for it to end and starts in its place.
 """
 
 import os
@@ -24,7 +24,7 @@ _log = log.get("gui.instance")
 
 def acceptable(path: str) -> bool:
     """Only an existing local file: no network share (another account could hand one over and make us fetch it
-    over SMB with our credentials), no relative path (3a review)."""
+    over SMB with our credentials), no relative path."""
     if not path.strip() or path.startswith(("\\\\", "//")) or not os.path.isabs(path):
         return False
     return os.path.isfile(path)
@@ -36,7 +36,7 @@ def server_name() -> str:
 
 def hand_over(paths: list[str], timeout_s: float = HANDOVER_S) -> bool:
     """Second instance: deliver the paths to the first one. True when it acknowledged."""
-    paths = [os.path.abspath(p) for p in paths]   # the first instance has another working folder (3a review)
+    paths = [os.path.abspath(p) for p in paths]   # the first instance has another working folder
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:
         sock = QLocalSocket()
@@ -88,7 +88,7 @@ class InstanceServer(QObject):
 
         def read() -> None:
             buf.extend(bytes(sock.readAll().data()))
-            if len(buf) > MAX_MESSAGE:   # a few paths, never megabytes (3a review)
+            if len(buf) > MAX_MESSAGE:   # a few paths, never megabytes
                 sock.abort()
                 return
             if buf.endswith(b"\n\n"):

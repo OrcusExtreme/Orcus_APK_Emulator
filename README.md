@@ -7,11 +7,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.13-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.13)
+[![Release](https://img.shields.io/badge/Release-v0.2--beta-blue.svg)](release/)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-457%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-481%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -83,9 +83,9 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.13 / Phase 4a Keep-State, Camera & Sensor Extensions Completed)
+## 📊 Current Progress & Status (v0.2 beta / Complete All-Phase Production Milestone)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, and **Phase 4a (Keep-State A/B Slots, Camera Image Injection, GPU Fallback Ladder, Two-Finger Pinch, Light/Proximity/Battery Control, SMS/Call Inbound Simulation, Real-time Vibration Pill, Media Drag-and-Drop, Installed App Manager, and One-Click Diag Bundle)**, backed by **457 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of all phases (Phase 1 through Phase 4b)**: Phase 1 (Architecture Specification), Phase 2 (Skeleton, Setup Automation, Empirical Spikes S0a–S9), Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Zero-Pollution Hardening), Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Orientation Sync), Phase 4a (Keep-State A/B Slots, Camera Image Injection, GPU Fallback Ladder, Touch Gestures, Diag Bundle), and Phase 4b (GUI Setup Wizard with Human-Only License Consent, Bilingual Korean/English UI, Trimmed PyInstaller Build, and Per-User Inno Setup Installer), backed by **481 automated unit tests**, complete real-device acceptance test suites, and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
@@ -93,19 +93,30 @@ flowchart LR
     B --> C["Phase 3a: Runtime, Security & Hardening<br/>(Completed: v0.1.8)"]
     C --> D["Phase 3b: Sensors & Direct IME<br/>(Completed: v0.1.12)"]
     D --> E["Phase 4a: Keep-State, Camera & Extensions<br/>(Completed: v0.1.13)"]
-    E --> F["Phase 4b: Inno Setup, English UI & Release<br/>(Next Milestone)"]
+    E --> F["Phase 4b: Setup Wizard, English UI & Installer<br/>(Completed: v0.2 beta)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
     style B fill:#2d6a4f,stroke:#1b4332,color:#fff
     style C fill:#2d6a4f,stroke:#1b4332,color:#fff
     style D fill:#2d6a4f,stroke:#1b4332,color:#fff
     style E fill:#2d6a4f,stroke:#1b4332,color:#fff
-    style F fill:#1d3557,stroke:#457b9d,color:#fff
+    style F fill:#2d6a4f,stroke:#1b4332,color:#fff
 ```
 
 
+### 🏆 Phase 4b Acceptance Verification (Real-Device Measurements)
+
+Verified on this PC with the real setup steps, the packaged build and the installer (`tests/device/test_acceptance_4b.py`, 481 unit tests):
+
+| Feature / Criteria | Acceptance Target | Empirical Measurement & Verification | Status |
+|---|---|---|:---:|
+| **GUI Setup Wizard** | Same step model as `orcus-cli setup`; the license is agreed to only by a person | Empty folder reaches Google's license page in **2.2–2.7s** (full 16,961-character text); [I agree] stays off until the text is scrolled to the end; closing there records nothing. An installed PC passes every step in **1.7–1.8s** without asking | **PASS** |
+| **English UI** | Korean or English from `ui.language` (auto follows Windows) | Every on-screen sentence has an English entry with the same fields (enforced by `tests/unit/test_i18n.py`); Qt's own Yes/No/OK/Cancel buttons follow the language | **PASS** |
+| **Trimmed Build** | Ship only what the program loads | App folder **119 MB → 88.5 MB** (software OpenGL, unused Qt plugins and translations, stray OpenSSL DLLs, `grpc_tools` removed); packaged `--selftest` matches `requirements.lock` | **PASS** |
+| **Per-User Installer** | No admin rights; `.apk` "Open with"; uninstall asks about the phone data | `release/OrcusAPK-Setup-0.1.14.exe` (**28 MB**): silent install **3.0–3.4s**, packaged 11-step smoke **PASS**, "Open with" starts the window and runs HelloPurr in **20–26s** (golden boot included); uninstall keeps the phone by default, `/DELETEDATA=1` removes only Orcus's own folders | **PASS** |
+
 ### 🏆 Phase 4a Acceptance Verification (Real-Device Measurements)
 
-All Phase 4a features were verified on the real headless Android 16 (API 36) emulator with hardware acceleration (`tests/device/test_acceptance_4a.py`, `tests/device/test_extensions_4a.py`, and 457 unit tests):
+All Phase 4a features were verified on the real headless Android 16 (API 36) emulator with hardware acceleration (`tests/device/test_acceptance_4a.py`, `tests/device/test_extensions_4a.py`, and the unit tests):
 
 | Feature / Criteria | Acceptance Target | Empirical Measurement & Verification | Status |
 |---|---|---|:---:|
@@ -294,6 +305,7 @@ Orcus_APK_Emulator/
 ├── docs/                       # Architecture specifications & research documents
 │   ├── ARCHITECTURE.md         # Full technical architecture specification (v3)
 │   ├── fixtures.md             # Test APK fixture specifications (HelloPurr, TalkToMe, OrcusProbe)
+│   ├── install.md              # Installation guide for teachers and students (Korean)
 │   ├── spikes.md               # Spike measurement protocols and empirical findings (S0a–S9)
 │   └── research/               # Phase 1 domain research briefs
 ├── src/
@@ -316,6 +328,9 @@ Orcus_APK_Emulator/
 │       │   └── smoke.py        # 11-step end-to-end automated verification harness
 │       ├── common/             # OS integration, Win32 Jobs, ACL security, atomic JSON, paths, logging
 │       │   ├── acl.py          # Folder ACL lock to user, SYSTEM & Administrators (ARCHITECTURE §11.4)
+│       │   ├── i18n.py         # UI language (auto / ko / en) and the t() / N_() sentence markers
+│       │   ├── messages_ko.py  # Korean sentences, error codes -> message, remedy and channel
+│       │   ├── messages_en.py  # English for every sentence
 │       │   └── jsonio.py       # Atomic, fsync-enforced JSON with .corrupt isolation
 │       ├── contracts/          # Strict layer protocols and data models (Qt-independent)
 │       ├── device/             # gRPC streaming adapter, touch input, controls, logcat
@@ -352,14 +367,15 @@ Orcus_APK_Emulator/
 │       │   ├── screen.py       # Direct raster blit rendering viewport
 │       │   ├── sensors.py      # Motion, rotation, tilt, GPS & microphone drawer
 │       │   ├── settings_dialog.py # Unified settings dialog (GPU, snapshots, warnings)
-│       │   └── window.py       # Top-level application window
+│       │   ├── window.py       # Top-level application window
+│       │   └── wizard.py       # Setup wizard (license, WHPX, download, restart, first preparation)
 │       ├── resources/          # Embedded runtime application icons (icon.ico, icon.png)
 │       └── setup/              # Resumable downloader, safe extractor, WHPX configuration
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   ├── unit/                   # 457 unit test suites covering contracts, engine, apk, device, gui, app
-│   └── device/                 # Real emulator device integration test suites (Phase 3a & 3b)
+│   ├── unit/                   # 481 unit tests covering contracts, engine, apk, device, gui, app, i18n
+│   └── device/                 # Real emulator device integration and acceptance suites (Phase 3a–4b)
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
 │   ├── bootstrap.py            # Automated venv creation & dependency installation
@@ -370,6 +386,8 @@ Orcus_APK_Emulator/
 │   ├── gen_protos.py           # Protobuf/gRPC stub compiler
 │   ├── fetch_fixtures.py       # Official App Inventor test APK downloader
 │   └── spikes/                 # Empirical measurement harnesses (S0a–S9, fx_*.py)
+├── packaging/                  # Inno Setup script (orcus.iss) and LGPL/GPL texts shipped with Qt
+├── release/                    # The per-user installer (OrcusAPK-Setup-<version>.exe)
 ├── NOTICE                      # Upstream license notices and attributions
 ├── plan.md                     # Master project plan and acceptance criteria (A1–A9, B1–B15)
 ├── pyproject.toml              # Project metadata, build configuration, and pyright settings
@@ -380,6 +398,14 @@ Orcus_APK_Emulator/
 ```
 
 ---
+
+## 💾 Installing (Teachers & Students)
+
+1. Run `release/OrcusAPK-Setup-0.1.14.exe` (no administrator rights needed). It is not code-signed, so Windows SmartScreen may ask first: **More info → Run anyway**.
+2. Choose the Orcus folder (default `D:\OrcusAPK`); the program goes into its `app` folder. Optionally add Orcus to "Open with" for `.apk` files.
+3. The first start opens the setup wizard: read and agree to the Google Android SDK license yourself, turn on the Windows Hypervisor Platform if asked (one UAC prompt and one restart), and let it download about 2.4 GB. The phone is then prepared once (about 5 minutes).
+
+The full guide (Korean) is in [docs/install.md](docs/install.md); lab-wide silent install: `OrcusAPK-Setup-0.1.14.exe /VERYSILENT /HOME=D:\OrcusAPK`.
 
 ## 🚀 Getting Started (Developer Setup)
 
@@ -402,7 +428,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (457 tests)
+# 4. Run the automated unit test suite (481 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -416,6 +442,9 @@ py -3.14 -m orcus D:\OrcusDev\fixtures\HelloPurr.apk
 
 # Run the 11-step automated smoke test suite:
 py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
+
+# Build the packaged app, run its self-checks and put the installer into release/:
+py -3.14 tools/dev.py build --release
 ```
 
 ---
@@ -471,15 +500,17 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] Installed app package manager in [앱] tab (`pm list packages -3`, 1-click launch in 1.1s, uninstall)
   - [x] One-click diagnostic bundle packager (`orcus-cli diag` and GUI zip export with PII masking)
   - [x] 457 automated unit tests passing with 100% success rate & 0 Pyright issues
-- [ ] **Phase 4b: Packaging, English UI & Distribution** (Next Milestone)
-  - [ ] Inno Setup standalone user installer (zero admin privileges required)
-  - [ ] Bilingual localization (Korean default + English UI switch)
-  - [ ] Standalone PyInstaller onedir distribution smoke test & final release packaging
+- [x] **Phase 4b: Setup Wizard, English UI & Distribution** (Completed: v0.2 beta)
+  - [x] GUI setup wizard on the same step model as `orcus-cli setup` (license agreed only by a person after reading to the end, WHPX with UAC, resumable download, restart and automatic resume)
+  - [x] Bilingual Korean/English UI (`ui.language`: auto / ko / en) with a completeness test for every sentence
+  - [x] Trimmed PyInstaller onedir build (119 MB → 88.5 MB) with version resources and bundled license texts
+  - [x] Per-user Inno Setup installer (no admin rights, `.apk` "Open with", uninstall keeps or removes the phone data) in `release/`
+  - [x] Phase 4 acceptance on this PC (`tests/device/test_acceptance_4b.py`); 481 unit tests & 0 Pyright issues
 
 ---
 
 ## 📄 License & Attribution
 
 * **Proprietary Code**: Core Orcus APK Emulator application code and architecture documents are maintained for proprietary educational and research purposes.
-* **Open Source Dependencies**: Third-party libraries (`PySide6-Essentials`, `grpcio`, `protobuf`, `apkInspector`) are used under their respective open-source licenses (LGPLv3, Apache 2.0, MIT).
+* **Open Source Dependencies**: Third-party libraries (`PySide6-Essentials`, `grpcio`, `protobuf`, `apkInspector`) are used under their respective open-source licenses (LGPLv3, Apache 2.0, BSD-3-Clause, Apache 2.0); the installed program carries their texts in `licenses\` next to `OrcusAPK.exe` (see [NOTICE](NOTICE)).
 * **Android SDK**: Google Android Emulator and system image components are subject to the Google Android Software Development Kit License Agreement and are downloaded directly to the local host machine without redistribution.

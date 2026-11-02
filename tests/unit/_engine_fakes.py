@@ -69,7 +69,7 @@ class FakeDevice:
         self.commands: list[str] = []
         self.lock = threading.Lock()
         self.framework_up = True          # system_server alive, package and power services answer
-        self.dead_golden = False          # the saved golden comes back without its framework (Phase 3a)
+        self.dead_golden = False          # the saved golden comes back without its framework
         self.kill_framework_on_clean_boot = False
         self.load = 0.4                   # /proc/loadavg
         self.busy = 0.1                   # share of CPU time not idle (/proc/stat)
@@ -303,7 +303,7 @@ class FakeProcesses:
                 lines.append(f"WARNING | Failed to load snapshot '{kept}', cold booting\n")
         elif "-snapshot" in argv:
             golden_load_ok = dev.load_golden() and GOLDEN_SNAPSHOT in fake.snapshots
-            if golden_load_ok and self.env.gpu_changes_once:   # the emulator deletes the golden itself (3a)
+            if golden_load_ok and self.env.gpu_changes_once:   # the emulator deletes the golden itself
                 self.env.gpu_changes_once = golden_load_ok = False
                 fake.snapshots.discard(GOLDEN_SNAPSHOT)
                 lines.append("WARNING | Failed to load snapshot, because 'host GPU has changed'; Emulator will "
@@ -427,10 +427,10 @@ class FakeSession:
         self.controls: Any = None
         self.closed = False
 
-    def logcat(self):   # type: ignore[no-untyped-def]
+    def logcat(self):
         raise NotImplementedError
 
-    def screenshot_png(self, on_done) -> None:   # type: ignore[no-untyped-def]
+    def screenshot_png(self, on_done) -> None:
         on_done(None)
 
     def close(self) -> None:
@@ -462,7 +462,7 @@ class EngineEnv:
                                                             # always (the renderer is device.renderer as set)
         self.renderers: list[str] = []        # the renderers of the next boots, in order (a one-off blip)
         self.slot_load_exits = False          # ... or exits
-        self.slot_hangs = False               # ... or hangs before gRPC answers (4a device test)
+        self.slot_hangs = False               # ... or hangs before gRPC answers
         self.device = FakeDevice()
         self.fake = HookedFake(self)
         self.fake.start()
@@ -485,7 +485,7 @@ class EngineEnv:
 
     def sync_golden_file(self) -> None:
         ram = self.paths.golden_dir / "ram.bin"
-        meta = self.paths.golden_dir / "snapshot.pb"   # the emulator records the host GPU it saw (3a finding 18)
+        meta = self.paths.golden_dir / "snapshot.pb"   # the emulator records the host GPU it saw
         if GOLDEN_SNAPSHOT in self.fake.snapshots:
             ram.parent.mkdir(parents=True, exist_ok=True)
             if not ram.exists():

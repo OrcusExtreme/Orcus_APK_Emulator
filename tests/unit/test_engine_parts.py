@@ -11,7 +11,7 @@ from orcus.emugrpc.generated import snapshot_pb2
 from orcus.engine import adb, exitlog, gpu, provision, snapshots
 
 
-def sh_for(dev: FakeDevice):   # type: ignore[no-untyped-def]
+def sh_for(dev: FakeDevice):
     def sh(cmd: str, timeout_s: float = 30) -> CmdResult:
         code, out = dev.shell(cmd)
         return CmdResult(("shell", cmd), code, out, "", 0.0, False)
@@ -29,7 +29,7 @@ class _Lines:
         self.lines = lines
         self.closed = False
 
-    def __iter__(self):   # type: ignore[no-untyped-def]
+    def __iter__(self):
         yield from self.lines
 
     def close(self) -> None:
@@ -64,7 +64,7 @@ def test_epoch_shell_quotes_and_guards() -> None:
     seen: list[list[str]] = []
     alive = {"epoch": 3}
 
-    def run(argv, timeout_s):   # type: ignore[no-untyped-def]
+    def run(argv, timeout_s):
         seen.append(list(argv))
         return CmdResult(tuple(argv), 0, "", "", 0.0, False)
 
@@ -93,7 +93,7 @@ def test_exit_log_classes() -> None:
         == ErrorCode.PRE_WHPX_OFF
     assert exitlog.classify("something else", golden=True).code == ErrorCode.ENGINE_EXIT
     changed = exitlog.classify("WARNING | Failed to load snapshot, because 'host GPU has changed'; Emulator will "
-                               "delete existing snapshot and exit.", golden=True)   # 3a finding 18
+                               "delete existing snapshot and exit.", golden=True)
     assert changed.golden_load_failed and changed.gpu_changed
     assert not exitlog.classify("ERROR | Failed to load snapshot 'orcus_golden'", golden=True).gpu_changed
 
@@ -118,7 +118,7 @@ def test_renderer_check() -> None:
     assert not gpu.is_software(gpu.renderer(line))
     assert gpu.is_software("Google (Google Inc.), Android Emulator OpenGL ES Translator (Google SwiftShader)")
     assert gpu.renderer("") == ""
-    # API 36 (Phase 4): a section header before the renderer line; only 'GLES: ' counts
+    # API 36: a section header before the renderer line; only 'GLES: ' counts
     android16 = ("------------RE GLES (Ganesh)------------\n\n"
                  "GLES: Google (NVIDIA Corporation), Android Emulator OpenGL ES Translator (NVIDIA GeForce GTX "
                  "1660/PCIe/SSE2), OpenGL ES 3.1 (4.5.0 NVIDIA 595.79)\n")
@@ -140,7 +140,7 @@ def test_flush_and_missing_after_power_off() -> None:
     dev = FakeDevice()
     sh = sh_for(dev)
     provision.apply_checked(sh, FastClock(), provision.PROVISION)
-    dev.power_off()                       # without a flush the last writes are gone (Phase 2 finding)
+    dev.power_off()                       # without a flush the last writes are gone
     assert provision.missing(sh)
     provision.apply_checked(sh, FastClock(), provision.PROVISION)
     assert provision.flush(sh, FastClock())

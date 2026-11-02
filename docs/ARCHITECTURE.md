@@ -62,7 +62,7 @@
 | (U) `netsimd.exe`, `crashpad_handler.exe` | emulator | 엔진 세션(netsimd는 유휴 15 s 뒤 스스로 종료한다는 기록이 있다) | Job 소속인지 S4/S6/S9에서 확인한다. 정지 후 남으면 우리 SDK 경로의 이미지만 종료한다 |
 | 단발 `adb.exe` 클라이언트, `emulator-check.exe`, `powershell.exe`(WHPX 상태 조회) | 작업 스레드 | 수 초 | 호출마다 타임아웃(§5.5 실행기), 넘으면 TerminateProcess |
 | `adb.exe logcat -v threadtime -T 1` (§7.8) | engine(`EngineManager.logcat()`), apk가 epoch마다 하나 | epoch | Job 소속. DeviceSession을 닫을 때(SESSION_INIT·STOPPING·FAILED) 종료 |
-| `dism.exe` (WHPX 켜기, 1회) | setup, `ShellExecuteExW` runas | 1회 | 핸들로 기다린 뒤 종료 코드를 읽는다. **권한 상승한 dism도 호출자의 Job을 물려받는다**(S0a 실측: `IsProcessInJob`=true, 2026-10-30). CLI setup은 첫 SDK 자식을 띄우는 7단계에서야 우리 Job을 만들므로 3단계의 dism은 우리 KILL_ON_JOB_CLOSE와 무관하다(개발 중에는 venv 런처의 Job 안이다). [P4] GUI 마법사는 Job 안에서 dism을 띄우게 되므로, GUI가 죽으면 dism도 죽는다 → BREAKAWAY 도우미 프로세스로 띄우거나, dism이 끝날 때까지 창을 닫지 못하게 한다 |
+| `dism.exe` (WHPX 켜기, 1회) | setup, `ShellExecuteExW` runas | 1회 | 핸들로 기다린 뒤 종료 코드를 읽는다. **권한 상승한 dism도 호출자의 Job을 물려받는다**(S0a 실측: `IsProcessInJob`=true, 2026-10-30). CLI setup은 첫 SDK 자식을 띄우는 7단계에서야 우리 Job을 만들므로 3단계의 dism은 우리 KILL_ON_JOB_CLOSE와 무관하다(개발 중에는 venv 런처의 Job 안이다). [P4] GUI 마법사는 Job 안에서 dism을 띄우게 되므로, GUI가 죽으면 dism도 죽는다 → BREAKAWAY 도우미 프로세스로 띄우거나, dism이 끝날 때까지 창을 닫지 못하게 한다. **[4b 결정] 닫지 못하게 했다:** [켜기]를 누른 뒤 dism이 답할 때까지 마법사의 닫기·Esc·[멈추기]가 안내만 하고 닫히지 않는다. GUI 프로세스 자체가 죽는 경우의 위험은 남는다(BREAKAWAY는 이 PC의 WHPX가 이미 켜져 있어 UAC 없이 시험할 수 없어 미룸) |
 
 **Job Object 규칙**
 - GUI와 엔진을 쓰는 CLI는 시작 직후, 자식을 만들기 전에 다음 순서로 호출한다. `orcus-cli setup`은 첫 SDK 자식(7단계 `emulator-check`)을 띄우기 직전에 한다:
@@ -82,7 +82,7 @@
 - **엔진 소유권 잠금(GUI·CLI·테스트 공통).**
   - VM을 띄우는 프로세스는 `D:\OrcusAPK\state\engine.lock`을 배타적으로 열어 VM 수명 동안 쥔다. 프로세스가 죽으면 OS가 풀어 준다.
   - 같은 프로세스가 `state\engine_owner.json`(pid, 시작 시각, 종류 gui|cli|detached, 포트, adb 서버 pid)을 쓴다. **[3a 추가]** 상태가 바뀔 때마다 소유자 자신의 상태·문구 키·epoch·모드도 함께 쓴다. 대기 중인 쪽을 깨우기 전에 쓰므로, 기록보다 앞선 상태를 보는 사람이 없다.
-  - 파일 잠금이라 Windows 계정이 달라도 동작한다. `D:\OrcusAPK`는 모든 계정이 공유한다.
+  - 파일 잠금이라 같은 계정의 GUI·CLI·테스트 사이에서 동작한다. Orcus 폴더는 설치한 계정만 쓸 수 있으므로(§11.4) 다른 계정은 자기 폴더(예: `D:\OrcusAPK2`)를 쓴다. 두 계정이 동시에 휴대폰을 켜면 포트가 겹쳐 나중 쪽이 `PRE_PORTS`로 멈춘다.
 - **잠금을 얻지 못하면:** 다른 Orcus나 orcus-cli가 VM을 쓰고 있는 것이다.
   - GUI와 `run`/`smoke`/기기 테스트는 `ENGINE_IN_USE`("다른 Orcus가 휴대폰을 사용 중입니다")로 멈춘다.
   - `orcus-cli engine status`/`shot`만 소유자 기록으로 읽기 전용 접속을 한다. **[3a 추가]** 보여 주는 상태는 소유자 기록의 상태다(부를 때마다 다시 읽는다). 게스트의 `booted`는 소유자의 SESSION_INIT 확인이 끝나기 약 4 s 전에 참이 되므로 쓰지 않는다. 상태가 없는 예전 기록만 `booted`로 판단한다. 실측: SESSION_INIT 동안 "휴대폰 마무리 준비 중…", 소유자가 READY가 된 0.1 s 뒤 "준비됨".
@@ -1397,13 +1397,25 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - `--yes` 같은 우회 옵션이나 환경변수는 없다.
   - 기록에 `accepted_by`(Windows 사용자)를 남긴다.
   - 사용자가 자기 터미널에서 이 단계를 마친 뒤에만 나머지 단계를 자동으로 진행한다.
-- **[P4] GUI 설치 마법사:** 같은 `SetupApi` 단계 모델을 그린다. 순서는 §11.6과 **같다**: 환영 + PC 점검 → 라이선스 → WHPX 켜기 → 다운로드 → 재부팅·자동 재개 → 가속 확인 → AVD → 휴대폰 준비 → 완료.
-  - 라이선스는 끝까지 스크롤해야 [동의]가 켜진다. 구속력 없는 한국어 요약을 함께 보여준다.
-- **이 PC에서 Phase 3 GUI가 처음 뜰 때:** 설치가 안 되어 있으면(`PRE_NOT_INSTALLED`) "설치가 필요합니다: `orcus-cli setup`"을 안내한다.
+- **[P4] GUI 설치 마법사(`gui/wizard.py`, 4b):** 같은 `SetupApi` 단계 모델을 그린다. 순서는 §11.6과 **같다**: 환영 + PC 점검 → 라이선스 → WHPX 켜기 → 다운로드 → 압축 풀기 → 재부팅·자동 재개 → 가속 확인 → AVD → 완료.
+  - **언제 뜨나:** 창을 열 때 엔진이 `NOT_INSTALLED`이면(휴대폰 파일 없음) 메인 창보다 **먼저, 혼자** 뜬다. 끝까지 가면 메인 창이 열리고 엔진을 시작한다. 닫으면 아무 창도 열지 않고 끝난다(다음에 열면 이어서). 그사이 다른 시작이 넘긴 `.apk`는 모아 두었다가 마법사 뒤에 연다. 엔진 패널의 [설치 마법사 열기](`PRE_NOT_INSTALLED`·`PRE_SDK_MISSING`·`PRE_PATH`)와 [Windows 하이퍼바이저 플랫폼 켜기](`PRE_WHPX_OFF`)도 같은 마법사를 창 위에 띄우고, 끝나면 `engine.retry()`.
+  - **휴대폰 준비(PROVISION):** 마법사는 엔진을 만들지 않는다. 완료 페이지에서 [시작]을 누르면 메인 창이 엔진을 켜고, 첫 골든 준비(약 5분)는 엔진의 `EngineStatus`(PROVISIONING)로 창에 보인다. 단계 목록에는 "휴대폰 처음 준비 (설치 뒤 창에서)"로 둔다.
+  - **라이선스(★D2):** 끝까지 스크롤해야 [동의합니다]가 켜지고, 누르면 `accept_license(sha256, Windows 사용자)`. 마법사가 스스로 동의하는 길은 없다(유닛 시험은 가짜 SetupApi만 쓴다). 구속력 없는 한국어 요약(`setup.license.summary`, 조항 번호 포함)을 함께 보여준다. 영어 UI에서는 "SDK를 나눠 주지 않음(§3.4)·끝까지 읽기" 한 줄로 바꾼다.
+  - **WHPX:** 관리자 토큰이 아니면 IT 요청문 복사 버튼. [켜기] → UAC. dism이 답할 때까지는 마법사를 닫을 수 없다(§1.2 표: dism이 이 프로세스의 Job 안). 실패하면 [그래도 내려받기](`resume`)와 [다시 시도](`cancel` + `run`, 기다리던 worker는 3 s 안에 끝남).
+  - **재부팅:** 마법사로 시작한 설치는 RunOnce에 `OrcusAPK.exe --setup-resume [--home]`을 남긴다. 다시 로그인하면 창이 마법사를 열고 [설치 시작] 없이 이어 간다(CLI로 시작했으면 예전처럼 `orcus-cli setup --resume`).
+  - **닫기:** 단계가 진행 중이면 한 번 묻고 `cancel()`(SetupApi에 추가). setup.json과 `.part`가 남아 다음에 이어서 한다.
+- **[P3] 이 PC에서 GUI가 처음 뜰 때:** 설치가 안 되어 있으면(`PRE_NOT_INSTALLED`) "설치가 필요합니다"를 안내했다. [P4]부터는 위의 마법사가 뜬다.
 
 ### 10.6 문자열
 
 모든 문자열은 `common/messages_ko.py` 한 파일에 둔다(Qt 없음. CLI도 같이 쓴다). 영어는 **[P4]**다. 이모지 글리프는 쓰지 않고 아이콘은 SVG로 한다.
+
+**[P4] 영어 UI(4b):**
+- **언어:** 설정 `ui.language` = `"auto"`(기본, Windows 표시 언어가 한국어면 ko, 아니면 en) · `"ko"` · `"en"`. `__main__`이 창을 만들기 전에 `common.i18n.set_language()`로 정한다. 바꾸면 **다시 시작할 때** 적용된다(설정 대화상자에 [언어 (Language)]). CLI는 교사·개발자용이라 한국어로 둔다.
+- **공유 표:** `messages_ko`의 `TEXT`·`ERRORS`·`REMEDY_LABELS`·IT 요청문은 같은 키로 `common/messages_en.py`에 영어가 있다. `text()`·`spec()`·`it_template()`이 UI 언어로 답한다.
+- **GUI 문장:** 한국어를 코드에 그대로 두고 `t("…")`로 감싼다(모듈 상수는 `N_("…")`로 표시하고 보여 줄 때 `t()`). `messages_en.GUI`가 한국어 문장 → 영어다. 표에 없는 문장은 한국어 그대로 보인다(실패하지 않음).
+- **시험(`tests/unit/test_i18n.py`):** 소스의 모든 `t()`/`N_()` 리터럴이 영어 표에 있고 `{필드}`가 같다. `t()`/`N_()` 밖에 남은 한국어 문자열이 없다(docstring·CLI·시험 데이터 제외). 영어 문장에 한글이 없다. 공유 표의 키가 모두 짝이 있다. 기본 위치 이름(서울시청 등, 설정 데이터)은 표시할 때 `t()`로 영어가 된다.
+- **Qt 자체 버튼:** 한국어 UI에서는 `qtbase_ko.qm`(QTranslator)을 올려 예/아니요/확인/취소도 한국어로 보인다(전에는 영어였다). 패키징본은 이 번역 하나만 남기고, `--selftest`가 있는지 본다.
 
 ---
 
@@ -1482,7 +1494,7 @@ firstboot.bootFromLocalSnapshot=no
 - **우선순위:** 명령줄 > `ORCUS_*` 환경변수 > `state\settings.json`(GUI가 원자적으로 기록) > 프로그램에 포함된 `defaults.toml`(`tomllib`으로 읽음).
 - **기본값:**
   - **엔진:** `engine.ram_mb=2560`(이미지 최소값, §11.2), `engine.cores=4`, `engine.gpu_mode="host"`(S2 결과에 따라 `"host_hidden"`, **`"auto"`라는 값은 없음**), `engine.idle_grpc_timeout_s=120`, `engine.keepalive_s=30`, `engine.ports={console 5640, grpc 8640, adb_server 15037}`, `engine.locale="ko-KR"`, `engine.timezone="Asia/Seoul"`
-  - **실행:** `apk.grant_all=false`, `apk.reset_before_each_run=false`, `apk.staging_keep=20`, `session.keep_state=false`([P4]), `ui.confirm_close_data=true`
+  - **실행:** `apk.grant_all=false`, `apk.reset_before_each_run=false`, `apk.staging_keep=20`, `session.keep_state=false`([P4]), `ui.confirm_close_data=true`, `ui.language="auto"`([P4] §10.6)
   - **입력:** `input.paste_method="paste_key"`, `input.esc_is_back=true`, `input.right_click_back=true`
   - **화면:** `frame.flip_rows=false`, `frame.max_fps=60`
   - **센서:** `sensors.shake_default="moderate"`, `sensors.shake_sensitivity={}`(패키지별), `sensors.location_presets=[[37.5665, 126.9780, "서울시청"]]`
@@ -1491,7 +1503,7 @@ firstboot.bootFromLocalSnapshot=no
 
 ### 11.4 루트 결정과 가드
 
-- **결정 순서:** `--home` > `ORCUS_HOME` > `<exe 폴더>\orcus_home.txt`(설치 프로그램이 기록) > `D:\OrcusAPK`.
+- **결정 순서:** `--home` > `ORCUS_HOME` > `<exe 폴더>\orcus_home.txt`(설치 프로그램이 기록) > `D:\OrcusAPK`. [P4] 창(`OrcusAPK.exe`)도 `--home`을 받는다.
 - **[3a 결정] 권한:**
   - 설치(CHECK 단계)는 루트를 상위 폴더 권한에서 끊는다. 이 계정·SYSTEM·Administrators에게만 전체 권한을 주고 아래로 상속한다(`common/acl.py`, icacls, 계정마다 한 번).
   - 이유: D:가 "Authenticated Users: 수정"을 물려주므로, 같은 PC의 다른 계정이 SDK 실행 파일을 바꿔 우리 계정으로 실행시킬 수 있었다(3a 리뷰).
@@ -1625,6 +1637,20 @@ firstboot.bootFromLocalSnapshot=no
   - Phase 2에서 37.2.12 `emulator\lib\*.proto`의 Apache-2.0 헤더를 확인한다(라이선스 §3.5). 확인되면 `src/orcus/emugrpc/protos/16428233/`에 NOTICE와 함께 넣는다.
   - 스텁은 개발 시 grpcio-tools로 생성해 저장소에 넣고, import를 패키지 상대 경로로 고친다. 런타임에는 grpcio-tools가 없다.
   - protobuf는 gencode 버전 이상, 8 미만으로 고정한다.
+
+### 11.8 배포 [P4] (4b)
+
+- **빌드(`py tools/dev.py build [--installer | --release]`, `--release`는 설치 파일을 저장소의 `release/`에 하나만 둔다):** 소스를 `D:\OrcusDev\src-copy`로 복사한 뒤 PyInstaller onedir. 창 EXE·콘솔 EXE에 버전 리소스(CompanyName OrcusExtreme, `orcus.__version__`).
+  - **정리:** 쓰지 않는 Qt 파일을 뺀다. 소프트웨어 OpenGL(`opengl32sw.dll` 20 MB), `qdirect2d`·`qminimal`·`qoffscreen`, TIFF·ICNS·TGA·WBMP·SVG 그림 플러그인과 `Qt6Svg`, 터치·네트워크 정보 플러그인, TLS 백엔드와 그것 때문에 다른 프로그램에서 끌려온 `libcrypto-3-x64`·`libssl-3-x64`, `qtbase_ko.qm` 말고 모든 Qt 번역, 개발용 `grpc_tools`. 남는 Qt 플러그인은 `qwindows`, `qmodernwindowsstyle`, ico·jpeg·gif·webp(카메라 그림 고르기)뿐이다. **앱 폴더 119 MB → 88.5 MB.**
+  - Qt는 바꿔 끼울 수 있는 별도 DLL로 남긴다(LGPL). EXE 옆에 `NOTICE.txt`와 `licenses\`(각 패키지의 라이선스, Python의 LICENSE(OpenSSL 등 포함), PyInstaller COPYING, Qt용 LGPL-3.0·GPL-3.0 원문: Qt 휠에는 원문이 없어 `packaging/licenses`에 gnu.org 원문을 둠).
+- **설치 프로그램(`packaging/orcus.iss`, Inno Setup 6, 28 MB):** 사용자별 설치, 관리자 권한 없음(`PrivilegesRequired=lowest`), 무서명(★D3). 한국어·영어(Windows 언어로 고름).
+  - **폴더 하나만 고른다:** "Orcus 폴더"(기본 `D:\OrcusAPK`, 고정 D:가 없으면 `C:\OrcusAPK`). 프로그램은 그 안의 `app\`에 들어가고 `app\orcus_home.txt`가 Orcus 폴더를 가리킨다. 경로는 영문·숫자, 40자 이하, 고정 드라이브, 드라이브 바로 아래 금지(§11.4 가드 중 설치 프로그램이 볼 수 있는 것. NTFS와 Drive는 마법사의 PC 점검이 다시 본다).
+  - **연결 프로그램:** HKCU에 ProgID `OrcusAPK.apk`와 `.apk\OpenWithProgids`, `Applications\OrcusAPK.exe`를 쓴다(작업 선택, 기본 켬). `.apk`의 기본 프로그램은 바꾸지 않는다. 명령은 `"…\OrcusAPK.exe" "%1"`(단일 인스턴스가 실행 중인 창에 넘김, §1.3).
+  - **실행 중이면 설치·제거를 막는다:** `AppMutex=Local\OrcusAPK.Instance`(§1.3의 뮤텍스).
+  - **제거:** 프로그램·바로 가기·레지스트리를 지우고, RunOnce에 남은 설치 재개 값도 지운다. 그다음 "Orcus 폴더에 남은 가상 휴대폰·SDK·로그·설정(약 14 GB)도 지울까요?"를 묻는다(기본 **아니요**: 다시 설치하면 그대로 이어 씀). 예를 고르면 Orcus가 만든 하위 폴더(`sdk avd home tmp downloads staging logs state diag`)만 지우고, 폴더는 비었을 때만 지운다. 사용자의 다른 파일은 건드리지 않는다.
+  - **무인 설치(실습실):** `Setup.exe /VERYSILENT /HOME=E:\Orcus`, 제거 `unins000.exe /VERYSILENT [/DELETEDATA=1]`. `/SUPPRESSMSGBOXES`면 지우기 질문은 기본값(아니요)이다.
+  - 컴파일러는 이 PC에 이미 사용자별로 있던 Inno Setup 6.7.3(2026-10-09 설치)을 쓴다. `ORCUS_ISCC`로 다른 위치를 줄 수 있다.
+- **무서명:** 처음 실행할 때 SmartScreen이 "Windows의 PC 보호" 경고를 띄울 수 있다([추가 정보] → [실행]). 공개 배포 전에는 §14의 서명을 정한다.
 
 ## 12. 테스트 전략
 
@@ -1805,10 +1831,11 @@ firstboot.bootFromLocalSnapshot=no
 - **Google SDK 구성요소**(에뮬레이터, platform-tools, 시스템 이미지)는 android-sdk-license §3.4에 따라 **재배포 금지**다. 사용자 PC에서 **사람이 직접 동의**를 기록한 뒤 다운로드한다. stable 채널만 쓰고, 패키지를 줄이지 않는다.
 - **ARM 번역**(libndk_translation)은 개발·디버그용이다. 상용 호스팅 서비스에는 쓸 수 없다.
 - **우리 배포물:**
-  - Qt(LGPL): DLL을 교체할 수 있게 별도 파일로 둔다(onedir).
-  - grpcio(Apache-2.0), protobuf(BSD-3), apkInspector(Apache-2.0).
+  - Qt(LGPL): DLL을 교체할 수 있게 별도 파일로 둔다(onedir). [P4] LGPL-3.0·GPL-3.0 원문과 Qt·PySide6 소스 위치를 NOTICE와 `licenses\`에 둔다.
+  - grpcio(Apache-2.0), protobuf(BSD-3), apkInspector(Apache-2.0), typing_extensions(PSF-2.0), Python 런타임(PSF, 함께 든 OpenSSL·libffi·bzip2·zstd 등).
   - 포함한 proto: Apache-2.0 헤더를 확인한 뒤 NOTICE에 적는다.
   - PyInstaller 부트로더 예외.
+  - [P4] 설치 프로그램과 앱 폴더에 Android SDK의 어떤 부분도 들어가지 않는다(마법사가 PC마다 동의 뒤 내려받음).
 - **공개 배포 전**에 법률 검토와 코드 서명(OV 인증서, 오픈소스라면 SignPath)이 필요하다(사용자 결정 ★D3).
 
 ---

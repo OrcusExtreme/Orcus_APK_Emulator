@@ -1,4 +1,4 @@
-"""[P2] Boot check: prove this PC really runs the emulator (ARCHITECTURE.md §12.5, spikes S0b/S6).
+"""Boot check: prove this PC really runs the emulator (ARCHITECTURE.md §12.5, spikes S0b/S6).
 
 `emulator-check accel` is not enough: it reported "WHPX usable" even before the post-dism reboot.
 For each GPU mode this launches the AVD cold (no snapshot load or save), waits for its discovery
@@ -80,7 +80,7 @@ def accelerator_from_log(text: str) -> str | None:
 
 def command_lines(root: Path) -> list[str]:
     """Command lines of processes whose image is under `root` (for S6: who starts what)."""
-    # the path goes in through the environment, never into the script text: a home like D:\x';calc;' ran code (3a)
+    # the path goes in through the environment, never into the script text: a home like D:\x';calc;' would run code
     script = ("$r = $env:ORCUS_SCAN_ROOT.TrimEnd('\\') + '\\'; Get-CimInstance Win32_Process | Where-Object { "
               "$_.ExecutablePath -and $_.ExecutablePath.StartsWith($r, 'OrdinalIgnoreCase') } | "
               "ForEach-Object { \"$($_.ProcessId) parent=$($_.ParentProcessId) $($_.CommandLine)\" }")
@@ -92,7 +92,7 @@ def command_lines(root: Path) -> list[str]:
 
 def _listening(pids: set[int]) -> list[str]:
     """`netstat -ano` lines in LISTENING state owned by our SDK processes (bind addresses for S6)."""
-    netstat = str(win32.system_dir() / "NETSTAT.EXE")   # by full path, never one in the current folder (3a review)
+    netstat = str(win32.system_dir() / "NETSTAT.EXE")   # by full path, never one in the current folder
     result = proc.run([netstat, "-ano", "-p", "TCP"], timeout_s=15)
     result6 = proc.run([netstat, "-ano", "-p", "TCPv6"], timeout_s=15)
     out: list[str] = []
@@ -131,7 +131,7 @@ def _stop(emulator: subprocess.Popen[bytes], stub: object | None, rec: discovery
 def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot: bool,
               discovery_timeout_s: float = 60.0, boot_timeout_s: float = 300.0,
               job: winjob.Job | None = None, leftover_wait_s: float = 3.0) -> BootReport:
-    # leftover_wait_s: after a stop only crashpad_handler (gone in ~0.1 s, 3a) or, after a graceful exit, the
+    # leftover_wait_s: after a stop only crashpad_handler (gone in ~0.1 s) or, after a graceful exit, the
     # `emulator -kill <qemu> -sleep 20` watchdog remain (S6); they are safe to end at once, so A5's N stays near 5 s
     report = BootReport(gpu=str(gpu))
     chosen = ports.choose(settings.engine.ports, ports.load_saved(paths))
@@ -219,7 +219,7 @@ def boot_once(paths: OrcusPaths, settings: Settings, gpu: GpuMode, *, full_boot:
         report.leftovers = sorted(f"{Path(image).name} pid={pid}" for pid, image in left)
         if left:
             report.leftover_command_lines = command_lines(paths.sdk)
-        for pid, image in left:   # A5: nothing of ours may survive a stop (never another adb, 3a review)
+        for pid, image in left:   # A5: nothing of ours may survive a stop (never another adb)
             if Path(image).name.lower() in discovery.EMULATOR_IMAGES:
                 winjob.terminate_pid(pid)
         report.log_tail = _tail(log_path)

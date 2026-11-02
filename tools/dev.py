@@ -6,7 +6,7 @@
     py tools/dev.py cli [orcus-cli args]   e.g. `cli doctor`
     py tools/dev.py lock                   regenerate the hash locks
     py tools/dev.py genprotos [dir]        vendor emulator protos + generate stubs
-    py tools/dev.py build [--boot-check]   packaging smoke: PyInstaller onedir + packaged self-checks
+    py tools/dev.py build [options]        packaging, self-checks, installer (options: tools/build.py)
 """
 
 import sys

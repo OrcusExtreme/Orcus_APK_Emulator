@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from orcus.common.i18n import t
 from orcus.common.messages_ko import text
 from orcus.contracts import OrcusError, RemedyAction
 
@@ -27,7 +28,7 @@ class Overlay(QFrame):
         super().__init__(parent)
         self.setStyleSheet("Overlay{background:rgba(10,10,14,190);border-radius:6px} QLabel{color:white}")
         self.label = QLabel()
-        self.label.setTextFormat(Qt.TextFormat.PlainText)   # app labels and errors are untrusted text (3a review)
+        self.label.setTextFormat(Qt.TextFormat.PlainText)   # app labels and errors are untrusted text
         self.label.setWordWrap(True)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         f = self.label.font()
@@ -52,7 +53,7 @@ class Overlay(QFrame):
         self.raise_()
         self.show()
 
-    def mousePressEvent(self, event: object) -> None:   # type: ignore[override]
+    def mousePressEvent(self, event: object) -> None:
         self.clicked.emit()
 
 
@@ -90,7 +91,7 @@ class Banner(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 6, 6)
         label = QLabel()
-        label.setTextFormat(Qt.TextFormat.PlainText)   # a crash banner carries the app's own text (3a review)
+        label.setTextFormat(Qt.TextFormat.PlainText)   # a crash banner carries the app's own text
         label.setText(words)
         label.setWordWrap(True)
         lay.addWidget(label, 1)
@@ -99,7 +100,7 @@ class Banner(QFrame):
             b.clicked.connect(action[1])
             lay.addWidget(b)
         close = QToolButton()
-        close.setText("닫기")
+        close.setText(t("닫기"))
         close.setAutoRaise(True)
         close.clicked.connect(self.close)
         if on_close is not None:
@@ -115,8 +116,9 @@ class EnginePanel(QFrame):
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
-        self.setStyleSheet("EnginePanel{background:#f6f7f9;border:1px solid #d0d5dd;border-radius:8px}")
-        self.title = QLabel("휴대폰을 켜지 못했습니다")
+        # the theme's own colors: a fixed light background under a dark Windows theme's light text is unreadable
+        self.setStyleSheet("EnginePanel{background:palette(window);border:1px solid palette(mid);border-radius:8px}")
+        self.title = QLabel(t("휴대폰을 켜지 못했습니다"))
         f = self.title.font()
         f.setPointSizeF(f.pointSizeF() * 1.3)
         f.setBold(True)
@@ -131,9 +133,9 @@ class EnginePanel(QFrame):
         self.code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.primary = QPushButton()
         self.primary.clicked.connect(self._remedy)
-        log_btn = QPushButton("로그 보기")
+        log_btn = QPushButton(t("로그 보기"))
         log_btn.clicked.connect(self.open_log.emit)
-        report = QPushButton("보고서 복사")
+        report = QPushButton(t("보고서 복사"))
         report.clicked.connect(self.copy_report.emit)
         row = QHBoxLayout()
         row.addWidget(self.primary)

@@ -1,4 +1,4 @@
-"""[P2] `--selftest`: built-in checks for the packaged build (ARCHITECTURE.md §12.5). No pytest.
+"""`--selftest`: built-in checks for the packaged build (ARCHITECTURE.md §12.5). No pytest.
 
 Guards against the dev/packaged runtime mismatch seen in an earlier project (OpenCV 4.14 vs 5.0):
 runtime imports, installed versions against requirements.lock, the gRPC stubs against

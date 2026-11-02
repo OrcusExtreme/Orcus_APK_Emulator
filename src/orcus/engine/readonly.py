@@ -2,7 +2,7 @@
 
 Reads the owner record and the emulator's discovery file, then makes read-only gRPC calls (getStatus,
 getScreenshot). The VM, the lock and the owner record are never touched. The state shown is the one the owner
-wrote into its record (3a): the guest's `booted` turns true about 4 s before the owner's SESSION_INIT checks end.
+wrote into its record: the guest's `booted` turns true about 4 s before the owner's SESSION_INIT checks end.
 """
 
 import os
@@ -27,7 +27,7 @@ class Owner:
     started: float
     console: int
     grpc: int
-    state: EngineState | None = None   # None: written before 3a, without the owner's state
+    state: EngineState | None = None   # None: a record without the owner's state (or one we do not know)
     text_key: str | None = None
     epoch: int = 0
     mode: SessionMode = SessionMode.GOLDEN
@@ -59,7 +59,7 @@ class ReadOnlyVm:
         if now is not None and now.pid == self.owner.pid and now.state is not None:
             return EngineStatus(now.state, now.text_key or f"engine.state.{now.state}", None, now.mode, now.epoch,
                                 EpochCause.BOOT, True, (), None, None)
-        state = EngineState.READY if getattr(st, "booted", False) else EngineState.BOOTING   # an owner from before 3a
+        state = EngineState.READY if getattr(st, "booted", False) else EngineState.BOOTING   # a record without a state
         return EngineStatus(state, f"engine.state.{state}", None, SessionMode.GOLDEN, 0, EpochCause.BOOT, True, (),
                             None, None)
 
@@ -87,7 +87,7 @@ def read_owner(paths: OrcusPaths) -> Owner | None:
                       int(raw["console"]), int(raw["grpc"]))
     except (KeyError, TypeError, ValueError):
         return None
-    try:   # the owner's own state (3a); a record without it, or with a value we do not know, keeps the defaults
+    try:   # the owner's own state; a record without it, or with a value we do not know, keeps the defaults
         return replace(owner, state=EngineState(raw["state"]), text_key=str(raw.get("text_key") or "") or None,
                        epoch=int(raw.get("epoch", 0)), mode=SessionMode(raw.get("mode", SessionMode.GOLDEN)))
     except (KeyError, TypeError, ValueError):

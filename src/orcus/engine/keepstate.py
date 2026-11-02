@@ -1,4 +1,4 @@
-"""[P4] Keep-state (ARCHITECTURE.md §6.3): the phone kept between sessions, in two snapshots used in turn.
+"""Keep-state (ARCHITECTURE.md §6.3): the phone kept between sessions, in two snapshots used in turn.
 
 The pointer `state\\keep_state.json` names the slot that holds the newest kept phone. A normal stop saves into the
 other slot, checks it, moves the pointer, and only then deletes the old slot: a stop that dies halfway leaves the
@@ -46,7 +46,7 @@ def exists(paths: OrcusPaths, slot: str) -> bool:
 
 
 def gpu(paths: OrcusPaths, slot: str) -> str | None:
-    """The host GPU the emulator recorded with the slot, like snapshots.golden_gpu (3a finding 18)."""
+    """The host GPU the emulator recorded with the slot, like snapshots.golden_gpu."""
     try:
         snap = snapshot_pb2.Snapshot.FromString((slot_dir(paths, slot) / "snapshot.pb").read_bytes())
     except (OSError, DecodeError):

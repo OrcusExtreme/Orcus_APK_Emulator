@@ -1,4 +1,5 @@
-"""The App Inventor fixtures of docs/fixtures.md, as data: HelloPurr, TalkToMe, OrcusProbe.
+"""The App Inventor fixtures of docs/fixtures.md, as data (ALL): HelloPurr, TalkToMe, OrcusProbe, the tutorial apps
+and HelloPurr variants of the acceptance tests, and OrcusWorld.
 
 HelloPurr and TalkToMe follow the official tutorials' designs and blocks; their media (kitty.png, meow.wav) are
 drawn and synthesized here, so nothing third-party is bundled. Label texts in OrcusProbe start with a fixed word
@@ -202,7 +203,7 @@ PROBE_HTML = (b'<!doctype html><html><head><meta charset="utf-8">'
               b'<meta name="viewport" content="width=device-width"></head>'
               b'<body><input id="w" placeholder="web input"><textarea id="t"></textarea></body></html>\n')
 
-# --- 3a acceptance (ARCHITECTURE.md §12.4): the tutorial apps students start with, and three HelloPurr variants ---
+# --- acceptance apps (ARCHITECTURE.md §12.4): the tutorial apps students start with, and three HelloPurr variants ---
 RED, BLUE_PAINT, GREEN = "&HFFFF0000", "&HFF0000FF", "&HFF00FF00"
 
 
@@ -266,11 +267,11 @@ def mole_mash() -> Project:
     return Project("MoleMash", [s], {"mole.png": mole_png()})
 
 
-# --- 4a (ARCHITECTURE.md §9.7): light, proximity, a text, a call, two fingers --------------------------------------
+# --- OrcusWorld (ARCHITECTURE.md §9.7): light, proximity, a text, a call, two fingers ------------------------------
 def orcus_world() -> Project:
     """Labels start with a fixed word ("light ", "near ", ...) for `uiautomator dump`, like OrcusProbe's."""
     # PhoneCall's status comes as an OptionList (StartedStatus/EndedStatus) whose value is a number, and `join`
-    # takes no such value ("Bad arguments to join" on the device, 4a): `+ 0` makes it the number.
+    # takes no such value ("Bad arguments to join" on the device): `+ 0` makes it the number.
     status = b.Add(b.Param("status"), b.Num(0))
     s = Screen("Screen1", screen1("OrcusWorld", Title="OrcusWorld"), [
         label("lblLight", "light -"),
@@ -343,7 +344,7 @@ ALL: dict[str, Callable[[], Project]] = {
     "HelloPurrKo": hello_purr_variant("HelloPurrKo", AppName="고양이 쓰다듬기"),   # Korean label (B8)
     "HelloPurrMin36": hello_purr_min36,                                          # minSdk 36 installs (B8)
     "HelloPurrLand": hello_purr_variant("HelloPurrLand", ScreenOrientation="landscape"),   # turned first (B8)
-    "OrcusWorld": orcus_world,                                                   # 4a extensions
+    "OrcusWorld": orcus_world,                                                   # sensors, text, call, pinch
 }
 
 

@@ -1,6 +1,6 @@
-"""Vibrations an app made (plan.md Phase 4 "진동 표시"): no log line says so (S5, 4a), but `dumpsys
-vibrator_manager` (0.05 s) lists the one running, with its creation time and the calling package, and the recent
-ones by usage, one line each with their length. Seen on API 36 in 4a (HelloPurr's Sound.Vibrate(500) on a tap):
+"""Vibrations an app made: no log line says so (S5), but `dumpsys vibrator_manager` (0.05 s) lists the one running,
+with its creation time and the calling package, and the recent ones by usage, one line each with their length.
+Seen on API 36 (HelloPurr's Sound.Vibrate(500) on a tap):
 
         Vibration:
           status = running

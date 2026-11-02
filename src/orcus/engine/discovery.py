@@ -1,7 +1,7 @@
 """Emulator discovery files `pid_<PID>.ini` (ARCHITECTURE.md §5.7). Pure parsing plus a scan.
 
-Location: %LOCALAPPDATA%\\Temp\\avd\\running (fixed) and, because we change TMP, <TMP>\\avd\\running
-(S6 confirms which). Match on port.serial: the PID in the file name may be the qemu child.
+Location: %LOCALAPPDATA%\\Temp\\avd\\running, even though we change TMP (S6: <TMP>\\avd\\running stays unused).
+Match on port.serial: the PID in the file name is the qemu child's (S6), not emulator.exe's.
 """
 
 import re
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _NAME = re.compile(r"^pid_(\d+)\.ini$", re.IGNORECASE)
-# the emulator's own processes: what a stop or a boot check may end under the SDK (never adb, emulator-check; 3a)
+# the emulator's own processes: what a stop or a boot check may end under the SDK (never adb, emulator-check)
 EMULATOR_IMAGES = frozenset({"emulator.exe", "qemu-system-x86_64-headless.exe", "qemu-system-x86_64.exe",
                              "netsimd.exe", "crashpad_handler.exe"})
 

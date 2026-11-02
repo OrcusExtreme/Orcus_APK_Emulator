@@ -1,8 +1,8 @@
 """Device preparation (ARCHITECTURE.md §6.5–§6.6): the only owner of settings/setprop/svc/locksettings commands.
 
-Promoted from the Phase 2 draft (tools/spikes/provision_draft.py) with what the spikes taught:
+What the spikes taught:
 - `-change-locale` restarts the framework ~5 s after boot: wait for it before any setting (S4).
-- SettingsProvider writes its XML up to ~2 s late and SHUTDOWN is a power-off: flush before stopping (Phase 2).
+- SettingsProvider writes its XML up to ~2 s late and SHUTDOWN is a power-off: flush before stopping.
 - App Inventor's LocationSensor asks the fused provider at BALANCED power, so gRPC setGps never reaches it;
   locations go through the framework's test providers (S7).
 """
@@ -123,8 +123,8 @@ def framework_problem(sh: Sh) -> str | None:
     """None while system_server runs and the package and power services answer.
 
     A golden saved at a bad moment came back without them on every load: system_server killed by its Watchdog
-    and not restarted, `cmd package` Broken pipe, `dumpsys power` DEAD_OBJECT, `svc power stayon` hanging
-    (Phase 3a, 2026-10-30). adb and `echo ok` still worked, so the old checks passed it.
+    and not restarted, `cmd package` Broken pipe, `dumpsys power` DEAD_OBJECT, `svc power stayon` hanging.
+    adb and `echo ok` still worked, so checking those alone would pass such a golden.
     """
     if not sh("pidof system_server", 5).out.strip():
         return "system_server is not running"

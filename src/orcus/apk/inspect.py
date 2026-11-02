@@ -4,9 +4,9 @@ apkInspector returns the decoded manifest as XML text; values come back as decod
 as numbers (screenOrientation "-1" / "0" in the fixtures). Parsing failures never block a run: the caller
 falls back to `pm list packages` and `resolve-activity` after installing.
 
-The file is untrusted (3a review): entries are inflated a chunk at a time and only up to a cap, and only the
-methods Android reads (stored, deflated). A zip bomb's manifest, asset or icon never gets inflated in full;
-apkInspector's own `parse_apk_for_manifest` read the whole APK into memory and inflated without a limit.
+The file is untrusted: entries are inflated a chunk at a time and only up to a cap, and only the methods Android
+reads (stored, deflated). A zip bomb's manifest, asset or icon never gets inflated in full; apkInspector's own
+`parse_apk_for_manifest` reads the whole APK into memory and inflates without a limit.
 """
 
 import io

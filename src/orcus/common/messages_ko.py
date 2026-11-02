@@ -1,20 +1,24 @@
 """Every user-visible string, plus the ErrorCode -> message / remedy / feedback channel table.
 
 No Qt here: the CLI and the GUI share this file (ARCHITECTURE.md §10.2, §10.6). Sentences are
-written for students: plain words, and each one says what to do next.
+written for students: plain words, and each one says what to do next. text() and spec() answer in the UI
+language (common.i18n); the English sentences are in messages_en under the same keys.
 """
 
 import getpass
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum, auto
 
 from orcus.contracts import ErrorCode, OrcusError, Remedy, RemedyAction
 from orcus.contracts import RemedyAction as R
 
+from . import i18n, messages_en
+from .pins import EMULATOR, EMULATOR_BUILD
+
 
 class Channel(StrEnum):
-    SETUP_LINE = auto()     # setup progress screen (CLI / [P4] wizard): failure line + IT request
+    SETUP_LINE = auto()     # setup progress screen (CLI / wizard): failure line + IT request
     ENGINE_PANEL = auto()   # full panel over the phone area
     BANNER = auto()         # persistent warning banner
     MODAL = auto()          # decision dialog
@@ -48,7 +52,7 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.SETUP_QUARANTINE: MessageSpec("압축을 푼 파일 일부가 사라졌습니다. 백신(V3)이 격리했을 수 있으니 IT 요청문으로 예외를 요청하세요.", C.SETUP_LINE, R.COPY_IT_REQUEST),
     E.SETUP_ACCEL_FAILED: MessageSpec("가상화 가속(WHPX)을 사용할 수 없습니다. 로그를 확인하세요.", C.SETUP_LINE, R.OPEN_LOG),
     # 실행 전 점검
-    E.PRE_NOT_INSTALLED: MessageSpec("설치가 필요합니다. 터미널에서 orcus-cli setup을 실행하세요.", C.ENGINE_PANEL, R.REPAIR_SETUP),
+    E.PRE_NOT_INSTALLED: MessageSpec("설치가 필요합니다. [설치 마법사 열기]를 누르세요(터미널에서는 orcus-cli setup).", C.ENGINE_PANEL, R.REPAIR_SETUP),
     E.PRE_WHPX_OFF: MessageSpec("Windows 하이퍼바이저 플랫폼이 꺼져 있어 휴대폰을 켤 수 없습니다.", C.ENGINE_PANEL, R.ENABLE_WHPX),
     E.PRE_SDK_MISSING: MessageSpec("휴대폰 실행에 필요한 파일이 없습니다. 설치를 복구하세요.", C.ENGINE_PANEL, R.REPAIR_SETUP),
     E.PRE_DISK: MessageSpec("D: 드라이브 공간이 부족해 휴대폰을 켤 수 없습니다. 공간을 비운 뒤 다시 시도하세요.", C.ENGINE_PANEL, R.FREE_DISK),
@@ -108,7 +112,7 @@ REMEDY_LABELS: dict[RemedyAction, str] = {
     R.RETRY: "다시 시도",
     R.ENABLE_WHPX: "Windows 하이퍼바이저 플랫폼 켜기",
     R.COPY_IT_REQUEST: "IT 요청문 복사",
-    R.REPAIR_SETUP: "설치 복구",
+    R.REPAIR_SETUP: "설치 마법사 열기",
     R.OPEN_LOG: "로그 보기",
     R.RESET_PHONE: "휴대폰 초기화",
     R.RUN_AGAIN: "다시 실행",
@@ -161,7 +165,17 @@ TEXT: dict[str, str] = {
     "setup.whpx.continue_prompt": "WHPX 없이 내려받기만 계속할까요? (예/아니오): ",
     "setup.reboot.needed": "Windows를 다시 시작하면 설치가 자동으로 이어집니다. 지금 바로 다시 시작하지 않아도 됩니다.",
     "setup.done": "설치가 끝났습니다. 휴대폰 첫 준비는 다음 단계에서 진행합니다.",
-    "setup.provision.later": "휴대폰 첫 준비는 Phase 2에서는 검증 스크립트가, Phase 3부터는 프로그램이 자동으로 합니다.",
+    "setup.provision.later": "휴대폰 첫 준비는 Orcus 창(OrcusAPK.exe)을 처음 열 때 자동으로 합니다(약 5분, 한 번만).",
+    "setup.license.summary": (
+        "참고용 요약입니다. 법적 효력은 아래 영어 원문에만 있습니다.\n"
+        "• 동의하면 Google과 계약을 맺습니다. 회사·학교를 대신해 동의한다면 그럴 권한이 있어야 합니다(1.1, 2.4).\n"
+        "• SDK(에뮬레이터·휴대폰 이미지·도구)는 Android 호환 기기용 앱을 개발하는 데만 씁니다(3.1, 3.2).\n"
+        "• SDK를 복사(백업 제외)·수정·재배포·역설계하면 안 됩니다(3.4). 그래서 Orcus는 SDK를 함께 나눠 주지 않고 PC마다 "
+        "Google에서 내려받습니다.\n"
+        "• 내가 만든 앱의 권리와 책임은 나에게 있습니다. 앱이 개인정보를 받는다면 알리고 지켜야 합니다(4.1, 4.3, 4.5).\n"
+        "• Google은 SDK 개선을 위해 사용 통계를 모을 수 있지만, 먼저 묻고 거절하면 모으지 않습니다(6.1).\n"
+        "• SDK는 '있는 그대로' 제공되고, Google은 보증하거나 손해를 책임지지 않습니다(10, 11).\n"
+        "• 미국 수출 규정을 지켜야 하고, 계약은 미국 캘리포니아주 법을 따릅니다(14.5, 14.7)."),
     "setup.quarantine.missing": "사라진 파일: {files}",
     "setup.extract.locked": "백신(Windows Defender·V3)이 방금 푼 파일을 검사하느라 2분 넘게 붙잡고 있어 설치를 마치지 못했습니다. 잠시 뒤 다시 실행하세요. 계속되면 IT 요청문으로 검사 예외를 요청하세요.",
     "setup.unexpected": "예상하지 못한 오류로 이 단계가 멈췄습니다. 다시 실행해 보고, 계속되면 로그 파일을 알려 주세요.",
@@ -192,7 +206,7 @@ TEXT: dict[str, str] = {
     "issue.legacy_review": "오래된 App Inventor로 빌드한 앱입니다. 처음 실행하면 권한 검토 화면이 먼저 나옵니다 — [계속]을 누르세요.",
     "issue.arm_translation": "ARM용 부품을 번역해서 실행하므로 느릴 수 있습니다.",
     "issue.orientation_locked": "가로로 고정된 앱입니다. 실행하기 전에 PC 휴대폰을 가로로 돌립니다.",
-    "issue.vibrate": "진동은 PC에서 느낄 수 없습니다.",
+    "issue.vibrate": "진동은 PC에서 느낄 수 없습니다. 진동하면 폰 화면 위에 '진동' 표시가 뜹니다.",
     "issue.location": "위치는 처음에 서울시청입니다. LocationSensor 기본값(TimeInterval 60000 ms, DistanceInterval 5 m)에서는 첫 위치 뒤 약 1분마다, 5 m 넘게 움직일 때만 LocationChanged가 옵니다. 빨리 보려면 TimeInterval을 1000으로 바꾸세요. 권한 창에서 '대략적인 위치'를 고르면 10분에 한 번만 갱신되니 [이 앱 권한 모두 허용]으로 정확한 위치를 허용하세요.",
     "issue.tts_missing": "이 PC 휴대폰의 말하기(TTS) 엔진이 꺼져 있어 TextToSpeech가 동작하지 않습니다. [휴대폰 초기화]를 하면 처음 상태로 돌아옵니다.",
     "issue.speech_missing": "이 PC 휴대폰에는 음성 인식 앱이 없어 SpeechRecognizer가 동작하지 않습니다.",
@@ -226,6 +240,9 @@ TEXT: dict[str, str] = {
 
 
 def spec(code: ErrorCode) -> MessageSpec:
+    """The code's channel and remedy, its sentence in the UI language."""
+    if i18n.language() == "en" and code in messages_en.ERRORS:
+        return replace(ERRORS[code], text=messages_en.ERRORS[code])
     return ERRORS[code]
 
 
@@ -241,13 +258,16 @@ def error(code: ErrorCode, detail: str = "", log_excerpt: str = "", *,
 
 
 def text(key: str, **fmt: object) -> str:
-    """Resolve a TEXT key, 'error.<code>' or 'remedy.<action>'. Unknown keys raise KeyError."""
+    """Resolve a TEXT key, 'error.<code>' or 'remedy.<action>' in the UI language. Unknown keys raise KeyError."""
+    en = i18n.language() == "en"
     if key in TEXT:
-        value = TEXT[key]
+        value = messages_en.TEXT.get(key, TEXT[key]) if en else TEXT[key]
     elif key.startswith("error."):
-        value = ERRORS[ErrorCode(key.removeprefix("error."))].text
+        code = ErrorCode(key.removeprefix("error."))
+        value = messages_en.ERRORS.get(code, ERRORS[code].text) if en else ERRORS[code].text
     elif key.startswith("remedy."):
-        value = REMEDY_LABELS[RemedyAction(key.removeprefix("remedy."))]
+        action = RemedyAction(key.removeprefix("remedy."))
+        value = messages_en.REMEDY_LABELS.get(action, REMEDY_LABELS[action]) if en else REMEDY_LABELS[action]
     else:
         raise KeyError(key)
     return value.format(**fmt) if fmt else value
@@ -268,8 +288,8 @@ IT_REQUEST_V3 = """[IT 지원 요청] 백신 실시간 검사 예외 (AhnLab V3 
 PC 이름: {computer}
 사용자: {user}
 요청: 아래 폴더를 실시간 검사 예외로 등록해 주세요.
-  D:\\OrcusAPK\\sdk  (Google Android Emulator {build}, platform-tools)
-  D:\\OrcusAPK\\avd  (가상 휴대폰 디스크)
+  {home}\\sdk  (Google Android Emulator {build}, platform-tools)
+  {home}\\avd  (가상 휴대폰 디스크)
 실행 파일: emulator.exe, qemu-system-x86_64-headless.exe, qemu-system-x86_64.exe, adb.exe
 이유: 압축을 푼 SDK 파일이 사라지거나 검사 중에 잠겨 설치가 멈췄습니다. {detail}
 """
@@ -278,6 +298,22 @@ PC 이름: {computer}
 def it_request(template: str, detail: str, **extra: str) -> str:
     return template.format(computer=os.environ.get("COMPUTERNAME", "?"), user=current_user(), detail=detail,
                            **extra)
+
+
+def it_template(kind: str) -> str:
+    """The IT request ("whpx" or "v3") in the UI language."""
+    en = i18n.language() == "en"
+    if kind == "v3":
+        return messages_en.IT_REQUEST_V3 if en else IT_REQUEST_V3
+    return messages_en.IT_REQUEST_WHPX if en else IT_REQUEST_WHPX
+
+
+def it_request_for(err: OrcusError | None, home: str, untried: str = "") -> str:
+    """The IT request a problem asks for: the antivirus exception when unpacked files went missing, the Windows
+    Hypervisor Platform otherwise (`untried` is the result line before anything was tried)."""
+    if err is not None and err.code is ErrorCode.SETUP_QUARANTINE:
+        return it_request(it_template("v3"), err.detail, build=f"{EMULATOR.revision} ({EMULATOR_BUILD})", home=home)
+    return it_request(it_template("whpx"), err.detail if err is not None else untried)
 
 
 def current_user() -> str:

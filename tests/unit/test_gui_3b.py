@@ -1,4 +1,4 @@
-"""Phase 3b GUI without a device (offscreen Qt): the [Sensors] tab and side buttons driving DeviceControls, the
+"""GUI without a device (offscreen Qt): the [Sensors] tab and side buttons driving DeviceControls, the
 Korean input bar, the settings dialog, run warnings as banners, the close notice, wheel and 한/영 key, the side
 key dragged off, and the single-instance hand-over (pipe owner, a closing first instance)."""
 
@@ -317,7 +317,7 @@ def test_settings_dialog_saves_only_changes_and_confirms_the_gpu(qapp: QApplicat
     answers[0] = QMessageBox.StandardButton.Yes
     d._apply()                                               # noqa: SLF001
     assert s.saved == [{"sensors.shake_default": "strong", "apk.grant_all": True, "engine.gpu_mode": "software"}]
-    assert s.rebuilt == ["GPU 모드를 software(으)로 바꿈"]
+    assert s.rebuilt == ["GPU mode changed to software"]   # a reason for the log, not for the window
     d2 = SettingsDialog(s, tmp_path, lambda: None)           # type: ignore[arg-type]
     d2.esc_back.setChecked(False)
     d2.ask_close.setChecked(False)
@@ -346,8 +346,8 @@ def ime(view: screen.ScreenView, preedit: str, commit: str = "") -> None:
 
 
 def test_korean_typed_on_the_screen_goes_to_the_phone_syllable_by_syllable(qapp: QApplication) -> None:
-    """The user's 3b request: 한/영 on the phone screen and type. Finished syllables are pasted in order; the one
-    being composed shows in the bubble only (the phone cannot show half a syllable)."""
+    """Press 한/영 on the phone screen and type: finished syllables are pasted in order; the one being composed
+    shows in the bubble only (the phone cannot show half a syllable)."""
     v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
     v.resize(400, 800)
     v.show()
@@ -376,7 +376,7 @@ def test_korean_typed_on_the_screen_goes_to_the_phone_syllable_by_syllable(qapp:
 
 
 def test_side_key_dragged_off_is_not_pressed(qapp: QApplication) -> None:
-    """3a review: releasing outside the button still sent the key."""
+    """Releasing outside the button does not send the key."""
     b = KeyButton(HwKey.BACK, "back", "뒤로")
     b.resize(30, 30)
     got: list[object] = []
@@ -422,7 +422,7 @@ def test_a_second_start_waits_for_a_closing_first_instance() -> None:
 
 def test_keep_this_time_at_the_close_notice(qapp: QApplication, tmp_path: Path,
                                             monkeypatch: pytest.MonkeyPatch) -> None:
-    """[P4] §6.1: the GOLDEN close notice offers to keep the phone this once; the engine saves at the stop."""
+    """§6.1: the GOLDEN close notice offers to keep the phone this once; the engine saves at the stop."""
     s = Api()
     w = ready(s, tmp_path, monkeypatch)
     w.on_run(run(RunStage.RUNNING, info("appinventor.ai_test.A")))
@@ -445,12 +445,22 @@ def test_settings_turn_keeping_on(qapp: QApplication, tmp_path: Path, monkeypatc
     assert told and "보관" in told[0]                         # applies from the next close (needs_restart)
 
 
+def test_settings_leave_an_unknown_language_alone(qapp: QApplication, tmp_path: Path) -> None:
+    """A typo in settings.json shows as automatic; OK writes nothing until the person picks a language."""
+    s = Api()
+    s.current = replace(s.current, ui=replace(s.current.ui, language="kr"))
+    d = SettingsDialog(s, tmp_path, lambda: None)            # type: ignore[arg-type]
+    assert d.language.currentData() == "auto" and d.changes() == {}
+    d.language.setCurrentIndex(d.language.findData("en"))
+    assert d.changes() == {"ui.language": "en"}
+
+
 def test_settings_switch_to_the_ladder_restarts_instead_of_rebuilding(qapp: QApplication, tmp_path: Path,
                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
-    """[P4] §5.6: the ladder starts at host on the same golden, so no 5-minute rebuild question."""
+    """§5.6: the ladder starts at host on the same golden, so no 5-minute rebuild question."""
     s = Api()
     retried: list[bool] = []
-    s.engine.retry_gpu = lambda: retried.append(True)        # type: ignore[method-assign]
+    s.engine.retry_gpu = lambda: retried.append(True)
     asked: list[object] = []
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a) or QMessageBox.StandardButton.No)
     d = SettingsDialog(s, tmp_path, lambda: None)            # type: ignore[arg-type]

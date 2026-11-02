@@ -30,7 +30,7 @@ def session(fake: FakeEmulatorServer):
     s.close()
 
 
-def until(pred, timeout_s: float = 5.0) -> None:   # type: ignore[no-untyped-def]
+def until(pred, timeout_s: float = 5.0) -> None:
     end = time.monotonic() + timeout_s
     while time.monotonic() < end:
         if pred():
@@ -138,7 +138,7 @@ def test_keys_chords_and_paste_order(fake: FakeEmulatorServer, session: GrpcDevi
 
 
 def test_fast_typing_goes_as_one_paste_in_order(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
-    """Characters typed while a paste is on its way: one setClipboard with all of them, in order (3a review)."""
+    """Characters typed while a paste is on its way: one setClipboard with all of them, in order."""
     kp, down, up = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
     session.input.key(HwKey.POWER, long_press=True)   # holds the input thread 0.7 s while the rest queues up
     for ch in ("안", "녕", "a", "b", "하세요"):
@@ -153,7 +153,8 @@ def test_fast_typing_goes_as_one_paste_in_order(fake: FakeEmulatorServer, sessio
 
 
 def test_a_broken_stream_loses_no_input_after_it(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
-    """gRPC pulls a failed call's request iterator once more: that pull took the first input after a reconnect."""
+    """gRPC pulls a failed call's request iterator once more: that pull must not take the first input after a
+    reconnect."""
     kp = ec.KeyboardEvent.keypress
     session.input.key(BREAK_KEY)   # the emulator ends the call
     until(lambda: (BREAK_KEY, kp) in keys(fake))
@@ -218,7 +219,7 @@ def fingers(e: ec.InputEvent) -> list[tuple[int, int, int, int]]:
 
 
 def test_two_fingers_go_as_touches_and_always_lift(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
-    """[P4] Ctrl+drag pinch: one TouchEvent per move, ids 0 and 1; pressure 0 lifts (the emulator keeps a finger
+    """Ctrl+drag pinch: one TouchEvent per move, ids 0 and 1; pressure 0 lifts (the emulator keeps a finger
     down otherwise). The mouse finger lifts first; release_all and a new stream lift the touch fingers too."""
     a, b = PointerAt(0.25, 0.25, 0), PointerAt(0.75, 0.75, 0)
     session.input.pointer(PointerAt(0.5, 0.5, 0), True)
@@ -241,8 +242,8 @@ def test_two_fingers_go_as_touches_and_always_lift(fake: FakeEmulatorServer, ses
 
 
 def test_controls_read_a_kept_phone_and_send_light_battery_text_and_call(fake: FakeEmulatorServer) -> None:
-    """[P4] A kept phone comes back turned, lit and charged as it was saved (device check): the controls read it, so
-    the next turn starts from where the phone is."""
+    """A kept phone comes back turned, lit and charged as it was saved: the controls read it, so the next turn
+    starts from where the phone is."""
     P, B = ec.PhysicalModelValue, ec.BatteryState   # noqa: N806
     fake.models.update({P.ROTATION: [0.0, 0.0, 90.0], P.LIGHT: [123.0], P.PROXIMITY: [0.0]})
     fake.battery = B(hasBattery=True, isPresent=True, charger=B.NONE, chargeLevel=15, status=B.DISCHARGING)
@@ -254,7 +255,7 @@ def test_controls_read_a_kept_phone_and_send_light_battery_text_and_call(fake: F
         c.rotate(Rotation.PORTRAIT)
         c.set_light(400.0)
         c.set_proximity(1.0)
-        c.set_battery(10, False)                       # unplugged: not below 21 % (SystemUI, 4a)
+        c.set_battery(10, False)                       # unplugged: not below 21 % (SystemUI)
         assert c.world.battery == 21
         c.set_battery(130, True)                       # clamped
         c.receive_sms("01012345678", "안녕 Orcus")
@@ -311,7 +312,7 @@ def test_logcat_parses_text_mode_and_drops_the_backlog(fake: FakeEmulatorServer,
     now = time.time()
     old = time.strftime("%m-%d %H:%M:%S.000", time.localtime(now - 3600))
     new = time.strftime("%m-%d %H:%M:%S.123", time.localtime(now + 1))
-    # as 37.2.12 sends it: one entry per message and no newline (seen on the device in Phase 3a)
+    # as 37.2.12 sends it: one entry per message and no newline (seen on the device)
     fake.logcat.put(f"{old}  100  100 E Form    : backlog line")
     fake.logcat.put(f"{new}  4242  4242 E Form    : Form Screen1 ErrorOccurred, errorNumber = 601")
     # two entries in one message, still without a newline between them
@@ -341,7 +342,7 @@ def test_logcat_source_is_injected_and_falls_back_to_grpc(fake: FakeEmulatorServ
         def __init__(self) -> None:
             self.cancelled = False
 
-        def __iter__(self):   # type: ignore[no-untyped-def]
+        def __iter__(self):
             return iter(())
 
         def cancel(self) -> None:

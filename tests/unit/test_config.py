@@ -36,7 +36,7 @@ def test_bad_entries_are_skipped(tmp_path: Path) -> None:
 
 
 def test_an_unreadable_settings_file_starts_from_defaults(tmp_path: Path) -> None:
-    """A hand edit saved as ANSI (CP949), a stray comma or Infinity must not stop the app (3a review)."""
+    """A hand edit saved as ANSI (CP949), a stray comma or Infinity must not stop the app."""
     p = OrcusPaths(tmp_path)
     p.state.mkdir(parents=True)
     f = p.state_file("settings.json")

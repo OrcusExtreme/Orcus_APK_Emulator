@@ -26,7 +26,7 @@ def until(pred: Callable[[], bool], timeout_s: float = 10.0) -> None:
 
 
 @pytest.fixture
-def world(tmp_path):   # type: ignore[no-untyped-def]
+def world(tmp_path):
     env = EngineEnv(tmp_path)
     s = Session(env.paths, env.settings, owner_kind="test", seams=env.seams)
     yield env, s
@@ -34,7 +34,7 @@ def world(tmp_path):   # type: ignore[no-untyped-def]
     env.close()
 
 
-def test_session_wires_engine_device_and_apps(world) -> None:   # type: ignore[no-untyped-def]
+def test_session_wires_engine_device_and_apps(world) -> None:
     env, s = world
     api: SessionApi = s
     headless: HeadlessSession = s
@@ -57,8 +57,8 @@ def test_session_wires_engine_device_and_apps(world) -> None:   # type: ignore[n
     assert s.engine.status().state is EngineState.STOPPED
 
 
-def test_dropped_pictures_go_into_the_phone_and_an_app_is_run(world, monkeypatch) -> None:   # type: ignore[no-untyped-def]
-    """[P4] Pictures, sounds, videos, any number: into the phone; anything else: the last file is an app."""
+def test_dropped_pictures_go_into_the_phone_and_an_app_is_run(world, monkeypatch) -> None:
+    """Pictures, sounds, videos, any number: into the phone; anything else: the last file is an app."""
     env, s = world
     pushed: list[list[Path]] = []
     submitted: list[Path] = []
@@ -71,7 +71,7 @@ def test_dropped_pictures_go_into_the_phone_and_an_app_is_run(world, monkeypatch
     assert pushed == [[pic, song]] and submitted == [apk, apk]
 
 
-def test_settings_preview_update_and_persist(world) -> None:   # type: ignore[no-untyped-def]
+def test_settings_preview_update_and_persist(world) -> None:
     env, s = world
     r = s.preview_settings({"engine.gpu_mode": "software"})
     assert r.needs_rebuild and r.needs_restart and s.settings().engine.gpu_mode is GpuMode.HOST
@@ -83,7 +83,7 @@ def test_settings_preview_update_and_persist(world) -> None:   # type: ignore[no
         s.update_settings({"apk.no_such_key": 1})
 
 
-def test_readonly_attach_needs_a_live_owner(tmp_path) -> None:   # type: ignore[no-untyped-def]
+def test_readonly_attach_needs_a_live_owner(tmp_path) -> None:
     env = EngineEnv(tmp_path)
     try:
         assert compose.attach_readonly(env.paths) is None
@@ -94,15 +94,15 @@ def test_readonly_attach_needs_a_live_owner(tmp_path) -> None:   # type: ignore[
         env.close()
 
 
-def test_cli_setup_checks_the_folder_before_writing_to_it(capsys) -> None:   # type: ignore[no-untyped-def]
-    """`orcus-cli setup` used to create <home>\\logs before the folder check, so a bad home crashed (3a review)."""
+def test_cli_setup_checks_the_folder_before_writing_to_it(capsys) -> None:
+    """`orcus-cli setup` checks the folder before it creates <home>\\logs: a bad home gets a message, not a crash."""
     assert cli.main(["setup", "--home", "relative\\OrcusAPK"]) == 1
     assert messages_ko.text("path.not_absolute") in capsys.readouterr().out
     assert not (Path("relative") / "OrcusAPK").exists()
 
 
-def test_readonly_status_is_the_owners_own_state(tmp_path) -> None:   # type: ignore[no-untyped-def]
-    """The guest says booted about 4 s before the owner's SESSION_INIT checks end (3a)."""
+def test_readonly_status_is_the_owners_own_state(tmp_path) -> None:
+    """The guest says booted about 4 s before the owner's SESSION_INIT checks end."""
     env = EngineEnv(tmp_path)
     owner_file = env.paths.state_file("engine_owner.json")
 
@@ -123,7 +123,7 @@ def test_readonly_status_is_the_owners_own_state(tmp_path) -> None:   # type: ig
             write(state="ready", text_key="engine.state.ready", epoch=2, mode="golden")
             st = vm.status()                                  # ...and the record is read again on every call
             assert st is not None and (st.state, st.epoch) == (EngineState.READY, 2)
-            write(state="no_such_state")                      # unreadable: the guest's word, as before 3a
+            write(state="no_such_state")                      # unreadable: back to the guest's word
             st = vm.status()
             assert st is not None and (st.state, st.epoch) == (EngineState.READY, 0)
         finally:
@@ -153,7 +153,7 @@ def test_every_run_stage_has_text() -> None:
         assert messages_ko.text(f"prompt.choice.{choice}")
 
 
-def test_cli_parser_knows_the_3a_commands(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_parser_knows_the_commands(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         cli.main(["run", "--help"])
     assert "--watch" in capsys.readouterr().out

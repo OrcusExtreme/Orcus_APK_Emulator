@@ -11,7 +11,7 @@ class ExitClass:
     code: ErrorCode | None          # None: the golden did not load (rebuild instead of failing)
     golden_load_failed: bool = False
     retry: bool = False             # AVD lock / ports: one more try after cleanup or other ports
-    gpu_changed: bool = False       # the emulator found another host GPU and deleted the golden (3a finding 18)
+    gpu_changed: bool = False       # the emulator found another host GPU and deleted the golden
 
 
 _RULES: tuple[tuple[str, ExitClass], ...] = (

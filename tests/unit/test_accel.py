@@ -7,7 +7,7 @@ OFF_OUTPUT = "accel:\n1\nWHPX is not installed or not usable.\nPlease enable Win
 
 
 def fake_run(out: str, code: int = 0, timed_out: bool = False):
-    def run(argv, **kw):   # type: ignore[no-untyped-def]
+    def run(argv, **kw):
         return CmdResult(tuple(argv), code, out, "", 0.1, timed_out)
     return run
 
@@ -50,7 +50,7 @@ def test_failure_classification() -> None:
     assert accel.classify_accel_failure(reboot_is_pending=False, dism_succeeded_at_boot=None,
                                         current_boot=boot) is ErrorCode.SETUP_ACCEL_FAILED
     assert accel.same_boot(boot, boot + 1.5) and not accel.same_boot(boot, boot + 120)
-    # boot ids decide when both are known: a clock corrected by minutes is still the same boot (3a review)
+    # boot ids decide when both are known: a clock corrected by minutes is still the same boot
     assert accel.same_boot(boot, boot + 600, 68, 68) and not accel.same_boot(boot, boot, 68, 69)
     assert accel.classify_accel_failure(reboot_is_pending=False, dism_succeeded_at_boot=boot, current_boot=boot + 600,
                                         dism_boot_id=68, current_boot_id=68) is ErrorCode.SETUP_ACCEL_FAILED

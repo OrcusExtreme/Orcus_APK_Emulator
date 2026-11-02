@@ -117,7 +117,7 @@ class Watcher:
         if e.tag == "AndroidRuntime" and msg.startswith("FATAL EXCEPTION"):
             self._crash = [e]
             return None
-        if e.tag == "libc" and msg.startswith("Fatal signal"):   # native crash (a WebViewer renderer, Phase 3a)
+        if e.tag == "libc" and msg.startswith("Fatal signal"):   # native crash (a WebViewer renderer)
             self._ended = True
             return Finding(self._error(ErrorCode.APP_CRASH, msg), e.ts_us, ended=True)
         # error 10 (cannot bind) is runtime proof that no recognizer is there, whatever the cached caps say

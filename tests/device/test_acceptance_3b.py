@@ -1,6 +1,6 @@
-"""Phase 3b acceptance on the real phone (plan.md §3: B3, B5, B6, B13), plus the wheel and the turn method.
+"""Acceptance on the real phone: B3, B5, B6, B13 (plan.md §3), plus the wheel and the turn method.
 B14 and the window parts of B5/B13 (the window turning, location hints, settings, the close notice) are unit tests
-(tests/unit/test_gui_3b.py); B10's manual checks are the user's.
+(tests/unit/test_gui_3b.py); B10's manual checks are not scripted.
 
 Run: py tools/dev.py test -m device tests/device/test_acceptance_3b.py -s
 Needs D:\\OrcusDev\\fixtures: OrcusProbe, TalkToMe (built in the App Inventor web IDE). Every test starts OrcusProbe
@@ -85,7 +85,7 @@ def ph() -> Iterator[Phone]:
 @pytest.fixture(scope="module", autouse=True)
 def frames(ph: Phone) -> Iterator[LatestFrame]:
     """One stream for the whole module, as the window has: a tap or a wheel notch without a frame seq maps with
-    the newest rotation, and a stopped stream kept an old one (a landscape test turned the next tests' taps)."""
+    the newest rotation, and a stopped stream keeps an old one (a landscape test would turn the next tests' taps)."""
     log = LatestFrame(ph)
     yield log
     log.stop()
@@ -381,7 +381,7 @@ def test_b6_korean_goes_into_text_boxes_and_numbers_only_filters_it(ph: Phone) -
 # --- B13 ----------------------------------------------------------------------------------------------------------
 @pytest.mark.timeout(600)
 def test_b13_the_start_place_and_presets_reach_the_app_within_10_s(ph: Phone) -> None:
-    """The launch sends the start place again (test providers report only when told, 3b); presets follow."""
+    """The launch sends the start place again (test providers report only when told); presets follow."""
     t = time.monotonic()
     pkg = probe(ph)
     until(lambda: label(ph, pkg, "loc") == SEOUL, 10, "the start place without touching anything")
@@ -430,7 +430,7 @@ def test_b13_microphone_consent_is_applied_at_every_launch(ph: Phone) -> None:
     result("B13 microphone", consent="on at launch, off for the next launch without it")
 
 
-# --- wheel (§9.3, 3b) ---------------------------------------------------------------------------------------------
+# --- wheel (§9.3) -------------------------------------------------------------------------------------------------
 @pytest.mark.timeout(600)
 def test_wheel_scrolls_the_screen_and_never_drags_the_canvas(ph: Phone) -> None:
     pkg = probe(ph)

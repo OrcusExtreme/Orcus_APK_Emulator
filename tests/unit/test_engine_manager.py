@@ -40,7 +40,7 @@ def wait_for(env: EngineEnv, *states: EngineState, timeout_s: float = 30) -> Non
     raise AssertionError(f"still {st.state} ({st.error}) after {timeout_s} s, wanted {states}")
 
 
-def ready(env: EngineEnv, **kw: object):   # type: ignore[no-untyped-def]
+def ready(env: EngineEnv, **kw: object):
     return env.manager.wait_ready(30, **kw)   # type: ignore[arg-type]
 
 
@@ -92,7 +92,7 @@ def test_reset_raises_epoch_by_exactly_one(env: EngineEnv) -> None:
 
 
 def test_a_stale_discovery_record_never_kills_another_process(env: EngineEnv) -> None:
-    """A record left by a killed app or a power cut may name the user's browser after PID reuse (3a review)."""
+    """A record left by a killed app or a power cut may name the user's browser after PID reuse."""
     stale = DiscoveryRecord(4321, 5640, 5641, 1, "t", "orcus36", str(env.paths.avd_data), None,
                             env.paths.tmp / "pid_4321.ini")
     stale.source.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +104,7 @@ def test_a_stale_discovery_record_never_kills_another_process(env: EngineEnv) ->
 
 
 def test_a_half_extracted_sdk_is_not_installed(env: EngineEnv) -> None:
-    """Setup stopped mid-extraction leaves `<package>.partial`; that tree must not boot (3a review)."""
+    """Setup stopped mid-extraction leaves `<package>.partial`; that tree must not boot."""
     marker = env.paths.partial_marker(pins.SYSTEM_IMAGE)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("extracting", encoding="utf-8")
@@ -124,7 +124,7 @@ def _second_start(env: EngineEnv) -> None:
 
 def test_no_display_boots_cold_once_and_keeps_the_golden(env: EngineEnv) -> None:
     """A disconnected Remote Desktop session has no display device: a golden load would make the emulator delete
-    the golden ('host GPU has changed', 3a finding 18). Boot COLD this once; a reset with a display loads it."""
+    the golden ('host GPU has changed'). Boot COLD this once; a reset with a display loads it."""
     _second_start(env)
     env.displays = 0
     env.manager.start()
@@ -140,7 +140,7 @@ def test_no_display_boots_cold_once_and_keeps_the_golden(env: EngineEnv) -> None
 
 
 def test_no_display_loads_a_golden_that_saw_none(env: EngineEnv) -> None:
-    """A golden saved without a display (before the fix) records no GPU: it loads in such a session."""
+    """A golden saved without a display (by an older version) records no GPU: it loads in such a session."""
     _second_start(env)
     (env.paths.golden_dir / "snapshot.pb").write_bytes(
         snapshot_pb2.Snapshot(host=snapshot_pb2.Host(hypervisor=0)).SerializeToString())
@@ -172,7 +172,7 @@ def test_gpu_change_rebuilds_with_its_own_text(env: EngineEnv) -> None:
 
 
 def test_owner_record_carries_the_owners_own_state(env: EngineEnv) -> None:
-    """`orcus-cli engine status` in another process shows this, not the guest's `booted` (3a: ~4 s early)."""
+    """`orcus-cli engine status` in another process shows this, not the guest's `booted` (~4 s early)."""
     def record() -> dict[str, object]:
         return json.loads(env.paths.state_file("engine_owner.json").read_text(encoding="utf-8"))
     env.manager.start()
@@ -215,7 +215,7 @@ def test_stop_pauses_ends_qemu_and_releases_the_lock(env: EngineEnv) -> None:
     n = len(env.procs.terminated)                         # the provisioning boot before READY ended its own qemu
     env.manager.stop()
     wait_for(env, S.STOPPED)
-    # no graceful SHUTDOWN: qemu's exit path can fail fast and leave a crash report in C:\ProgramData (3a)
+    # no graceful SHUTDOWN: qemu's exit path can fail fast and leave a crash report in C:\ProgramData
     assert ("setVmState", ec.VmRunState.PAUSED) in env.fake.calls
     assert ("setVmState", ec.VmRunState.SHUTDOWN) not in env.fake.calls
     assert env.procs.terminated[n] == emulator.pid + 1   # the qemu of the discovery record, before emulator.exe
@@ -272,7 +272,7 @@ def test_crash_restarts_once_then_fails(env: EngineEnv) -> None:
 
 
 def test_golden_without_its_framework_is_rebuilt_once(env: EngineEnv) -> None:
-    """Phase 3a: a golden came back with system_server dead (package Broken pipe, power DEAD_OBJECT)."""
+    """A golden can come back with system_server dead (package Broken pipe, power DEAD_OBJECT)."""
     env.manager.start()
     ready(env)
     env.manager.stop()

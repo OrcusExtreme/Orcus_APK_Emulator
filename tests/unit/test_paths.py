@@ -39,7 +39,7 @@ def test_drive_sync_ancestor(tmp_path: Path) -> None:
 
 
 def test_project_folder_is_drive_synced() -> None:
-    """Today's source folder sits in a Drive-synced tree: it must never be chosen as ORCUS_HOME."""
+    """This source folder sits in a Drive-synced tree: it must never be chosen as ORCUS_HOME."""
     repo = Path(__file__).resolve().parents[2]
     problems = home_problems(repo)
     assert "path.non_ascii" in problems

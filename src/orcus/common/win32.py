@@ -63,7 +63,7 @@ def system_dir() -> Path:
 
 def display_device_count() -> int:
     """Display devices this session sees (EnumDisplayDevices). None in a disconnected Remote Desktop session, while
-    WMI still lists the GPU; the emulator takes its host GPU from these (3a finding 18)."""
+    WMI still lists the GPU; the emulator takes its host GPU from these."""
     n = 0
     while True:
         dev = _DisplayDevice()
@@ -103,12 +103,21 @@ def message_box(title: str, text: str) -> None:
     user32.MessageBoxW(None, text, title, MB_ICONERROR)
 
 
+kernel32.GetUserDefaultUILanguage.argtypes = []
+kernel32.GetUserDefaultUILanguage.restype = wintypes.WORD
+
+
+def ui_language_id() -> int:
+    """The user's Windows display language as a LANGID (0x0412 Korean); ui.language = "auto" follows it."""
+    return int(kernel32.GetUserDefaultUILanguage())
+
+
 BOOT_ID_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
 
 
 def boot_id() -> int | None:
     """Windows' boot counter (BootId, one more on every boot). Unlike boot_time() it does not move when the
-    clock is corrected, so 'same boot' cannot be fooled by a time sync during a long download (3a review)."""
+    clock is corrected, so 'same boot' cannot be fooled by a time sync during a long download."""
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, BOOT_ID_KEY) as key:
             value, kind = winreg.QueryValueEx(key, "BootId")
@@ -228,7 +237,7 @@ def user_sid() -> str:
 def pipe_server_sid(pipe: int) -> str:
     """User of the process serving a connected named pipe, '' if it cannot be read (another account's process).
     A second start hands its file only to its own account's Orcus: anyone can create a pipe under our name first,
-    and the name with our SID in it is no secret (3a review)."""
+    and the name with our SID in it is no secret."""
     pid = wintypes.ULONG()
     if not kernel32.GetNamedPipeServerProcessId(pipe, ctypes.byref(pid)):
         return ""

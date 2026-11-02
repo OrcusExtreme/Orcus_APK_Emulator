@@ -19,7 +19,7 @@ FIXTURES = devenv.DEV_ROOT / "fixtures"
 # up as a hash mismatch, and the pin is then updated on purpose (parser regression fixture).
 PINNED = [
     ("MITAI2Companion.apk", "https://ai2.appinventor.mit.edu/companions/MITAI2Companion.apk", 18_365_393,
-     "1e104351417455816d739e63401f051d30e624e0527a9aff37af1715868ecb32"),   # 2.81u, pinned 2026-10-30
+     "1e104351417455816d739e63401f051d30e624e0527a9aff37af1715868ecb32"),   # version 2.81u
 ]
 
 

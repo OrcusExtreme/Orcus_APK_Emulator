@@ -1,9 +1,9 @@
 """The phone around the screen (ARCHITECTURE.md §10.1): a plain rounded bezel drawn with QPainter (no maker
-marks), the ◁ ○ ▢ row below it (D7: the guest also shows its own 3-button bar), the power and volume keys and,
-from 3b, turn left/right, shake and [가] (the Korean input bar).
+marks), the ◁ ○ ▢ row below it (D7: the guest also shows its own 3-button bar), the power and volume keys, and
+the turn left/right, shake and [가] (Korean input bar) buttons.
 
 Key glyphs are drawn shapes, not emoji (§10.6). A key held longer than 0.6 s is a long press (power menu). A
-press dragged off the button and let go there is no press at all (3a review: it used to send the key).
+press dragged off the button and let go there is no press at all.
 """
 
 import time
@@ -24,6 +24,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
+from orcus.common.i18n import t
 from orcus.contracts import HwKey
 
 from .screen import ScreenView
@@ -85,7 +86,7 @@ def glyph(kind: str, size: int = 22) -> QIcon:
             f.setPixelSize(int(s * 0.62))
             f.setBold(True)
             p.setFont(f)
-            p.drawText(QRectF(0, 0, s, s), Qt.AlignmentFlag.AlignCenter, "가")
+            p.drawText(QRectF(0, 0, s, s), Qt.AlignmentFlag.AlignCenter, t("가"))
         case _:
             pass
     p.end()
@@ -163,12 +164,12 @@ class PhoneView(QWidget):
         side = QVBoxLayout()
         side.setContentsMargins(6, 40, 0, 0)
         self.keys: list[KeyButton] = []
-        for key, icon, tip, box in ((HwKey.BACK, "back", "뒤로 (Esc · 오른쪽 클릭)", nav),
-                                    (HwKey.HOME, "home", "홈 (Ctrl+Shift+H · 가운데 클릭)", nav),
-                                    (HwKey.RECENTS, "recents", "최근 앱 (Ctrl+Shift+R)", nav),
-                                    (HwKey.POWER, "power", "전원 (길게 누르면 전원 메뉴)", side),
-                                    (HwKey.VOL_UP, "vol_up", "볼륨 크게", side),
-                                    (HwKey.VOL_DOWN, "vol_down", "볼륨 작게", side)):
+        for key, icon, tip, box in ((HwKey.BACK, "back", t("뒤로 (Esc · 오른쪽 클릭)"), nav),
+                                    (HwKey.HOME, "home", t("홈 (Ctrl+Shift+H · 가운데 클릭)"), nav),
+                                    (HwKey.RECENTS, "recents", t("최근 앱 (Ctrl+Shift+R)"), nav),
+                                    (HwKey.POWER, "power", t("전원 (길게 누르면 전원 메뉴)"), side),
+                                    (HwKey.VOL_UP, "vol_up", t("볼륨 크게"), side),
+                                    (HwKey.VOL_DOWN, "vol_down", t("볼륨 작게"), side)):
             b = KeyButton(key, icon, tip)
             b.pressed_key.connect(on_key)
             box.addWidget(b)
@@ -177,10 +178,10 @@ class PhoneView(QWidget):
             self.keys.append(b)
         side.addSpacing(14)
         self.side_actions: list[ActionButton] = []
-        for name, icon, tip, repeat in (("rotate_left", "turn_left", "왼쪽으로 돌리기 (F7)", 0),
-                                        ("rotate_right", "turn_right", "오른쪽으로 돌리기 (F8)", 0),
-                                        ("shake", "shake", "흔들기 (F6, 누르고 있으면 반복)", SHAKE_REPEAT_MS),
-                                        ("hangul", "hangul", "한글 입력 바 (Ctrl+T)", 0)):
+        for name, icon, tip, repeat in (("rotate_left", "turn_left", t("왼쪽으로 돌리기 (F7)"), 0),
+                                        ("rotate_right", "turn_right", t("오른쪽으로 돌리기 (F8)"), 0),
+                                        ("shake", "shake", t("흔들기 (F6, 누르고 있으면 반복)"), SHAKE_REPEAT_MS),
+                                        ("hangul", "hangul", t("한글 입력 바 (Ctrl+T)"), 0)):
             a = ActionButton(name, icon, tip, repeat_ms=repeat)
             a.action.connect(on_action)
             side.addWidget(a)

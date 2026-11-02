@@ -23,16 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from orcus.common.i18n import t
 from orcus.common.messages_ko import text
-
-
-def plain_box(parent: QWidget, title: str, words: str) -> None:
-    """An information box that never renders its text as HTML (it can quote an app's or the emulator's text)."""
-    box = QMessageBox(parent)
-    box.setWindowTitle(title)
-    box.setTextFormat(Qt.TextFormat.PlainText)
-    box.setText(words)
-    box.exec()
 from orcus.contracts import ApkInfo, InstalledApp, Issue, IssueLevel, LogEntry, OrcusError
 
 from . import dialogs
@@ -43,9 +35,18 @@ LOG_COLORS = {"E": "#c62828", "F": "#c62828", "W": "#b26a00", "I": "#1f2933", "D
 RAW_LINES = 2000
 
 
+def plain_box(parent: QWidget, title: str, words: str) -> None:
+    """An information box that never renders its text as HTML (it can quote an app's or the emulator's text)."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(words)
+    box.exec()
+
+
 class AppPanel(QWidget):
     action = Signal(str)   # grant_all | clear_data | uninstall | match_orientation | copy_report | diag
-    installed = Signal(str, str)   # [P4] (run | remove | refresh, package)
+    installed = Signal(str, str)   # (run | remove | refresh, package)
 
     def __init__(self) -> None:
         super().__init__()
@@ -60,12 +61,12 @@ class AppPanel(QWidget):
         self.facts = QLabel()
         self.facts.setWordWrap(True)
         self.facts.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        # the manifest's label and package are untrusted: `<img src=//host/x>` loaded from SMB as rich text (3a)
+        # the manifest's label and package are untrusted: as rich text, `<img src=//host/x>` would load from SMB
         for label in (self.title, self.facts):
             label.setTextFormat(Qt.TextFormat.PlainText)
         self.era = QLabel()
         self.era.setStyleSheet("background:#e8f0fe;color:#174ea6;border-radius:8px;padding:2px 8px")
-        self.empty = QLabel("여기에 .apk를 끌어다 놓거나 [APK 열기]를 누르세요.")
+        self.empty = QLabel(t("여기에 .apk를 끌어다 놓거나 [APK 열기]를 누르세요."))
         self.empty.setWordWrap(True)
         head = QHBoxLayout()
         head.addWidget(self.icon)
@@ -76,9 +77,9 @@ class AppPanel(QWidget):
         self.chips = QVBoxLayout()
         self.chips.setSpacing(4)
         buttons = QVBoxLayout()
-        for key, label in (("grant_all", "이 앱 권한 모두 허용"), ("clear_data", "데이터 지우고 실행"),
-                           ("uninstall", "제거"), ("match_orientation", "화면 방향 맞추기"), ("copy_report", "보고서 복사"),
-                           ("diag", "진단 묶음 만들기")):
+        for key, label in (("grant_all", t("이 앱 권한 모두 허용")), ("clear_data", t("데이터 지우고 실행")),
+                           ("uninstall", t("제거")), ("match_orientation", t("화면 방향 맞추기")),
+                           ("copy_report", t("보고서 복사")), ("diag", t("진단 묶음 만들기"))):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self.action.emit(k))
             buttons.addWidget(b)
@@ -98,15 +99,15 @@ class AppPanel(QWidget):
         self.body.hide()
 
     def _installed_box(self) -> QGroupBox:
-        """[P4] The apps in the phone: run one again without its file, or remove it."""
-        box = QGroupBox("휴대폰에 설치된 앱")
+        """The apps in the phone: run one again without its file, or remove it."""
+        box = QGroupBox(t("휴대폰에 설치된 앱"))
         self.apps_list = QListWidget()
         self.apps_list.setMaximumHeight(150)
         self.apps_list.itemDoubleClicked.connect(lambda _item: self._installed_action("run"))
-        self.apps_empty = QLabel("아직 없습니다. 앱을 넣으면 여기에 남습니다.")
+        self.apps_empty = QLabel(t("아직 없습니다. 앱을 넣으면 여기에 남습니다."))
         self.apps_empty.setStyleSheet("color:#52606d")
         row = QHBoxLayout()
-        for key, label in (("run", "실행"), ("remove", "지우기"), ("refresh", "새로 고침")):
+        for key, label in (("run", t("실행")), ("remove", t("지우기")), ("refresh", t("새로 고침"))):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self._installed_action(k))
             row.addWidget(b)
@@ -149,15 +150,16 @@ class AppPanel(QWidget):
         else:
             self.icon.clear()
         if info is None:
-            self.title.setText(fallback_name or "앱")
-            self.facts.setText("앱 정보를 읽지 못했습니다. 설치한 뒤 이름을 찾습니다.")
+            self.title.setText(fallback_name or t("앱"))
+            self.facts.setText(t("앱 정보를 읽지 못했습니다. 설치한 뒤 이름을 찾습니다."))
             self.era.hide()
         else:
             self.title.setText(info.label)
-            self.facts.setText(f"{info.package}\n버전 {info.version_name or '-'} ({info.version_code}) · "
-                               f"minSdk {info.min_sdk} · targetSdk {info.target_sdk}")
+            self.facts.setText(t("{package}\n버전 {version} ({code}) · minSdk {min_sdk} · targetSdk {target_sdk}",
+                                 package=info.package, version=info.version_name or "-", code=info.version_code,
+                                 min_sdk=info.min_sdk, target_sdk=info.target_sdk))
             self.era.setText(f"App Inventor {info.ai_era}" if info.is_app_inventor and info.ai_era
-                             else info.ai_era or "App Inventor 앱이 아님")
+                             else info.ai_era or t("App Inventor 앱이 아님"))
             self.era.show()
         while self.chips.count():
             item = self.chips.takeAt(0)
@@ -170,7 +172,7 @@ class AppPanel(QWidget):
             chip.setText(words if len(words) <= 34 else words[:32] + "…")
             chip.setToolTip(words)
             chip.setStyleSheet(f"{LEVEL_STYLE[issue.level]};border-radius:10px;padding:3px 8px;text-align:left")
-            chip.clicked.connect(lambda _=False, w=words: plain_box(self, "PC 휴대폰 안내", w))
+            chip.clicked.connect(lambda _=False, w=words: plain_box(self, t("PC 휴대폰 안내"), w))
             self.chips.addWidget(chip)
 
 
@@ -187,7 +189,7 @@ class ProblemCard(QFrame):
         lay.addWidget(cause)
         if err.detail:
             d = QLabel()
-            d.setTextFormat(Qt.TextFormat.PlainText)   # crash and runtime-error text comes from the app (3a review)
+            d.setTextFormat(Qt.TextFormat.PlainText)   # crash and runtime-error text comes from the app
             d.setText(err.detail if len(err.detail) <= 160 else err.detail[:157] + "…")
             d.setWordWrap(True)
             d.setStyleSheet("color:#52606d")
@@ -198,7 +200,7 @@ class ProblemCard(QFrame):
             b = QPushButton(text(err.remedy.label_key))
             b.clicked.connect(lambda: on_remedy(err))
             row.addWidget(b)
-        more = QPushButton("자세히")
+        more = QPushButton(t("자세히"))
         more.clicked.connect(lambda: self._details(err))
         row.addWidget(more)
         row.addStretch(1)
@@ -206,10 +208,10 @@ class ProblemCard(QFrame):
 
     def _details(self, err: OrcusError) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("자세히")
+        box.setWindowTitle(t("자세히"))
         box.setText(text(err.message_key))
-        # the detail is the app's or the emulator's text: the informative label rendered it as HTML with links that
-        # open (file://host/x.hta), so it goes in the plain detailed-text area instead (3a review)
+        # the detail is the app's or the emulator's text: the informative label would render it as HTML with links
+        # that open (file://host/x.hta), so it goes in the plain detailed-text area instead
         detail = f"{err.code}: {err.detail}" if err.detail else str(err.code)
         box.setDetailedText(detail + (f"\n\n{err.log_excerpt}" if err.log_excerpt else ""))
         box.exec()
@@ -221,12 +223,12 @@ class LogPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.toggle = QToolButton()
-        self.toggle.setText("원본 로그")
+        self.toggle.setText(t("원본 로그"))
         self.toggle.setCheckable(True)
-        self.save = QPushButton("저장")
-        self.clear_btn = QPushButton("비우기")
+        self.save = QPushButton(t("저장"))
+        self.clear_btn = QPushButton(t("비우기"))
         top = QHBoxLayout()
-        top.addWidget(QLabel("문제"))
+        top.addWidget(QLabel(t("문제")))
         top.addStretch(1)
         top.addWidget(self.toggle)
         top.addWidget(self.save)
@@ -272,9 +274,9 @@ class LogPanel(QWidget):
             self.count = 0
 
     def _save(self) -> None:
-        name = dialogs.save_file(self, "로그 저장", str(Path.home() / "orcus-log.txt"), "텍스트 (*.txt)")
+        name = dialogs.save_file(self, t("로그 저장"), str(Path.home() / "orcus-log.txt"), t("텍스트 (*.txt)"))
         if name:
             try:
                 Path(name).write_text(self.raw.toPlainText(), encoding="utf-8")
             except OSError as e:   # no console in the windowed build: say so instead of failing silently
-                plain_box(self, "로그 저장", f"저장하지 못했습니다: {e}")
+                plain_box(self, t("로그 저장"), t("저장하지 못했습니다: {error}", error=e))

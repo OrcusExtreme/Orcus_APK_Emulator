@@ -26,17 +26,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from orcus.common.i18n import N_, t
 from orcus.contracts import GpuMode, SessionApi, Sensitivity
 
 from .sensors import SENSITIVITY_NAMES
 
 GPU_CHOICES = (
-    (GpuMode.HOST, "host (기본)", "그래픽 카드로 그립니다. 가장 빠릅니다."),
-    (GpuMode.HOST_HIDDEN, "host_hidden", "그래픽 카드로 그리되 숨은 창을 씁니다. host에서 화면이 검거나 소리가 안 날 때."),
-    (GpuMode.SOFTWARE, "software", "그래픽 카드 없이 그립니다. 느리지만 그래픽 드라이버 문제를 피합니다."),
-    (GpuMode.LADDER, "자동", "host로 시작하고, 그래픽 카드로 그리지 못하면 스스로 한 단계씩 낮춥니다(여러 PC에서 쓸 때)."),
+    (GpuMode.HOST, N_("host (기본)"), N_("그래픽 카드로 그립니다. 가장 빠릅니다.")),
+    (GpuMode.HOST_HIDDEN, "host_hidden", N_("그래픽 카드로 그리되 숨은 창을 씁니다. host에서 화면이 검거나 소리가 안 날 때.")),
+    (GpuMode.SOFTWARE, "software", N_("그래픽 카드 없이 그립니다. 느리지만 그래픽 드라이버 문제를 피합니다.")),
+    (GpuMode.LADDER, N_("자동"), N_("host로 시작하고, 그래픽 카드로 그리지 못하면 스스로 한 단계씩 낮춥니다(여러 PC에서 쓸 때).")),
 )
-REBUILD_QUESTION = "GPU 모드를 바꾸면 휴대폰을 다시 준비합니다(약 5분). 저장된 앱과 데이터는 지워집니다. 계속할까요?"
+REBUILD_QUESTION = N_("GPU 모드를 바꾸면 휴대폰을 다시 준비합니다(약 5분). 저장된 앱과 데이터는 지워집니다. 계속할까요?")
+LANGUAGE_CHOICES = (("auto", N_("자동 (Windows 언어)")), ("ko", "한국어"), ("en", "English"))
 
 
 class SettingsDialog(QDialog):
@@ -45,63 +47,74 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.s = session
         st = session.settings()
-        self.setWindowTitle("설정")
+        self.setWindowTitle(t("설정"))
         lay = QVBoxLayout(self)
 
-        typing = QGroupBox("입력")
-        t = QVBoxLayout(typing)
-        paste = QLabel("한글 입력: 붙여넣기 키 — 휴대폰 클립보드를 거쳐 보냅니다. 키 입력으로는 한글이 자모로 "
-                       "깨져서 다른 방식은 없습니다.")
+        typing = QGroupBox(t("입력"))
+        keys = QVBoxLayout(typing)
+        paste = QLabel(t("한글 입력: 붙여넣기 키 — 휴대폰 클립보드를 거쳐 보냅니다. 키 입력으로는 한글이 자모로 "
+                         "깨져서 다른 방식은 없습니다."))
         paste.setWordWrap(True)
-        self.esc_back = QCheckBox("Esc = 뒤로")
+        self.esc_back = QCheckBox(t("Esc = 뒤로"))
         self.esc_back.setChecked(st.input.esc_is_back)
-        self.right_back = QCheckBox("오른쪽 클릭 = 뒤로")
+        self.right_back = QCheckBox(t("오른쪽 클릭 = 뒤로"))
         self.right_back.setChecked(st.input.right_click_back)
         for w in (paste, self.esc_back, self.right_back):
-            t.addWidget(w)
+            keys.addWidget(w)
         lay.addWidget(typing)
 
-        sensors = QGroupBox("흔들기")
+        sensors = QGroupBox(t("흔들기"))
         row = QHBoxLayout(sensors)
-        row.addWidget(QLabel("처음 감도"))
+        row.addWidget(QLabel(t("처음 감도")))
         self.sensitivity = QComboBox()
         for s in (Sensitivity.WEAK, Sensitivity.MODERATE, Sensitivity.STRONG):
-            self.sensitivity.addItem(SENSITIVITY_NAMES[s], s)
+            self.sensitivity.addItem(t(SENSITIVITY_NAMES[s]), s)
         self.sensitivity.setCurrentIndex(max(0, self.sensitivity.findData(st.sensors.shake_default)))
         row.addWidget(self.sensitivity, 1)
         lay.addWidget(sensors)
 
-        runs = QGroupBox("앱 실행")
+        runs = QGroupBox(t("앱 실행"))
         r = QVBoxLayout(runs)
-        self.grant_all = QCheckBox("설치할 때 앱이 요청한 권한을 모두 허용")
+        self.grant_all = QCheckBox(t("설치할 때 앱이 요청한 권한을 모두 허용"))
         self.grant_all.setChecked(st.apk.grant_all)
-        self.reset_each = QCheckBox("실행할 때마다 휴대폰 초기화 (수업·시험 모드)")
+        self.reset_each = QCheckBox(t("실행할 때마다 휴대폰 초기화 (수업·시험 모드)"))
         self.reset_each.setChecked(st.apk.reset_before_each_run)
-        self.ask_close = QCheckBox("닫을 때 앱 데이터가 지워진다고 알리기")
+        self.ask_close = QCheckBox(t("닫을 때 앱 데이터가 지워진다고 알리기"))
         self.ask_close.setChecked(st.ui.confirm_close_data)
-        self.keep_state = QCheckBox("세션 간 휴대폰 유지 — 닫아도 설치한 앱과 데이터를 보관했다가 다음에 그대로 엽니다")
-        self.keep_state.setToolTip("보관본은 약 1 GB입니다. 끄면 보관한 휴대폰은 다음 시작 때 지워집니다. "
-                                   "휴대폰을 다시 준비하면(GPU 모드 변경 등) 보관본도 지워집니다.")
+        self.keep_state = QCheckBox(t("세션 간 휴대폰 유지 — 닫아도 설치한 앱과 데이터를 보관했다가 다음에 그대로 엽니다"))
+        self.keep_state.setToolTip(t("보관본은 약 1 GB입니다. 끄면 보관한 휴대폰은 다음 시작 때 지워집니다. "
+                                     "휴대폰을 다시 준비하면(GPU 모드 변경 등) 보관본도 지워집니다."))
         self.keep_state.setChecked(st.session.keep_state)
         for w in (self.grant_all, self.reset_each, self.ask_close, self.keep_state):
             r.addWidget(w)
         lay.addWidget(runs)
 
-        gpu = QGroupBox("GPU 모드 (바꾸면 휴대폰을 다시 준비, 약 5분)")
+        gpu = QGroupBox(t("GPU 모드 (바꾸면 휴대폰을 다시 준비, 약 5분)"))
         g = QVBoxLayout(gpu)
         self.gpu = QButtonGroup(self)
         for i, (mode, name, about) in enumerate(GPU_CHOICES):
-            b = QRadioButton(f"{name} — {about}")
+            b = QRadioButton(f"{t(name)} — {t(about)}")
             b.setChecked(mode == st.engine.gpu_mode)
             self.gpu.addButton(b, i)
             g.addWidget(b)
         lay.addWidget(gpu)
 
-        folder = QGroupBox("런타임 폴더")
+        language = QGroupBox(t("언어 (Language)"))
+        lang_row = QHBoxLayout(language)
+        self.language = QComboBox()
+        for value, name in LANGUAGE_CHOICES:
+            self.language.addItem(t(name), value)
+        self.language.setCurrentIndex(max(0, self.language.findData(st.ui.language)))
+        self._language_shown = str(self.language.currentData())   # an unknown value shows as auto: not a change
+        lang_row.addWidget(self.language, 1)
+        lang_row.addWidget(QLabel(t("Orcus를 다시 시작하면 바뀝니다")))
+        lay.addWidget(language)
+
+        folder = QGroupBox(t("런타임 폴더"))
         f = QHBoxLayout(folder)
         where = QLineEdit(str(root))
         where.setReadOnly(True)
-        logs = QPushButton("로그 폴더 열기")
+        logs = QPushButton(t("로그 폴더 열기"))
         logs.clicked.connect(lambda _=False: open_logs())
         f.addWidget(where, 1)
         f.addWidget(logs)
@@ -127,13 +140,14 @@ class SettingsDialog(QDialog):
             "ui.confirm_close_data": self.ask_close.isChecked(),
             "session.keep_state": self.keep_state.isChecked(),
             "engine.gpu_mode": self.chosen_gpu().value,
+            "ui.language": str(self.language.currentData()),
         }
         now: dict[str, object] = {
             "input.esc_is_back": st.input.esc_is_back, "input.right_click_back": st.input.right_click_back,
             "sensors.shake_default": st.sensors.shake_default.value, "apk.grant_all": st.apk.grant_all,
             "apk.reset_before_each_run": st.apk.reset_before_each_run,
             "ui.confirm_close_data": st.ui.confirm_close_data, "session.keep_state": st.session.keep_state,
-            "engine.gpu_mode": st.engine.gpu_mode.value,
+            "engine.gpu_mode": st.engine.gpu_mode.value, "ui.language": self._language_shown,
         }
         return {k: v for k, v in wanted.items() if v != now[k]}
 
@@ -147,16 +161,18 @@ class SettingsDialog(QDialog):
         # to or from the ladder: a restart; the ladder starts at host and prepares a phone only if none fits (§5.6)
         ladder = gpu is not None and GpuMode.LADDER.value in (gpu, self.s.settings().engine.gpu_mode.value)
         if result.needs_rebuild and not ladder:
-            if QMessageBox.question(self, "휴대폰 다시 준비", REBUILD_QUESTION) != QMessageBox.StandardButton.Yes:
+            if QMessageBox.question(self, t("휴대폰 다시 준비"), t(REBUILD_QUESTION)) != QMessageBox.StandardButton.Yes:
                 return
         elif result.needs_restart and not ladder:
-            QMessageBox.information(self, "설정", "이 설정은 휴대폰을 다시 켤 때 적용됩니다. 휴대폰 유지는 다음에 "
-                                                "닫을 때부터 보관합니다.")
+            QMessageBox.information(self, t("설정"), t("이 설정은 휴대폰을 다시 켤 때 적용됩니다. 휴대폰 유지는 다음에 "
+                                                     "닫을 때부터 보관합니다."))
         self.s.update_settings(changes)
+        if "ui.language" in changes:
+            QMessageBox.information(self, t("설정"), t("언어는 Orcus를 다시 시작하면 바뀝니다."))
         if ladder:
             self.s.engine.retry_gpu()
         elif gpu is not None:
-            self.s.engine.rebuild(f"GPU 모드를 {gpu}(으)로 바꿈")
+            self.s.engine.rebuild(f"GPU mode changed to {gpu}")
         self.accept()
 
 

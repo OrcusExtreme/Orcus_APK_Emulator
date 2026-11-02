@@ -25,7 +25,7 @@ class PortSettings:
 
 @dataclass(frozen=True)
 class EngineSettings:
-    ram_mb: int = 2560   # the emulator raises API 36 images to 2560 MB anyway (S6, 2026-10-30)
+    ram_mb: int = 2560   # the emulator raises API 36 images to 2560 MB anyway (S6)
     cores: int = 4
     gpu_mode: GpuMode = GpuMode.HOST   # there is no "auto"
     idle_grpc_timeout_s: int = 120
@@ -44,7 +44,7 @@ class ApkSettings:
 
 @dataclass(frozen=True)
 class SessionSettings:
-    keep_state: bool = False   # [P4]
+    keep_state: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +80,7 @@ class PrivacySettings:
 @dataclass(frozen=True)
 class UiSettings:
     confirm_close_data: bool = True
+    language: str = "auto"   # "auto" (Windows' display language), "ko" or "en"; from the next start
 
 
 @dataclass(frozen=True)
@@ -117,9 +118,9 @@ class SessionApi(Protocol):
     # update_settings: dotted keys such as 'engine.gpu_mode'
     def report(self) -> str: ...                    # body of [Copy report]
     def open_paths(self, paths: Sequence[Path]) -> None: ...
-    def make_diagnostics(self) -> Path: ...   # [P4] the diagnostic bundle; blocks a second or two: not on the GUI thread
+    def make_diagnostics(self) -> Path: ...   # the diagnostic bundle; blocks a second or two: not on the GUI thread
     def set_camera_image(self, png: bytes | None) -> None: ...
-    # [P4] what the phone's camera shows (PNG; None: the color bars); seen the next time an app opens the camera
+    # what the phone's camera shows (PNG; None: the color bars); seen the next time an app opens the camera
     def shutdown(self, *, fast: bool = False) -> None: ...
 
 

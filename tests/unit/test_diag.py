@@ -1,4 +1,4 @@
-"""[P4] The diagnostic bundle: what goes in, the cut of a big log, the masking, the pruning; the CLI command."""
+"""The diagnostic bundle: what goes in, the cut of a big log, the masking, the pruning; the CLI command."""
 
 import os
 import time

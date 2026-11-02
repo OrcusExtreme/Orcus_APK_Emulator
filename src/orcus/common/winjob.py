@@ -258,8 +258,7 @@ class LockBusy(Exception):
 class ExclusiveLock:
     """Exclusive open (share mode 0) of a lock file, held for the VM's lifetime.
 
-    The OS releases it when the process dies, and it works across Windows accounts because the
-    file lives in the shared D:\\OrcusAPK.
+    The OS releases it when the process dies.
     """
 
     def __init__(self, path: Path) -> None:

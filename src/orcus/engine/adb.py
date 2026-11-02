@@ -18,7 +18,7 @@ from orcus.contracts import CmdResult, EngineNotReady, ErrorCode, LogEntry
 from .seams import LineStream, ProcessHandle, Seams
 
 _log = log.get("engine.adb")
-SLOW_CMD_S = 10.0   # an adb or guest stall worth a log line (one launch took 22 s in the 3a acceptance run)
+SLOW_CMD_S = 10.0   # an adb or guest stall worth a log line (one launch took 22 s in an acceptance run)
 
 
 def client(server_port: int, serial: str | None, *args: str) -> list[str]:
@@ -155,7 +155,7 @@ class AdbLogcat:
     """CancellableIter[LogEntry]: `adb logcat -v threadtime -T 1`, i.e. the guest's log from now on.
 
     gRPC streamLogcat sends nothing at all after LoadSnapshot ([Reset phone]), even after restarting the guest's
-    goldfish-logcat (Phase 3a device test); adb is unaffected by snapshot loads.
+    goldfish-logcat; adb is unaffected by snapshot loads.
     """
 
     ARGS = ("logcat", "-v", "threadtime", "-T", "1")

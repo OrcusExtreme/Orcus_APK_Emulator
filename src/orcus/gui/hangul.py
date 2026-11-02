@@ -9,7 +9,9 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QToolButton
 
-TOOLTIP = "휴대폰 클립보드를 덮어씁니다. 비밀번호에는 쓰지 마세요."
+from orcus.common.i18n import N_, t
+
+TOOLTIP = N_("휴대폰 클립보드를 덮어씁니다. 비밀번호에는 쓰지 마세요.")
 LINES = 2
 
 
@@ -38,21 +40,21 @@ class HangulBar(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.edit = _Edit()
         self.edit.setTabChangesFocus(True)
-        self.edit.setPlaceholderText("여기에 쓰고 Enter · 줄바꿈 Shift+Enter · 닫기 Esc")
-        self.edit.setToolTip(TOOLTIP)
+        self.edit.setPlaceholderText(t("여기에 쓰고 Enter · 줄바꿈 Shift+Enter · 닫기 Esc"))
+        self.edit.setToolTip(t(TOOLTIP))
         lh = self.edit.fontMetrics().lineSpacing()
         self.edit.setFixedHeight(lh * LINES + 12)
         self.edit.submitted.connect(self._submit)
         self.edit.escaped.connect(self.close_bar)
-        go = QPushButton("보내기")
-        go.setToolTip(TOOLTIP)
+        go = QPushButton(t("보내기"))
+        go.setToolTip(t(TOOLTIP))
         go.clicked.connect(self._submit)
         shut = QToolButton()
-        shut.setText("닫기")
+        shut.setText(t("닫기"))
         shut.clicked.connect(self.close_bar)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
-        lay.addWidget(QLabel("한글"))
+        lay.addWidget(QLabel(t("한글")))
         lay.addWidget(self.edit, 1)
         lay.addWidget(go)
         lay.addWidget(shut)

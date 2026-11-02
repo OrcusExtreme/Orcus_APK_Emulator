@@ -9,12 +9,12 @@ Locations go through the framework's test providers (S7), which needs a shell: t
 location is sent 3 times, 1 s apart (the app got it within seconds that way in S7); a newer one replaces it.
 Test providers report only when told, so an app that asks for updates later hears nothing until the next send:
 resend_location() repeats the newest one (the session's start place until the user picks another).
-[P4] The posture and the world (light, proximity, battery) are read from the phone when the epoch starts: a kept
-phone (§6.3) comes back turned, lit and charged the way it was saved (P4 device check), and a turn from an assumed
-portrait would jump. Light and proximity are physical models of their own; a text and a call go through the modem.
+The posture and the world (light, proximity, battery) are read from the phone when the epoch starts: a kept
+phone (§6.3) comes back turned, lit and charged the way it was saved, and a turn from an assumed portrait would
+jump. Light and proximity are physical models of their own; a text and a call go through the modem.
 The battery stays above 20 % while not charging: at the 20 % warning the image's SystemUI asks Extreme Battery
 Saver's provider (com.google.android.flipendo.api), which this image lacks, and crashes; the app in front pauses and
-resumes, and crash after crash could wake the rescue party (4a device check). Charging, any level is fine.
+resumes, and crash after crash could wake the rescue party. Charging, any level is fine.
 """
 
 import dataclasses
@@ -228,7 +228,7 @@ class ControlQueue:
                 self._stub.setBattery(B(hasBattery=True, isPresent=True, charger=B.AC if charging else B.NONE,
                                         chargeLevel=level, health=B.GOOD,
                                         status=B.CHARGING if charging else B.DISCHARGING), timeout=5)
-            case "sms":   # Google Messages takes it; App Inventor's Texting gets MessageReceived (P4 device check)
+            case "sms":   # Google Messages takes it; App Inventor's Texting gets MessageReceived
                 sender, text = payload
                 r = self._stub.sendSms(ec.SmsMessage(srcAddress=sender, text=text), timeout=10)
                 if r.response != ec.PhoneResponse.OK:

@@ -119,7 +119,7 @@ def test_screen_maps_mouse_and_always_lifts_the_finger(qapp: QApplication) -> No
 
 
 def test_ctrl_drag_is_a_two_finger_pinch_mirrored_through_the_centre(qapp: QApplication) -> None:
-    """[P4] The second finger mirrors the pointer through the screen centre; both lift on release, at the edge and
+    """The second finger mirrors the pointer through the screen centre; both lift on release, at the edge and
     on focus loss; the wheel waits while two fingers are down."""
     v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
     v.resize(400, 800)
@@ -328,7 +328,7 @@ def test_window_wiring(qapp: QApplication, tmp_path: Path) -> None:
 
 
 def test_untrusted_app_text_is_never_rich_text(qapp: QApplication) -> None:
-    """A manifest label like `<img src=//host/x.png>` loaded over SMB as rich text (3a review)."""
+    """A manifest label like `<img src=//host/x.png>` would load over SMB if shown as rich text."""
     from orcus.gui import overlays, panels
     p = panels.AppPanel()
     host = QWidget()   # keep it: a collected parent deletes the overlay with it
@@ -339,7 +339,7 @@ def test_untrusted_app_text_is_never_rich_text(qapp: QApplication) -> None:
 
 
 def test_only_existing_local_files_are_handed_over(tmp_path: Path) -> None:
-    """Another account could hand over a share path and make us fetch it with our credentials (3a review)."""
+    """Another account could hand over a share path and make us fetch it with our credentials."""
     from orcus.gui import instance
     apk = tmp_path / "고양이.apk"
     apk.write_bytes(b"x")

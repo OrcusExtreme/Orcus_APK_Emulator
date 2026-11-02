@@ -1,13 +1,13 @@
 """`orcus-cli smoke` (ARCHITECTURE.md §12.5): the gate for emulator, image and platform-tools upgrades.
 
-[P3a] start -> frame -> key -> install and launch -> tap -> paste -> reset -> stop, each step timed. The APK is
-the user's own HelloPurr build (not shipped); without one the app steps are SKIP. The tap is checked through
-HelloPurr's Vibrate(500), which `dumpsys vibrator_manager` records with the package (S5).
-[P3b] adds shake, rotate and location after paste. HelloPurr's Shaking plays the meow, and App Inventor's Sound
-logs every Play: "SoundPool.play returned stream id", or "Unable to play because MinimumInterval has not elapsed"
-within 500 ms of the tap's meow (`dumpsys audio` logs no second start of the same player).
+start -> frame -> key -> install and launch -> tap -> paste -> shake -> rotate -> location -> reset -> stop,
+each step timed. The APK is the user's own HelloPurr build (not shipped); without one the app steps are SKIP.
+The tap is checked through HelloPurr's Vibrate(500), which `dumpsys vibrator_manager` records with the package
+(S5). HelloPurr's Shaking plays the meow, and App Inventor's Sound logs every Play: "SoundPool.play returned
+stream id", or "Unable to play because MinimumInterval has not elapsed" within 500 ms of the tap's meow
+(`dumpsys audio` logs no second start of the same player).
 A turn shows in the frames' rotation and in the display of an app that follows the sensor; a location shows as
-the gps and fused test providers' last location (3b device check, 2026-10-31).
+the gps and fused test providers' last location.
 """
 
 import re

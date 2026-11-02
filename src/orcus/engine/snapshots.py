@@ -33,7 +33,7 @@ class ValidityKey:
     features: str
     provision_v: int
     adbkey_sha256: str
-    camera: str   # [P4] the back camera's mode: a golden from before the picture camera does not open (4a)
+    camera: str   # the back camera's mode: a golden saved with another camera mode does not load
 
 
 def _sha256(path: Path) -> str:
@@ -44,7 +44,7 @@ def _sha256(path: Path) -> str:
 
 
 def current_key(paths: OrcusPaths, settings: Settings, gpu_mode: GpuMode | None = None) -> ValidityKey:
-    """gpu_mode: the mode in force when it is not the setting itself (the GPU ladder's level, §5.6 [P4])."""
+    """gpu_mode: the mode in force when it is not the setting itself (the GPU ladder's level, §5.6)."""
     return ValidityKey(
         emulator_build=pins.EMULATOR_BUILD,
         image=f"{pins.SYSTEM_IMAGE_API}-{pins.SYSTEM_IMAGE_TAG}-r{pins.SYSTEM_IMAGE.revision}",
@@ -102,7 +102,7 @@ def golden_exists(paths: OrcusPaths) -> bool:
 def golden_gpu(paths: OrcusPaths) -> str | None:
     """The host GPU the emulator recorded when it saved the golden (`snapshot.pb` host.gpu_driver, e.g.
     '10de-NVIDIA GeForce GTX 1660-'); '' when it saw none; None when unreadable. A load compares it with the
-    session's display devices and deletes the golden on a mismatch (3a finding 18)."""
+    session's display devices and deletes the golden on a mismatch."""
     try:
         snap = snapshot_pb2.Snapshot.FromString((paths.golden_dir / "snapshot.pb").read_bytes())
     except (OSError, DecodeError):

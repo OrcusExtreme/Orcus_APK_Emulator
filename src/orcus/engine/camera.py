@@ -1,10 +1,10 @@
-"""The back camera shows a picture (plan.md Phase 4 "카메라에 이미지 보여주기", 4a spike).
+"""The back camera shows a picture.
 
 Every launch passes `-camera-back imagefile:<home>\\state\\camera.png`. The camera is part of a snapshot's hardware:
-a phone saved with the emulated camera did not load with the flag ("The emulator hardware cannot load snapshot",
-4a), so the flag is on every launch and in the golden's key (a golden made before it is rebuilt once). The emulator
+a phone saved with the emulated camera did not load with the flag ("The emulator hardware cannot load snapshot"),
+so the flag is on every launch and in the golden's key (a golden made without it is rebuilt once). The emulator
 reads the file whenever the camera opens: a new picture shows the next time an app opens the camera, no restart
-(4a: the camera app showed the new picture once reopened). Until the user picks one, it shows color bars made here.
+(the camera app showed the new picture once reopened). Until the user picks one, it shows color bars made here.
 """
 
 import os

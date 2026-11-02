@@ -122,7 +122,7 @@ class Resolved:
 def resolve(pin: Archive, index: RepoIndex) -> Resolved:
     """Match the pin against the index. Never upgrades: a different size/SHA-1 is an error.
 
-    A pin that left the index (37.2.12 since 2026-10-29) is downloaded from its fixed URL.
+    A pin that left the index (as 37.2.12 did, S0a) is downloaded from its fixed URL.
     """
     for pkg in index.find(pin.package_path):
         if revision_tuple(pkg.revision) != revision_tuple(pin.revision):

@@ -1,9 +1,9 @@
-"""Pictures, sounds and videos dropped on the window go into the phone (plan.md Phase 4 "사진·소리 파일 드롭").
+"""Pictures, sounds and videos dropped on the window go into the phone.
 
 `adb push` into /sdcard/Pictures, Music or Movies is enough: MediaStore lists the file at once, as the FUSE path
-indexes it when it is closed (4a device check, Korean names too), so ImagePicker, Player and VideoPlayer find it.
+indexes it when it is closed (checked on the phone, Korean names too), so ImagePicker, Player and VideoPlayer find it.
 adb only sees the staged copy `<staging>\\media\\<sha256>.<ext>` (§7.2); the phone keeps the dropped name. A staged
-copy also has today's date: pushed straight, the PC file's old date sent a photo to the bottom of the picker.
+copy also has today's date: pushed straight, the PC file's old date would send a photo to the bottom of the picker.
 Which folder: contracts.media_folder (the window asks too, while a file is dragged).
 """
 

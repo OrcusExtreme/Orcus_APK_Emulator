@@ -1,4 +1,4 @@
-"""Device tests for the APK pipeline (ARCHITECTURE.md §12.3 items 4, 8, 13 — the 3a part) on the real phone.
+"""Device tests for the APK pipeline (ARCHITECTURE.md §12.3 items 4, 8, 13) on the real phone.
 
 Run: py tools/dev.py test -m device tests/device/test_apk_real.py -s
 Needs the fixtures in D:\\OrcusDev\\fixtures (HelloPurr.apk, OrcusProbe.apk, built in the App Inventor web IDE).
@@ -276,7 +276,7 @@ def test_probe_error_cards(phone: Phone) -> None:
     phone.sh("pm", "grant", pkg, "android.permission.RECORD_AUDIO")
     # mic off -> No Match: 5.5 s in S5, 6 s alone, 26 s after the 908 step, and sometimes never: Google's
     # recognizer then ends with "#onResults empty final recognition results" and no NO_SPEECH error, so the app
-    # reports nothing (Phase 3a). Our part is checked whenever the app does report it.
+    # reports nothing. Our part is checked whenever the app does report it.
     try:
         phone.press("listen (new)", pkg, key_is("app.error.3806"), timeout_s=60)
     except AssertionError:

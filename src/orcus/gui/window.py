@@ -3,7 +3,8 @@ the Korean input bar under the phone, status bar.
 
 Everything arrives through the Bridge on the main thread. The window only calls SessionApi and DeviceControls,
 whose methods all return at once. Feedback goes to one channel per severity (§10.2, the code -> channel table
-in messages_ko); banners are the engine's warnings plus the running app's (RunEvent.warnings).
+in messages_ko); banners are the engine's warnings plus the running app's (RunEvent.warnings). Sentences go
+through t() (common.i18n): Korean or English.
 """
 
 import subprocess
@@ -17,6 +18,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDragLeaveEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from orcus.common import messages_ko, win32
+from orcus.common.i18n import N_, t
 from orcus.common.messages_ko import Channel, text
 from orcus.contracts import (
     ApkInfo,
@@ -63,6 +66,7 @@ from .phone import PhoneView
 from .screen import ScreenView, fit
 from .sensors import SHAKE_REPEAT_MS, SensorPanel
 from .settings_dialog import SettingsDialog, focus_gpu
+from .wizard import SetupWizard
 
 PANEL_W = 360
 WINDOW_CHROME_H = 192   # title bar, toolbar, banner room, status bar (§9.1: ~256 px with the bezel and nav row)
@@ -70,22 +74,22 @@ BUSY = (RunStage.STAGING, RunStage.INSPECTING, RunStage.CHECKING, RunStage.INSTA
 USED = (RunStage.INSTALLING, RunStage.LAUNCHING, RunStage.RUNNING)   # the app may have written data
 LANDSCAPES = (Rotation.LANDSCAPE, Rotation.REVERSE_LANDSCAPE)
 RECORD_AUDIO = "android.permission.RECORD_AUDIO"
-CAMERA_MAX_PX = 1280   # [P4] the camera's picture, scaled down to this a side
-MEDIA_WORDS = {"Pictures": ("사진", "ImagePicker로 고를 수 있습니다"),   # [P4] dropped files (§7.1)
-               "Music": ("음악", "Sound·Player의 Source에 이 경로를 쓰세요"),
-               "Movies": ("동영상", "VideoPlayer의 Source에 이 경로를 쓰세요")}
-CRASH_NOTICE = {SessionMode.GOLDEN: "휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다.",
-                SessionMode.COLD: "휴대폰이 멈춰서 다시 켰습니다.",
-                SessionMode.KEEP_STATE: "휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다."}
-CLOSE_NOTICE = "이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다."   # §6.1, GOLDEN only
-KEEP_ONCE = "이번에는 휴대폰 유지하고 닫기"   # [P4] §6.1
-NO_DISPLAY_CHIP = "이번만 느린 시작 — 초기화하면 깨끗한 휴대폰으로"   # COLD boot that kept the golden (3a finding 18)
-MODE_CHIP = {SessionMode.GOLDEN: "깨끗한 휴대폰 모드 — 닫으면 처음 상태로", SessionMode.COLD: "느린 그래픽 모드 · 휴대폰 상태가 유지됨",
-             SessionMode.KEEP_STATE: "휴대폰 유지 모드"}
+CAMERA_MAX_PX = 1280   # the camera's picture is scaled down to this a side
+MEDIA_WORDS = {"Pictures": (N_("사진"), N_("ImagePicker로 고를 수 있습니다")),   # dropped files (§7.1)
+               "Music": (N_("음악"), N_("Sound·Player의 Source에 이 경로를 쓰세요")),
+               "Movies": (N_("동영상"), N_("VideoPlayer의 Source에 이 경로를 쓰세요"))}
+CRASH_NOTICE = {SessionMode.GOLDEN: N_("휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다."),
+                SessionMode.COLD: N_("휴대폰이 멈춰서 다시 켰습니다."),
+                SessionMode.KEEP_STATE: N_("휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다.")}
+CLOSE_NOTICE = N_("이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다.")   # §6.1, GOLDEN only
+KEEP_ONCE = N_("이번에는 휴대폰 유지하고 닫기")   # §6.1
+NO_DISPLAY_CHIP = N_("이번만 느린 시작 — 초기화하면 깨끗한 휴대폰으로")   # COLD boot that kept the golden
+MODE_CHIP = {SessionMode.GOLDEN: N_("깨끗한 휴대폰 모드 — 닫으면 처음 상태로"),
+             SessionMode.COLD: N_("느린 그래픽 모드 · 휴대폰 상태가 유지됨"), SessionMode.KEEP_STATE: N_("휴대폰 유지 모드")}
 # RemedyAction -> handler method name; the unit test checks every action has one (§3)
 REMEDIES: dict[RemedyAction, str] = {
-    RemedyAction.RETRY: "retry_engine", RemedyAction.ENABLE_WHPX: "explain_whpx",
-    RemedyAction.COPY_IT_REQUEST: "copy_it_request", RemedyAction.REPAIR_SETUP: "explain_setup",
+    RemedyAction.RETRY: "retry_engine", RemedyAction.ENABLE_WHPX: "open_setup",
+    RemedyAction.COPY_IT_REQUEST: "copy_it_request", RemedyAction.REPAIR_SETUP: "open_setup",
     RemedyAction.OPEN_LOG: "open_logs", RemedyAction.RESET_PHONE: "reset_phone", RemedyAction.RUN_AGAIN: "rerun",
     RemedyAction.GRANT_ALL: "grant_all", RemedyAction.CHANGE_GPU_MODE: "gpu_dialog",
     RemedyAction.FREE_DISK: "explain_disk", RemedyAction.CONTINUE_ANYWAY: "rerun",
@@ -107,6 +111,7 @@ class MainWindow(QMainWindow):
         self.bridge = bridge
         self.logs_dir = logs_dir
         self.quiet_close = False   # logoff and other ends that must not ask (gui.app sets it)
+        self._wizard: SetupWizard | None = None
         self.setWindowTitle("Orcus APK Emulator")
         if not QApplication.windowIcon().isNull():
             self.setWindowIcon(QApplication.windowIcon())
@@ -146,9 +151,9 @@ class MainWindow(QMainWindow):
         self.log_panel = LogPanel()
         self.log_panel.remedy.connect(lambda err: self.remedy(err.remedy.action) if err.remedy else None)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.app_panel, "앱")
-        self.tabs.addTab(self.sensors, "센서")
-        self.tabs.addTab(self.log_panel, "로그")
+        self.tabs.addTab(self.app_panel, t("앱"))
+        self.tabs.addTab(self.sensors, t("센서"))
+        self.tabs.addTab(self.log_panel, t("로그"))
         self.tabs.setFixedWidth(PANEL_W)
         left = QVBoxLayout()
         left.addLayout(self.banners)
@@ -162,7 +167,7 @@ class MainWindow(QMainWindow):
         central.setLayout(row)
         self.setCentralWidget(central)
         self.status_engine = QLabel()
-        self.status_app = QLabel()   # carries the app's own label: never rich text (3a review)
+        self.status_app = QLabel()   # carries the app's own label: never rich text
         for label in (self.status_engine, self.status_app):
             label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_mic = QLabel()
@@ -231,13 +236,15 @@ class MainWindow(QMainWindow):
 
     # --- toolbar and shortcuts ----------------------------------------------------------------------------------------
     def _toolbar(self) -> None:
-        bar = QToolBar("도구")
+        bar = QToolBar(t("도구"))
         bar.setMovable(False)
         self.addToolBar(bar)
-        for label, slot, tip in (("APK 열기", self.open_apk, "Ctrl+O"), ("다시 실행", self.rerun, "F5"),
-                                 ("앱 중지", self.s.apps.stop_app, ""), ("데이터 지우고 실행", self.s.apps.clear_data, ""),
-                                 ("휴대폰 초기화", self.reset_phone, "확인 후 초기화"), ("스크린샷", self.screenshot, ""),
-                                 ("설정", self.settings_dialog, ""), ("도움말", self.help, "")):
+        for label, slot, tip in ((t("APK 열기"), self.open_apk, "Ctrl+O"), (t("다시 실행"), self.rerun, "F5"),
+                                 (t("앱 중지"), self.s.apps.stop_app, ""),
+                                 (t("데이터 지우고 실행"), self.s.apps.clear_data, ""),
+                                 (t("휴대폰 초기화"), self.reset_phone, t("확인 후 초기화")),
+                                 (t("스크린샷"), self.screenshot, ""), (t("설정"), self.settings_dialog, ""),
+                                 (t("도움말"), self.help, "")):
             act = QAction(label, self)
             act.setToolTip(f"{label} ({tip})" if tip else label)
             act.triggered.connect(slot)
@@ -262,7 +269,7 @@ class MainWindow(QMainWindow):
         self._status = st
         android = "Android 16" if st.caps and st.caps.api == 36 else (f"API {st.caps.api}" if st.caps else "")
         gpu = f"GPU {st.caps.gpu_mode}" if st.caps else ""
-        chip = NO_DISPLAY_CHIP if ErrorCode.ENGINE_NO_DISPLAY in st.warnings else MODE_CHIP[st.mode]
+        chip = t(NO_DISPLAY_CHIP if ErrorCode.ENGINE_NO_DISPLAY in st.warnings else MODE_CHIP[st.mode])
         parts = [text(st.text_key), android, gpu, chip if st.state == EngineState.READY else ""]
         self.status_engine.setText("● " + " · ".join(p for p in parts if p))
         if st.state == EngineState.READY:
@@ -271,13 +278,13 @@ class MainWindow(QMainWindow):
                 self._epoch = st.epoch
                 self._attach_device()
                 if st.epoch_cause == EpochCause.CRASH_RESTART:
-                    self.toast.show_text(CRASH_NOTICE[st.mode], 6000)
+                    self.toast.show_text(t(CRASH_NOTICE[st.mode]), 6000)
                 elif st.epoch_cause in (EpochCause.RESET, EpochCause.RESET_RECOVERY):
-                    self.toast.show_text("휴대폰 초기화 완료")
+                    self.toast.show_text(t("휴대폰 초기화 완료"))
             if not self._busy_run:
                 self.overlay.hide()
             if not st.display_on:
-                self.overlay.show_text("클릭하면 화면이 켜집니다")
+                self.overlay.show_text(t("클릭하면 화면이 켜집니다"))
         elif st.state in (EngineState.FAILED, EngineState.NOT_INSTALLED):
             self._detach_device()
             self.overlay.hide()
@@ -301,7 +308,7 @@ class MainWindow(QMainWindow):
             action = None
             if spec.remedy is not None:
                 act = spec.remedy
-                # clicked(bool) fills the first parameter: `lambda a=act:` got False and the button did nothing (3a)
+                # clicked(bool) fills the first parameter: `lambda a=act:` got False and the button did nothing
                 action = (text(f"remedy.{act}"), lambda _=False, a=act: self.remedy(a))
             b = Banner(spec.text, action=action, on_close=lambda _=False, k=key: self._forget_banner(k))
             self.banner_widgets[key] = b
@@ -321,7 +328,7 @@ class MainWindow(QMainWindow):
         w, h = self._phys()
         dev.frames.start(w, h, self.pump.on_frame, self.bridge.on_frames_ended)
         # a new phone: level, at the first location preset, microphone off (SESSION_INIT, §6.6); its posture,
-        # light and battery as the phone has them (a kept phone comes back as it was saved, P4)
+        # light and battery as the phone has them (a kept phone comes back as it was saved)
         self.sensors.set_device(dev.controls is not None)
         self.sensors.set_posture(dev.controls.posture if dev.controls else Rotation.PORTRAIT)
         self.sensors.set_world(dev.controls.world if dev.controls else PhoneWorld())
@@ -418,7 +425,7 @@ class MainWindow(QMainWindow):
         c = self._controls()
         if c is not None:
             c.set_location(lat, lon)
-            self.toast.show_text("위치를 보냈습니다. 앱에 닿기까지 몇 초 걸립니다.")
+            self.toast.show_text(t("위치를 보냈습니다. 앱에 닿기까지 몇 초 걸립니다."))
 
     def _light(self, lux: float) -> None:
         c = self._controls()
@@ -439,7 +446,7 @@ class MainWindow(QMainWindow):
         c = self._controls()
         if c is not None:
             c.receive_sms(sender, text)
-            self.toast.show_text("문자를 보냈습니다.")
+            self.toast.show_text(t("문자를 보냈습니다."))
 
     def _call(self, number: str, ring: bool) -> None:
         c = self._controls()
@@ -447,39 +454,39 @@ class MainWindow(QMainWindow):
             return
         if ring:
             c.call_in(number)
-            self.toast.show_text("전화가 옵니다. 받거나 거절하려면 휴대폰 화면의 알림을 누르세요.")
+            self.toast.show_text(t("전화가 옵니다. 받거나 거절하려면 휴대폰 화면의 알림을 누르세요."))
         else:
             c.call_end(number)
 
     def _camera(self, pick: bool) -> None:
-        """[P4] The camera's picture: a PNG of at most 1280 px a side, or the color bars."""
+        """The camera's picture: a PNG of at most 1280 px a side, or the color bars."""
         if not pick:
-            self._put_camera(None, "기본 그림 (색 막대)")
+            self._put_camera(None, t("기본 그림 (색 막대)"))
             return
-        name, _ = QFileDialog.getOpenFileName(self, "카메라에 보여 줄 그림", "",
-                                              "그림 (*.png *.jpg *.jpeg *.bmp *.gif *.webp)")
+        name, _ = QFileDialog.getOpenFileName(self, t("카메라에 보여 줄 그림"), "",
+                                              t("그림 (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"))
         if not name:
             return
         img = QImage(name)
         if img.isNull():
-            QMessageBox.warning(self, "카메라", "그림 파일을 읽지 못했습니다.")
+            QMessageBox.warning(self, t("카메라"), t("그림 파일을 읽지 못했습니다."))
             return
         if max(img.width(), img.height()) > CAMERA_MAX_PX:
             img = img.scaled(CAMERA_MAX_PX, CAMERA_MAX_PX, Qt.AspectRatioMode.KeepAspectRatio,
                              Qt.TransformationMode.SmoothTransformation)
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        img.save(buf, "PNG")   # type: ignore[call-overload]  # the stub wants bytes; PySide6 takes only str (4a)
+        img.save(buf, "PNG")   # type: ignore[call-overload]  # the stub wants bytes; PySide6 takes only str
         self._put_camera(bytes(buf.data().data()), Path(name).name)
 
     def _put_camera(self, png: bytes | None, words: str) -> None:
         try:
             self.s.set_camera_image(png)
         except OSError as e:
-            QMessageBox.warning(self, "카메라", f"그림을 넣지 못했습니다: {e}")
+            QMessageBox.warning(self, t("카메라"), t("그림을 넣지 못했습니다: {error}", error=e))
             return
-        self.sensors.camera_label.setText(f"지금: {words}")
-        self.toast.show_text("카메라 그림을 바꿨습니다. 앱이 카메라를 다시 열면 보입니다.")
+        self.sensors.camera_label.setText(t("지금: {what}", what=words))
+        self.toast.show_text(t("카메라 그림을 바꿨습니다. 앱이 카메라를 다시 열면 보입니다."))
 
     def _sensitivity_chosen(self, sensitivity: Sensitivity) -> None:
         if self._info is None:
@@ -508,13 +515,13 @@ class MainWindow(QMainWindow):
         on = c is not None and c.microphone
         self.sensors.set_mic(on, host_mic=self._host_mic, app_uses_mic=self._app_uses_mic())
         if not self._host_mic:
-            self.status_mic.setText("마이크 없음")
+            self.status_mic.setText(t("마이크 없음"))
             self.status_mic.setStyleSheet("color:#7b8794")
         elif on:
-            self.status_mic.setText("마이크 켜짐")
+            self.status_mic.setText(t("마이크 켜짐"))
             self.status_mic.setStyleSheet("color:#b3261e;font-weight:bold")
         else:
-            self.status_mic.setText("마이크 꺼짐")
+            self.status_mic.setText(t("마이크 꺼짐"))
             self.status_mic.setStyleSheet("")
 
     def _app_changed(self, info: ApkInfo) -> None:
@@ -526,7 +533,7 @@ class MainWindow(QMainWindow):
         try:
             self.s.update_settings(changes)
         except (OSError, ValueError) as e:
-            self.toast.show_text(f"설정을 저장하지 못했습니다: {e}")
+            self.toast.show_text(t("설정을 저장하지 못했습니다: {error}", error=e))
 
     # --- Korean input bar (§9.6) -----------------------------------------------------------------------------------
     def toggle_hangul(self) -> None:
@@ -540,7 +547,7 @@ class MainWindow(QMainWindow):
 
     def _send_text(self, words: str) -> None:
         if self._device is None:
-            self.toast.show_text("휴대폰이 준비되면 보낼 수 있습니다")
+            self.toast.show_text(t("휴대폰이 준비되면 보낼 수 있습니다"))
             return
         self._device.input.paste_text(words)
 
@@ -559,7 +566,7 @@ class MainWindow(QMainWindow):
         if ev.warnings != self._run_warnings:
             self._run_warnings = ev.warnings
             self._sync_banners(self._status.warnings)
-        name = self._app_name or "앱"
+        name = self._app_name or t("앱")
         if ev.prompt is not None:
             self._ask(ev)
             return
@@ -577,14 +584,14 @@ class MainWindow(QMainWindow):
             c = self._controls()
             note = ""
             if self._app_uses_mic() and self._host_mic and not (c is not None and c.microphone):
-                note = "\n이 앱은 마이크를 씁니다 — [센서] 탭에서 켤 수 있습니다"
-            self.toast.show_text(f"실행 중 · {ev.elapsed_s:.1f}초{note}", 5000 if note else 3000)
+                note = "\n" + t("이 앱은 마이크를 씁니다 — [센서] 탭에서 켤 수 있습니다")
+            self.toast.show_text(t("실행 중 · {s:.1f}초", s=ev.elapsed_s) + note, 5000 if note else 3000)
             self.screen_view.setFocus()
         elif not self._busy_run and self._status.state == EngineState.READY:
             self.overlay.hide()
         if not (ev.stage == RunStage.RUNNING and was_running):   # a banner update keeps the launch time shown
-            self.status_app.setText(f"{name} {words}" + (f" · {ev.elapsed_s:.1f}초" if ev.stage == RunStage.RUNNING
-                                                          else ""))
+            self.status_app.setText(f"{name} {words}" + (" · " + t("{s:.1f}초", s=ev.elapsed_s)
+                                                          if ev.stage == RunStage.RUNNING else ""))
         if ev.problem is not None:
             self.show_problem(ev.problem)
 
@@ -600,12 +607,13 @@ class MainWindow(QMainWindow):
             box.exec()
             return
         self.log_panel.add_problem(err)
-        self.tabs.setTabText(self.tabs.indexOf(self.log_panel), f"로그 ({self.log_panel.count})")
+        self.tabs.setTabText(self.tabs.indexOf(self.log_panel), t("로그 ({n})", n=self.log_panel.count))
         if channel == Channel.RED_BANNER:
             action = (text(f"remedy.{err.remedy.action}"), lambda _=False, a=err.remedy.action: self.remedy(a)) \
                 if err.remedy else None
             first = err.detail.splitlines()[0][:120] if err.detail else ""
-            b = Banner(f"{self._app_name or '앱'}가 예기치 않게 종료되었습니다. {first}", red=True, action=action)
+            b = Banner(t("{app}가 예기치 않게 종료되었습니다. {detail}", app=self._app_name or t("앱"), detail=first),
+                       red=True, action=action)
             self.banners.addWidget(b)
             QTimer.singleShot(15000, b.close)
         elif channel == Channel.BANNER:
@@ -630,7 +638,7 @@ class MainWindow(QMainWindow):
             case "clear_data":
                 self.s.apps.clear_data()
             case "uninstall":
-                if QMessageBox.question(self, "제거", "이 앱을 PC 휴대폰에서 지울까요? 저장된 데이터도 지워집니다.") \
+                if QMessageBox.question(self, t("제거"), t("이 앱을 PC 휴대폰에서 지울까요? 저장된 데이터도 지워집니다.")) \
                         == QMessageBox.StandardButton.Yes:
                     self.s.apps.uninstall()
             case "match_orientation":
@@ -643,14 +651,15 @@ class MainWindow(QMainWindow):
                 pass
 
     def _installed_action(self, action: str, package: str) -> None:
-        """[P4] The [App] tab's list of apps in the phone."""
+        """The [App] tab's list of apps in the phone."""
         match action:
             case "run":
                 self.s.apps.run_installed(package)
             case "remove":
                 name = package.rsplit(".", 1)[-1]
-                if QMessageBox.question(self, "지우기", f"{name}을(를) PC 휴대폰에서 지울까요? 저장된 데이터도 "
-                                        "지워집니다.") == QMessageBox.StandardButton.Yes:
+                if QMessageBox.question(self, t("지우기"), t("{name}을(를) PC 휴대폰에서 지울까요? 저장된 데이터도 "
+                                                           "지워집니다.", name=name)) \
+                        == QMessageBox.StandardButton.Yes:
                     self.s.apps.remove_app(package)
             case "refresh":
                 self.s.apps.refresh_apps()
@@ -665,36 +674,52 @@ class MainWindow(QMainWindow):
         self.engine_panel.hide()
         self.s.engine.retry()
 
-    def explain_whpx(self) -> None:
-        QMessageBox.information(self, "Windows 하이퍼바이저 플랫폼",
-                                "Windows 하이퍼바이저 플랫폼을 켜야 휴대폰을 켤 수 있습니다. 터미널에서 "
-                                "orcus-cli setup을 실행하면 켤 수 있고(UAC 창에서 [예]), 학교 PC라면 IT 요청문을 "
-                                "관리자에게 보내세요.")
-        self.copy_it_request()
+    def run_setup(self, *, first: bool = False, resume: bool = False) -> bool:
+        """The setup wizard (§10.5): alone before the window on a PC without the phone's files (`first`), or over
+        the window from the engine panel. True once setup got to the end."""
+        self._wizard = SetupWizard(self.s.setup, self.logs_dir.parent, self.open_logs, None if first else self,
+                                   start=resume)
+        try:
+            return self._wizard.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._wizard = None
+
+    def raise_setup(self) -> None:
+        """A second start while the wizard is open brings the wizard forward."""
+        if self._wizard is not None:
+            self._wizard.raise_()
+            self._wizard.activateWindow()
+
+    def open_setup(self) -> None:
+        """[Open setup] / [Turn on the Windows Hypervisor Platform]: the wizard does the missing steps (UAC
+        included), then the phone starts again. Not while a phone is on: a card in the [Log] tab can be older
+        than the phone."""
+        if self._status.state not in (EngineState.FAILED, EngineState.NOT_INSTALLED, EngineState.STOPPED):
+            self.toast.show_text(t("휴대폰이 이미 켜져 있어 설치 마법사를 열지 않았습니다."))
+            return
+        if self.run_setup():
+            self.engine_panel.hide()
+            self.s.engine.retry()
 
     def copy_it_request(self) -> None:
-        detail = self._status.error.detail if self._status.error else ""
-        QGuiApplication.clipboard().setText(messages_ko.it_request(messages_ko.IT_REQUEST_WHPX, detail))
-        self.toast.show_text("IT 요청문을 복사했습니다")
-
-    def explain_setup(self) -> None:
-        QMessageBox.information(self, "설치 복구", "터미널에서 orcus-cli setup을 실행하면 빠진 파일을 다시 받습니다.")
+        QGuiApplication.clipboard().setText(messages_ko.it_request_for(self._status.error, str(self.logs_dir.parent)))
+        self.toast.show_text(t("IT 요청문을 복사했습니다"))
 
     def open_logs(self) -> None:
-        # explorer hands over to the shell (§1.2); by full path, never one found in the current folder (3a review)
+        # explorer hands over to the shell (§1.2); by full path, never one found in the current folder
         subprocess.Popen([str(win32.system_dir().parent / "explorer.exe"), str(self.logs_dir)])
 
     def reset_phone(self) -> None:
         if ErrorCode.ENGINE_NO_DISPLAY in self._status.warnings:   # a restart loads the kept golden
-            question = "휴대폰을 다시 켜서 저장된 깨끗한 휴대폰으로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
+            question = t("휴대폰을 다시 켜서 저장된 깨끗한 휴대폰으로 되돌릴까요? 설치한 앱과 데이터가 지워집니다.")
         elif self._status.mode == SessionMode.COLD:
-            question = "느린 그래픽 모드에서는 휴대폰을 처음부터 다시 준비합니다(수 분). 계속할까요?"
+            question = t("느린 그래픽 모드에서는 휴대폰을 처음부터 다시 준비합니다(수 분). 계속할까요?")
         elif self._status.mode == SessionMode.KEEP_STATE:
-            question = ("휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워지고, 닫을 때는 이 깨끗한 휴대폰을 "
-                        "보관합니다.")
+            question = t("휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워지고, 닫을 때는 이 깨끗한 휴대폰을 "
+                         "보관합니다.")
         else:
-            question = "휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
-        if QMessageBox.question(self, "휴대폰 초기화", question) == QMessageBox.StandardButton.Yes:
+            question = t("휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워집니다.")
+        if QMessageBox.question(self, t("휴대폰 초기화"), question) == QMessageBox.StandardButton.Yes:
             self.s.engine.reset_device()
 
     def rerun(self) -> None:
@@ -702,7 +727,7 @@ class MainWindow(QMainWindow):
 
     def grant_all(self) -> None:
         self.s.apps.grant_all()
-        self.toast.show_text("요청한 권한을 모두 허용했습니다")
+        self.toast.show_text(t("요청한 권한을 모두 허용했습니다"))
 
     def settings_dialog(self, *, gpu: bool = False) -> None:
         dialog = SettingsDialog(self.s, self.logs_dir.parent, self.open_logs, self)
@@ -712,18 +737,18 @@ class MainWindow(QMainWindow):
 
     def retry_gpu(self) -> None:
         self.s.engine.retry_gpu()
-        self.toast.show_text("그래픽 카드 가속을 다시 확인합니다. 휴대폰을 다시 켭니다.")
+        self.toast.show_text(t("그래픽 카드 가속을 다시 확인합니다. 휴대폰을 다시 켭니다."))
 
     def gpu_dialog(self) -> None:
         self.settings_dialog(gpu=True)
 
     def explain_disk(self) -> None:
-        QMessageBox.information(self, "공간 확보", "D: 드라이브에서 필요 없는 파일을 지우세요. 휴지통 비우기와 "
-                                              "다운로드 폴더 정리가 가장 빠릅니다.")
+        QMessageBox.information(self, t("공간 확보"), t("D: 드라이브에서 필요 없는 파일을 지우세요. 휴지통 비우기와 "
+                                                       "다운로드 폴더 정리가 가장 빠릅니다."))
 
     # --- toolbar actions ---------------------------------------------------------------------------------------------
     def open_apk(self) -> None:
-        name = dialogs.open_file(self, "APK 열기", str(Path.home()), "Android 앱 (*.apk);;모든 파일 (*)")
+        name = dialogs.open_file(self, t("APK 열기"), str(Path.home()), t("Android 앱 (*.apk);;모든 파일 (*)"))
         if name:
             self.s.open_paths([Path(name)])
 
@@ -734,24 +759,24 @@ class MainWindow(QMainWindow):
 
     def _on_shot(self, png: bytes | None) -> None:
         if png is None:
-            self.toast.show_text("스크린샷을 받지 못했습니다")
+            self.toast.show_text(t("스크린샷을 받지 못했습니다"))
             return
-        name = dialogs.save_file(self, "스크린샷 저장", str(Path.home() / "Pictures" / "orcus.png"), "PNG (*.png)")
+        name = dialogs.save_file(self, t("스크린샷 저장"), str(Path.home() / "Pictures" / "orcus.png"), "PNG (*.png)")
         if name:
             try:
                 Path(name).write_bytes(png)
             except OSError as e:   # the windowed build has no console: say it instead of failing silently
-                self.toast.show_text(f"스크린샷을 저장하지 못했습니다: {e.strerror or e}")
+                self.toast.show_text(t("스크린샷을 저장하지 못했습니다: {error}", error=e.strerror or e))
                 return
-            self.toast.show_text("스크린샷을 저장했습니다")
+            self.toast.show_text(t("스크린샷을 저장했습니다"))
 
     def copy_report(self) -> None:
         QGuiApplication.clipboard().setText(self.s.report())
-        self.toast.show_text("보고서를 복사했습니다")
+        self.toast.show_text(t("보고서를 복사했습니다"))
 
     def make_diagnostics(self) -> None:
-        """[P4] A zip of logs and state (names masked) in <home>\\diag, shown in Explorer."""
-        self.toast.show_text("진단 묶음을 만드는 중입니다…")
+        """A zip of logs and state (names masked) in <home>\\diag, shown in Explorer."""
+        self.toast.show_text(t("진단 묶음을 만드는 중입니다…"))
 
         def work() -> None:
             try:
@@ -762,27 +787,28 @@ class MainWindow(QMainWindow):
 
     def _diag_done(self, result: object) -> None:
         if not isinstance(result, Path):
-            QMessageBox.warning(self, "진단 묶음", f"진단 묶음을 만들지 못했습니다: {result}")
+            QMessageBox.warning(self, t("진단 묶음"), t("진단 묶음을 만들지 못했습니다: {error}", error=result))
             return
-        self.toast.show_text(f"진단 묶음을 만들었습니다: {result.name} (이름·계정은 가렸습니다)", 5000)
+        self.toast.show_text(t("진단 묶음을 만들었습니다: {name} (이름·계정은 가렸습니다)", name=result.name), 5000)
         subprocess.Popen([str(win32.system_dir().parent / "explorer.exe"), f"/select,{result}"])
 
     def help(self) -> None:
         keys = "\n".join(f"{k}: {v}" for k, v in (
-            ("APK 열기", "Ctrl+O"), ("다시 실행", "F5"), ("뒤로", "Esc · 오른쪽 클릭"),
-            ("홈", "Ctrl+Shift+H · 가운데 클릭"), ("최근 앱", "Ctrl+Shift+R"), ("흔들기", "F6 (누르고 있으면 반복)"),
-            ("왼쪽 / 오른쪽으로 돌리기", "F7 / F8"), ("한글", "폰 화면에서 한/영 키로 바꿔 바로 입력(조합 중인 글자는 화면 "
-                                                         "아래 말풍선) · 긴 글은 Ctrl+T · 옆 [가] 버튼의 입력 바"),
-            ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V"), ("스크롤", "마우스 휠"),
-            ("두 손가락 확대·축소", "Ctrl을 누른 채 끌기 (두 번째 손가락은 화면 가운데를 중심으로 반대편)"),
-            ("사진·소리·동영상", "창에 끌어다 놓으면 휴대폰의 Pictures·Music·Movies에 들어갑니다")))
-        QMessageBox.information(self, "도움말", "App Inventor에서 받은 .apk를 끌어다 놓으면 PC 휴대폰에서 바로 "
-                                             "실행합니다. 센서는 오른쪽 [센서] 탭에 있습니다.\n\n" + keys)
+            (t("APK 열기"), "Ctrl+O"), (t("다시 실행"), "F5"), (t("뒤로"), t("Esc · 오른쪽 클릭")),
+            (t("홈"), t("Ctrl+Shift+H · 가운데 클릭")), (t("최근 앱"), "Ctrl+Shift+R"),
+            (t("흔들기"), t("F6 (누르고 있으면 반복)")), (t("왼쪽 / 오른쪽으로 돌리기"), "F7 / F8"),
+            (t("한글"), t("폰 화면에서 한/영 키로 바꿔 바로 입력(조합 중인 글자는 화면 아래 말풍선) · 긴 글은 Ctrl+T · 옆 "
+                        "[가] 버튼의 입력 바")),
+            (t("붙여넣기(한글 포함)"), t("폰 화면에서 Ctrl+V")), (t("스크롤"), t("마우스 휠")),
+            (t("두 손가락 확대·축소"), t("Ctrl을 누른 채 끌기 (두 번째 손가락은 화면 가운데를 중심으로 반대편)")),
+            (t("사진·소리·동영상"), t("창에 끌어다 놓으면 휴대폰의 Pictures·Music·Movies에 들어갑니다"))))
+        QMessageBox.information(self, t("도움말"), t("App Inventor에서 받은 .apk를 끌어다 놓으면 PC 휴대폰에서 바로 "
+                                                    "실행합니다. 센서는 오른쪽 [센서] 탭에 있습니다.") + "\n\n" + keys)
 
     # --- window events -------------------------------------------------------------------------------------------------
     @staticmethod
     def _dropped(event: QDragEnterEvent | QDropEvent) -> tuple[list[Path], bool]:
-        """One file (an app), or pictures, sounds and videos, any number (P4); by name only, no I/O (§7.1)."""
+        """One file (an app), or pictures, sounds and videos, any number; by name only, no I/O (§7.1)."""
         urls = event.mimeData().urls()
         if not urls or not all(u.isLocalFile() for u in urls):
             return [], False
@@ -795,7 +821,7 @@ class MainWindow(QMainWindow):
         paths, into_phone = self._dropped(event)
         if paths:
             event.acceptProposedAction()
-            self.overlay.show_text("놓으면 휴대폰의 사진·음악·동영상에 넣습니다" if into_phone else "놓으면 설치합니다")
+            self.overlay.show_text(t("놓으면 휴대폰의 사진·음악·동영상에 넣습니다") if into_phone else t("놓으면 설치합니다"))
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         if not self._busy_run:
@@ -815,10 +841,11 @@ class MainWindow(QMainWindow):
             return
         folder = result.phone_path.split("/")[2]
         word, hint = MEDIA_WORDS.get(folder, ("", ""))
-        self.toast.show_text(f"휴대폰 {word}에 넣었습니다: {result.phone_path} ({hint})")
+        self.toast.show_text(t("휴대폰 {word}에 넣었습니다: {path} ({hint})", word=t(word), path=result.phone_path,
+                               hint=t(hint)))
 
     def event(self, event: QEvent) -> bool:
-        # moved to a monitor with other scaling: refit, or the phone is cropped and taps land beside (3a review)
+        # moved to a monitor with other scaling: refit, or the phone is cropped and taps land beside
         if event.type() == QEvent.Type.DevicePixelRatioChange:
             QTimer.singleShot(0, self.fit_phone)
         return super().event(event)
@@ -843,22 +870,22 @@ class MainWindow(QMainWindow):
 
     def _may_close(self) -> bool:
         """§6.1: a GOLDEN phone forgets this session's app data at close; say so once an app was installed or run.
-        The COLD boot that kept the golden (no display, 3a finding 18) forgets it too, at the next golden load."""
+        The COLD boot that kept the golden (no display) forgets it too, at the next golden load."""
         st = self._status
         forgets = st.mode == SessionMode.GOLDEN or ErrorCode.ENGINE_NO_DISPLAY in st.warnings
         if not (self._used_app and forgets and self.s.settings().ui.confirm_close_data):
             return True
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("Orcus 닫기")
-        box.setText(CLOSE_NOTICE)
-        close = box.addButton("닫기", QMessageBox.ButtonRole.AcceptRole)
+        box.setWindowTitle(t("Orcus 닫기"))
+        box.setText(t(CLOSE_NOTICE))
+        close = box.addButton(t("닫기"), QMessageBox.ButtonRole.AcceptRole)
         keep = None
-        if st.mode == SessionMode.GOLDEN:   # [P4] §6.1: the no-display COLD boot is not the phone to keep
-            keep = box.addButton(KEEP_ONCE, QMessageBox.ButtonRole.AcceptRole)
-            keep.setToolTip("이번 휴대폰을 보관했다가 다음에 열 때 그대로 시작합니다(그다음에 닫을 때 다시 묻습니다).")
-        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
-        never = QCheckBox("다시 묻지 않기")
+        if st.mode == SessionMode.GOLDEN:   # §6.1: the no-display COLD boot is not the phone to keep
+            keep = box.addButton(t(KEEP_ONCE), QMessageBox.ButtonRole.AcceptRole)
+            keep.setToolTip(t("이번 휴대폰을 보관했다가 다음에 열 때 그대로 시작합니다(그다음에 닫을 때 다시 묻습니다)."))
+        box.addButton(t("취소"), QMessageBox.ButtonRole.RejectRole)
+        never = QCheckBox(t("다시 묻지 않기"))
         box.setCheckBox(never)
         box.exec()
         clicked = box.clickedButton()

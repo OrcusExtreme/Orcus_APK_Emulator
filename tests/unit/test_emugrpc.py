@@ -100,7 +100,7 @@ def test_png_helper_is_a_png() -> None:
     assert data.startswith(b"\x89PNG\r\n\x1a\n") and b"IEND" in data
 
 
-def lf_sha256(path) -> str:   # type: ignore[no-untyped-def]
+def lf_sha256(path) -> str:
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 

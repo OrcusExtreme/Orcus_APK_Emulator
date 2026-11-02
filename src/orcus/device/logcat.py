@@ -1,7 +1,7 @@
 """Logcat over gRPC (ARCHITECTURE.md §7.8): Text mode only (Parsed mode sends nothing on 37.2.12, S5).
 
 The fallback only: after LoadSnapshot ([Reset phone]) this stream sends nothing at all, even when the guest's
-goldfish-logcat is restarted (Phase 3a device test), so the app injects the engine's `adb logcat` as the
+goldfish-logcat is restarted, so the app injects the engine's `adb logcat` as the
 session's source. The stream opens with the whole buffer since boot (~1,500 lines even after `logcat -c`, S5);
 lines older than the moment the stream was opened (by their own timestamp, §6.6) are dropped. Each message
 carries one threadtime entry **without a newline** (9,667 messages in 6 s, no "\\n" anywhere), so messages are

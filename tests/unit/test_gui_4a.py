@@ -1,5 +1,5 @@
-"""Phase 4a GUI without a device (offscreen Qt): light, proximity, battery, a text and a call from the [Sensors]
-tab, and a new phone shown as the phone has it."""
+"""GUI without a device (offscreen Qt): light, proximity, battery, a text and a call from the [Sensors] tab, a new
+phone shown as the phone has it, dropped files, the installed apps list, the diagnostic bundle, the camera picture."""
 
 import os
 
@@ -71,7 +71,7 @@ def test_a_new_phone_shows_what_the_phone_has(qapp: QApplication, tmp_path: Path
 
 def test_dropped_pictures_go_to_the_session_and_say_where_they_went(qapp: QApplication, tmp_path: Path,
                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
-    """[P4] Any number of pictures, sounds and videos, or one app; anything else is not taken (§7.1)."""
+    """Any number of pictures, sounds and videos, or one app; anything else is not taken (§7.1)."""
     s = Api()
     w = ready(s, tmp_path, monkeypatch)
 
@@ -93,7 +93,7 @@ def test_dropped_pictures_go_to_the_session_and_say_where_they_went(qapp: QAppli
 
 def test_the_installed_apps_list_runs_and_removes(qapp: QApplication, tmp_path: Path,
                                                   monkeypatch: pytest.MonkeyPatch) -> None:
-    """[P4] The [App] tab: the list from the service keeps the chosen app; [Run], [Remove] (asked first), refresh."""
+    """The [App] tab: the list from the service keeps the chosen app; [Run], [Remove] (asked first), refresh."""
     s = Api()
     w = ready(s, tmp_path, monkeypatch)
     p = w.app_panel
@@ -136,7 +136,7 @@ def test_the_diagnostic_bundle_is_made_off_the_gui_thread_and_shown(qapp: QAppli
 
 def test_the_camera_picture_is_chosen_scaled_and_reset(qapp: QApplication, tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
-    """[P4] [Pick a picture]: a PNG at most 1280 px a side goes to the session; [Default picture]: the bars."""
+    """[Pick a picture]: a PNG at most 1280 px a side goes to the session; [Default picture]: the bars."""
     s = Api()
     put: list[bytes | None] = []
     s.set_camera_image = put.append   # type: ignore[attr-defined]

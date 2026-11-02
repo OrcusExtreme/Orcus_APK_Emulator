@@ -3,7 +3,8 @@
 CHECK -> LICENSE -> WHPX -> DOWNLOAD -> EXTRACT -> REBOOT -> ACCEL -> AVD -> PROVISION -> DONE.
 Every step is idempotent and state\\setup.json remembers what happened, so a second run changes
 nothing (A1). Steps that need a human (license, UAC) stop in "waiting_user" until the matching
-method is called. In Phase 2 the PROVISION step is done by the spike harness and stays pending.
+method is called. The PROVISION step stays pending here: the engine prepares the phone the first time the window
+starts it (EngineStatus PROVISIONING), so setup never builds an engine (§11.6 step 9).
 """
 
 import threading
@@ -18,13 +19,22 @@ from typing import Any
 from orcus.common import accel, acl, hostinfo, jsonio, log, messages_ko, pins, win32
 from orcus.common.avd import USERDATA_GIB, write_avd
 from orcus.common.paths import OrcusPaths, home_problems, interpreter_problems
-from orcus.contracts import CmdResult, ErrorCode, LicenseText, OrcusError, OrcusFailure, Settings, SetupEvent, SetupStep
+from orcus.contracts import (
+    SETUP_FREE_GIB,
+    CmdResult,
+    ErrorCode,
+    LicenseText,
+    OrcusError,
+    OrcusFailure,
+    Settings,
+    SetupEvent,
+    SetupStep,
+)
 
 from . import download as dl
 from . import extract, license, repo_index, whpx
 
 GIB = 1 << 30
-SETUP_FREE_GIB = 24
 ORDER = (SetupStep.CHECK, SetupStep.LICENSE, SetupStep.WHPX, SetupStep.DOWNLOAD, SetupStep.EXTRACT,
          SetupStep.REBOOT, SetupStep.ACCEL, SetupStep.AVD, SetupStep.PROVISION, SetupStep.DONE)
 _FALLBACK_CODE = {
@@ -99,7 +109,8 @@ class SetupService:
         self._events: dict[SetupStep, SetupEvent] = {s: self._event(s, "pending") for s in ORDER}
         self._paused = threading.Event()
         self._cancel = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread: threading.Thread | None = None   # None once the worker has ended
+        self._restart = False                            # run() came while a cancelled worker was ending
         self._pending_licenses: list[LicenseText] = []
         self._license_texts: list[LicenseText] = []
         self._resolved: list[repo_index.Resolved] | None = None
@@ -111,12 +122,14 @@ class SetupService:
             return tuple(self._events[s] for s in ORDER)
 
     def run(self) -> None:
+        """Start from the first step; done steps pass at once. A cancelled worker that is still ending starts the
+        new run itself when it is gone, so the caller never waits for it."""
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._thread is not None:
+                if self._cancel.is_set():
+                    self._restart = True
                 return
-            self._cancel.clear()
-            self._thread = threading.Thread(target=self._worker, name="setup-worker", daemon=True)
-            self._thread.start()
+            self._start()
 
     def license(self) -> LicenseText | None:
         with self._lock:
@@ -147,12 +160,14 @@ class SetupService:
                     self._subs.remove(cb)
         return unsubscribe
 
-    # extras for the CLI and tests --------------------------------------------------------------
     def cancel(self) -> None:
+        with self._lock:
+            self._restart = False
         self._cancel.set()
         with self._cond:
             self._cond.notify_all()
 
+    # extras for the CLI and tests --------------------------------------------------------------
     def join(self, timeout: float | None = None) -> bool:
         t = self._thread
         if t is not None:
@@ -167,8 +182,9 @@ class SetupService:
     # plumbing ----------------------------------------------------------------------------------
     @staticmethod
     def _event(step: SetupStep, state: str, *, progress: float | None = None, done: int = 0, total: int = 0,
-               rate: float = 0.0, eta: float | None = None, problem: OrcusError | None = None) -> SetupEvent:
-        return SetupEvent(step, state, progress, done, total, rate, eta, problem)
+               rate: float = 0.0, eta: float | None = None, problem: OrcusError | None = None,
+               can_continue: bool = False) -> SetupEvent:
+        return SetupEvent(step, state, progress, done, total, rate, eta, problem, can_continue)
 
     def _emit(self, step: SetupStep, state: str, **kw: Any) -> None:
         event = self._event(step, state, **kw)
@@ -210,7 +226,27 @@ class SetupService:
         self._state.setdefault("steps", {})[str(step)] = status
         self._save_state()
 
+    def _start(self) -> None:
+        """A fresh run, under self._lock: no pause, cancel or decision of an earlier run carries over."""
+        self._cancel.clear()
+        self._paused.clear()
+        self._restart = False
+        with self._cond:
+            self._decisions.clear()
+        self._thread = threading.Thread(target=self._worker, name="setup-worker", daemon=True)
+        self._thread.start()
+
     def _worker(self) -> None:
+        try:
+            self._steps()
+        finally:
+            with self._lock:
+                if self._thread is threading.current_thread():
+                    self._thread = None
+                    if self._restart:
+                        self._start()
+
+    def _steps(self) -> None:
         handlers: dict[SetupStep, Callable[[], _Outcome]] = {
             SetupStep.CHECK: self._check, SetupStep.LICENSE: self._license, SetupStep.WHPX: self._whpx,
             SetupStep.DOWNLOAD: self._download, SetupStep.EXTRACT: self._extract, SetupStep.REBOOT: self._reboot,
@@ -220,7 +256,7 @@ class SetupService:
             if self._cancel.is_set():
                 return
             if step is SetupStep.PROVISION:
-                _log.info("provision: left to the Phase 2 spike harness")
+                _log.info("provision: the engine prepares the phone when the window first starts it")
                 continue
             if step is SetupStep.DONE:
                 self._state["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -250,7 +286,7 @@ class SetupService:
                     with self._cond:
                         self._decisions.pop("continue", None)   # only a decision made after this counts
                     self._mark(step, "failed")
-                    self._emit(step, "failed", problem=err)
+                    self._emit(step, "failed", problem=err, can_continue=can_continue)
                     if not can_continue or self._wait_decision("continue") is None:
                         return
 
@@ -299,7 +335,7 @@ class SetupService:
             sysimg = self._d.fetch_sysimg_index()
             resolved = [repo_index.resolve(a, sysimg if a is pins.SYSTEM_IMAGE else repo) for a in self._d.archives]
             texts = repo_index.license_texts(resolved, (repo, sysimg))   # may raise SETUP_LICENSE_NOT_STABLE
-            # cache only both together: a retry with the list but no texts would pass LICENSE unasked (3a review)
+            # cache only both together: a retry with the list but no texts would pass LICENSE unasked
             self._resolved, self._license_texts = resolved, texts
             self._state["resolved"] = [{"key": r.archive.key, "url": r.url, "in_index": r.in_index,
                                         "license": r.license_id} for r in self._resolved]
@@ -401,7 +437,7 @@ class SetupService:
         return _Done()
 
     def _clean_work_dirs(self) -> None:
-        """Leftovers of the earlier extract-then-rename code (tmp\\extract_*, tmp\\old_*). Best effort."""
+        """Leftovers of older versions, which extracted and then renamed (tmp\\extract_*, tmp\\old_*). Best effort."""
         for d in [*self._paths.tmp.glob("extract_*"), *self._paths.tmp.glob("old_*")]:
             try:
                 extract.remove_tree(d, timeout_s=30)

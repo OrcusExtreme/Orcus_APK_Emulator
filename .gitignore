@@ -1,4 +1,4 @@
-# This folder is synced by Google Drive. Keep it source-only:
+# This folder is synced by Google Drive. Keep it to sources plus the released installer in release/:
 # runtime data lives in D:\OrcusAPK, venv/caches/builds in D:\OrcusDev.
 __pycache__/
 *.py[cod]
@@ -8,6 +8,15 @@ dist/
 *.egg-info/
 .venv/
 *.part
+*.log
 *.apk
 *.aab
 *.aix
+
+# editors and Windows/Drive leftovers
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.tmp.driveupload/
+.tmp.drivedownload/

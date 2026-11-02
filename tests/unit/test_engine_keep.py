@@ -1,4 +1,4 @@
-"""[P4] Keep-state on the fake engine (ARCHITECTURE.md §6.1, §6.3): two slots used in turn, saved at a normal stop
+"""Keep-state on the fake engine (ARCHITECTURE.md §6.1, §6.3): two slots used in turn, saved at a normal stop
 only, a failed save or a kept phone that does not open leaving the old slot alone, a new golden dropping both."""
 
 import time
@@ -33,7 +33,7 @@ def env(tmp_path: Path):
     e.close()
 
 
-def session(env: EngineEnv, *, data: str | None = None):   # type: ignore[no-untyped-def]
+def session(env: EngineEnv, *, data: str | None = None):
     """Start, wait for READY, optionally leave some app data in the phone."""
     env.procs.spawned.clear()
     env.manager.start()
@@ -113,8 +113,7 @@ def test_a_failed_save_leaves_the_old_slot_and_says_so_next_time(env: EngineEnv)
 @pytest.mark.parametrize("how", ["cold boot", "exit", "hang before gRPC"])
 def test_a_kept_phone_that_does_not_open_starts_clean_and_is_left_alone(env: EngineEnv, how: str) -> None:
     """§6.3: no forced load; a slot that does not open (no golden marker: a cold boot; the emulator exits; or it
-    hangs before gRPC answers, 4a device test) starts from the golden, keeps the slot, and that session is not kept
-    over it."""
+    hangs before gRPC answers) starts from the golden, keeps the slot, and that session is not kept over it."""
     session(env, data="mine")
     stop(env)
     env.broken_slot = how == "cold boot"
@@ -177,7 +176,7 @@ def test_turning_keeping_off_frees_the_slots(env: EngineEnv) -> None:
 def test_no_display_never_opens_or_overwrites_the_kept_phone(env: EngineEnv) -> None:
     session(env, data="mine")
     stop(env)
-    env.displays = 0                           # a disconnected Remote Desktop session (3a finding 18)
+    env.displays = 0                           # a disconnected Remote Desktop session
     st = session(env)
     assert env.modes() == ["COLD"] and ErrorCode.ENGINE_NO_DISPLAY in st.warnings
     before = len(saves(env))
