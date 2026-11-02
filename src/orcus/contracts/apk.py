@@ -1,6 +1,6 @@
 """APK lifecycle surface: intake, manifest facts, preflight issues, runs and their events."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from pathlib import Path
@@ -112,6 +112,34 @@ class RunEvent:
     warnings: tuple[ErrorCode, ...] = ()   # banners while RUNNING, replaced by every event (orientation, 3b)
 
 
+MEDIA_FOLDERS: dict[str, tuple[str, ...]] = {   # [P4] where a dropped picture, sound or video goes (§7.1)
+    "Pictures": (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".heif"),
+    "Music": (".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".flac", ".amr", ".mid", ".midi"),
+    "Movies": (".mp4", ".3gp", ".webm", ".mkv", ".mov"),
+}
+
+
+def media_folder(path: Path) -> str | None:
+    """The phone folder for a dropped file, by its extension only: the window asks while it is dragged."""
+    ext = path.suffix.lower()
+    return next((name for name, exts in MEDIA_FOLDERS.items() if ext in exts), None)
+
+
+@dataclass(frozen=True)
+class InstalledApp:
+    """[P4] An app the user put in the phone (a third-party package)."""
+    package: str
+    name: str        # an App Inventor app's name (the package's last part); the package otherwise
+
+
+@dataclass(frozen=True)
+class MediaResult:
+    """[P4] A dropped picture, sound or video: where it went in the phone, or why it did not."""
+    name: str                   # as dropped
+    phone_path: str | None      # e.g. /sdcard/Pictures/고양이.jpg
+    problem: OrcusError | None
+
+
 class ApkService(Protocol):
     """Every method only enqueues a command and returns."""
 
@@ -127,3 +155,12 @@ class ApkService(Protocol):
     def match_orientation(self) -> None: ...   # [Match orientation]
     def subscribe(self, cb: Callable[[RunEvent], None]) -> Callable[[], None]: ...
     def subscribe_log(self, cb: Callable[[LogEntry], None], *, app_only: bool = True) -> Callable[[], None]: ...
+    def subscribe_vibration(self, cb: Callable[[int], None]) -> Callable[[], None]: ...
+    # [P4] the running app vibrated: its length in ms, -1 while it still runs (looked up every 1.5 s, §9.7)
+    def push_media(self, paths: Sequence[Path]) -> None: ...
+    # [P4] pictures, sounds, videos into the phone's Pictures, Music, Movies (§7.1); one MediaResult each
+    def subscribe_media(self, cb: Callable[[MediaResult], None]) -> Callable[[], None]: ...
+    def refresh_apps(self) -> None: ...   # [P4] the installed-apps list, again (also after installs and new phones)
+    def subscribe_apps(self, cb: Callable[[tuple[InstalledApp, ...]], None]) -> Callable[[], None]: ...
+    def run_installed(self, package: str) -> None: ...   # [P4] its APK from the phone, then as if dropped
+    def remove_app(self, package: str) -> None: ...

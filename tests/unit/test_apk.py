@@ -257,6 +257,12 @@ class ScriptShell:
     def uninstall(self, package: str) -> CmdResult:
         return CmdResult(("uninstall", package), 0, "Success", "", 0.1, False)
 
+    def push(self, src: Path, dst: str, timeout_s: float = 120) -> CmdResult:
+        return CmdResult(("push", str(src), dst), 0, "1 file pushed", "", 0.1, False)
+
+    def pull(self, src: str, dst: Path, timeout_s: float = 120) -> CmdResult:
+        return CmdResult(("pull", src, str(dst)), 1, "", "not here", 0.1, False)
+
 
 OK = (0, "Performing Streamed Install\nSuccess", False)
 

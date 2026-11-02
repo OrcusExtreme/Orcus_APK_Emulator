@@ -43,6 +43,10 @@ class ErrorCode(StrEnum):
     ENGINE_NO_FRAMES = auto()
     ENGINE_DISK_LOW = auto()
     ENGINE_NO_DISPLAY = auto()    # warning: booted COLD this once to keep the golden (3a finding 18)
+    ENGINE_KEEP_FAILED = auto()   # [P4] warning: the kept phone did not open; started clean, the slot is left alone
+    ENGINE_KEEP_GONE = auto()     # [P4] warning: the kept phone no longer fits (new golden) or is gone
+    ENGINE_KEEP_SAVE_FAILED = auto()   # [P4] warning: the last stop could not keep the phone
+    ENGINE_GPU_LADDER = auto()    # [P4] warning: the GPU ladder stepped below host (§5.6)
     # FILE_* / STAGE_*: the dropped file
     FILE_NOT_ANDROID = auto()
     STAGE_UNEXPECTED = auto()     # an error the pipeline did not expect: the run still ends (3a review)
@@ -51,6 +55,7 @@ class ErrorCode(StrEnum):
     FILE_IS_AIX = auto()
     STAGE_DRIVE_TIMEOUT = auto()
     STAGE_COPY_FAILED = auto()
+    FILE_PUSH_FAILED = auto()    # [P4] a dropped picture, sound or video did not go into the phone
     APK_PARSE = auto()
     # INSTALL_*: installing the app
     INSTALL_OLDER_SDK = auto()
@@ -84,6 +89,7 @@ class RemedyAction(StrEnum):
     FREE_DISK = auto()
     CONTINUE_ANYWAY = auto()
     MATCH_ORIENTATION = auto()
+    RETRY_GPU = auto()   # [P4] the GPU ladder starts at host again
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,7 @@ from orcus.contracts import (
     Frame,
     HwKey,
     InputSettings,
+    PhoneWorld,
     Rotation,
     RunEvent,
     RunStage,
@@ -49,6 +50,7 @@ class Controls:
     def __init__(self) -> None:
         self.posture = Rotation.PORTRAIT
         self.microphone = False
+        self.world = PhoneWorld()
         self.calls: list[tuple[object, ...]] = []
 
     def shake(self, sensitivity: Sensitivity) -> None:
@@ -70,6 +72,24 @@ class Controls:
     def set_microphone(self, enabled: bool) -> None:
         self.microphone = enabled
         self.calls.append(("mic", enabled))
+
+    def set_light(self, lux: float) -> None:
+        self.calls.append(("light", lux))
+
+    def set_proximity(self, cm: float) -> None:
+        self.calls.append(("proximity", cm))
+
+    def set_battery(self, level: int, charging: bool) -> None:
+        self.calls.append(("battery", level, charging))
+
+    def receive_sms(self, sender: str, text: str) -> None:
+        self.calls.append(("sms", sender, text))
+
+    def call_in(self, number: str) -> None:
+        self.calls.append(("call_in", number))
+
+    def call_end(self, number: str) -> None:
+        self.calls.append(("call_end", number))
 
     def of(self, kind: str) -> list[tuple[object, ...]]:
         return [c for c in self.calls if c[0] == kind]
@@ -398,3 +418,45 @@ def test_a_second_start_waits_for_a_closing_first_instance() -> None:
         assert not instance.wait_until_gone(name, 0.3)        # still running: give up after the wait
     finally:
         win32.close_handle(handle)
+
+
+def test_keep_this_time_at_the_close_notice(qapp: QApplication, tmp_path: Path,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """[P4] §6.1: the GOLDEN close notice offers to keep the phone this once; the engine saves at the stop."""
+    s = Api()
+    w = ready(s, tmp_path, monkeypatch)
+    w.on_run(run(RunStage.RUNNING, info("appinventor.ai_test.A")))
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: 0)
+    monkeypatch.setattr(QMessageBox, "clickedButton", lambda box: next(b for b in box.buttons()
+                                                                        if b.text() == window.KEEP_ONCE))
+    assert w._may_close()                                   # noqa: SLF001
+    assert getattr(s.engine, "kept", 0) == 1
+    w.close()
+
+
+def test_settings_turn_keeping_on(qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    s = Api()
+    d = SettingsDialog(s, tmp_path, lambda: None)            # type: ignore[arg-type]
+    told: list[str] = []
+    monkeypatch.setattr(QMessageBox, "information", lambda parent, title, text: told.append(text))
+    d.keep_state.setChecked(True)
+    d._apply()                                               # noqa: SLF001
+    assert s.saved == [{"session.keep_state": True}] and s.current.session.keep_state
+    assert told and "보관" in told[0]                         # applies from the next close (needs_restart)
+
+
+def test_settings_switch_to_the_ladder_restarts_instead_of_rebuilding(qapp: QApplication, tmp_path: Path,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """[P4] §5.6: the ladder starts at host on the same golden, so no 5-minute rebuild question."""
+    s = Api()
+    retried: list[bool] = []
+    s.engine.retry_gpu = lambda: retried.append(True)        # type: ignore[method-assign]
+    asked: list[object] = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a) or QMessageBox.StandardButton.No)
+    d = SettingsDialog(s, tmp_path, lambda: None)            # type: ignore[arg-type]
+    ladder = d.gpu.button(3)
+    assert ladder is not None and "자동" in ladder.text()
+    ladder.setChecked(True)
+    d._apply()                                               # noqa: SLF001
+    assert asked == [] and retried == [True] and s.rebuilt == []
+    assert s.saved == [{"engine.gpu_mode": "ladder"}]

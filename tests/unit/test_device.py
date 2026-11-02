@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from orcus.contracts import DeviceEndpoint, DeviceSession, Frame, HwKey, PointerAt, Rotation, Sensitivity
+from orcus.contracts import DeviceEndpoint, DeviceSession, Frame, HwKey, PhoneWorld, PointerAt, Rotation, Sensitivity
 from orcus.device import controls, logcat, rotation
 from orcus.device.session import GrpcDeviceSession
 from orcus.emugrpc.fake import BREAK_KEY, FakeEmulatorServer
@@ -211,6 +211,67 @@ def test_controls_shake_rotate_tilt_mic_location(fake: FakeEmulatorServer, sessi
     assert rots[7] == [20.0, 0.0, 85.0]                # tilt clamped to 20°, roll around the current z
     assert rots[8:] == [[0.0, 0.0, 0.0]]               # pre-rotation: one step
     assert session.located == [(37.5, 127.0, 30.0)] * 3   # type: ignore[attr-defined]
+
+
+def fingers(e: ec.InputEvent) -> list[tuple[int, int, int, int]]:
+    return [(t.identifier, t.x, t.y, t.pressure) for t in e.touch_event.touches]
+
+
+def test_two_fingers_go_as_touches_and_always_lift(fake: FakeEmulatorServer, session: GrpcDeviceSession) -> None:
+    """[P4] Ctrl+drag pinch: one TouchEvent per move, ids 0 and 1; pressure 0 lifts (the emulator keeps a finger
+    down otherwise). The mouse finger lifts first; release_all and a new stream lift the touch fingers too."""
+    a, b = PointerAt(0.25, 0.25, 0), PointerAt(0.75, 0.75, 0)
+    session.input.pointer(PointerAt(0.5, 0.5, 0), True)
+    session.input.touches((a, b))
+    session.input.touches((PointerAt(0.2, 0.2, 0), PointerAt(0.8, 0.8, 0)))
+    session.input.touches(())
+    session.input.touches(())                  # nothing down: nothing to send
+    session.input.touches((a, b))
+    session.input.release_all()
+    session.input.touches((a, b))
+    session._input.restart_stream()            # in queue order, as a broken connection does
+    until(lambda: len(fake.input_events) == 9)
+    ev = fake.input_events
+    assert [e.mouse_event.buttons for e in ev[:2]] == [1, 0]   # the mouse finger lifts before two go down
+    assert fingers(ev[2]) == [(0, 180, 320, 512), (1, 540, 960, 512)]
+    assert fingers(ev[3]) == [(0, 144, 256, 512), (1, 576, 1024, 512)]
+    assert fingers(ev[4]) == [(0, 144, 256, 0), (1, 576, 1024, 0)]
+    assert fingers(ev[5]) == fingers(ev[2]) and fingers(ev[6]) == [(0, 180, 320, 0), (1, 540, 960, 0)]
+    assert fingers(ev[7]) == fingers(ev[2]) and fingers(ev[8]) == fingers(ev[6])   # the new stream lifts first
+
+
+def test_controls_read_a_kept_phone_and_send_light_battery_text_and_call(fake: FakeEmulatorServer) -> None:
+    """[P4] A kept phone comes back turned, lit and charged as it was saved (device check): the controls read it, so
+    the next turn starts from where the phone is."""
+    P, B = ec.PhysicalModelValue, ec.BatteryState   # noqa: N806
+    fake.models.update({P.ROTATION: [0.0, 0.0, 90.0], P.LIGHT: [123.0], P.PROXIMITY: [0.0]})
+    fake.battery = B(hasBattery=True, isPresent=True, charger=B.NONE, chargeLevel=15, status=B.DISCHARGING)
+    s = GrpcDeviceSession(DeviceEndpoint(f"localhost:{fake.port}", fake.token, "emulator-5640", 1))
+    try:
+        c = s.controls
+        assert c is not None
+        assert c.posture == Rotation.LANDSCAPE and c.world == PhoneWorld(123.0, 0.0, 15, False)
+        c.rotate(Rotation.PORTRAIT)
+        c.set_light(400.0)
+        c.set_proximity(1.0)
+        c.set_battery(10, False)                       # unplugged: not below 21 % (SystemUI, 4a)
+        assert c.world.battery == 21
+        c.set_battery(130, True)                       # clamped
+        c.receive_sms("01012345678", "안녕 Orcus")
+        c.call_in("01087654321")
+        c.call_end("01087654321")
+        assert c.world == PhoneWorld(400.0, 1.0, 100, True)   # at once, like the posture
+        until(lambda: [m for m, _ in fake.calls].count("sendPhone") == 2)
+        turns = [round(p.value.data[2]) for p in fake.physical if p.target == P.ROTATION]
+        assert turns == [75, 60, 45, 30, 15, 0]       # from the kept landscape, not an assumed portrait
+        assert fake.models[P.LIGHT] == [400.0] and fake.models[P.PROXIMITY] == [1.0]
+        assert all(p.interpolation == P.STEP for p in fake.physical)
+        assert (fake.battery.chargeLevel, fake.battery.charger, fake.battery.status) == (100, B.AC, B.CHARGING)
+        assert [a for m, a in fake.calls if m in ("sendSms", "sendPhone")] == [
+            ("01012345678", "안녕 Orcus"), (ec.PhoneCall.InitCall, "01087654321"),
+            (ec.PhoneCall.DisconnectCall, "01087654321")]
+    finally:
+        s.close()
 
 
 def test_resend_repeats_the_newest_location_starting_from_home(fake: FakeEmulatorServer,

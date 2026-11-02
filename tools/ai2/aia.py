@@ -28,9 +28,10 @@ KEYSTORE = "android.keystore"    # YoungAndroidConstants.PROJECT_KEYSTORE_LOCATI
 
 COMPONENT_VERSIONS = {           # YaVersion.<TYPE>_COMPONENT_VERSION
     "AccelerometerSensor": 6, "ActivityStarter": 6, "Ball": 8, "BarcodeScanner": 2, "Button": 8, "Canvas": 15,
-    "Clock": 4, "Form": 32, "HorizontalArrangement": 4, "ImageSprite": 11, "Label": 6, "LocationSensor": 5,
-    "OrientationSensor": 2, "PasswordTextBox": 8, "Player": 8, "Sound": 4, "SoundRecorder": 2, "SpeechRecognizer": 4,
-    "TextBox": 15, "TextToSpeech": 6, "VerticalArrangement": 4, "WebViewer": 11,
+    "Clock": 4, "Form": 32, "HorizontalArrangement": 4, "ImageSprite": 11, "Label": 6, "LightSensor": 1,
+    "LocationSensor": 5, "OrientationSensor": 2, "PasswordTextBox": 8, "PhoneCall": 3, "Player": 8,
+    "ProximitySensor": 1, "Sound": 4, "SoundRecorder": 2, "SpeechRecognizer": 4, "TextBox": 15, "Texting": 5,
+    "TextToSpeech": 6, "VerticalArrangement": 4, "WebViewer": 11,
 }
 
 # YAIL type of every designer property used here (the Java setter's type via ComponentProcessor.javaTypeToYailType).
@@ -41,7 +42,7 @@ PROP_TYPES = {
                     "boolean"),
     **dict.fromkeys(("Width", "Height", "FontSize", "BackgroundColor", "TextColor", "VersionCode", "TimeInterval",
                      "DistanceInterval", "Sensitivity", "AlignHorizontal", "PaintColor", "LineWidth", "Radius",
-                     "X", "Y", "TimerInterval", "Interval"), "number"),
+                     "X", "Y", "TimerInterval", "Interval", "ReceivingEnabled"), "number"),
 }
 ASSET_PROPS = ("Image", "Source", "Picture")
 # @DesignerProperty(alwaysSend = true): the YAIL sets these even when the .scm leaves them at the default.

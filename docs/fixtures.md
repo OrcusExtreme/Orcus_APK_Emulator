@@ -14,6 +14,8 @@ appinventor-sources 커밋 `0712c114`(2026-10-29)의 YAIL 생성기(`blocklyedit
 py tools/ai2/build_fixtures.py            .aia와 빌드용 zip 생성 + 정적 검사 (App Inventor 없이)
 py tools/ai2/setup_toolchain.py           JDK 17·Ant·appinventor-sources를 D:\OrcusDev 아래에 설치 (한 번)
 py tools/ai2/ant.py buildserver           App Inventor 빌드 서버 빌드 (한 번)
+                                          (얕은 clone은 `git describe`가 실패해 GitBuildId.java가 깨진다: ANT_ARGS=-Dgit.build.version=v207a,
+                                           깨진 파일이 이미 있으면 appinventor\common\build\src\…\GitBuildId.java를 지우고 다시, 4a)
 py tools/ai2/build_fixtures.py --build    APK 빌드 → D:\OrcusDev\fixtures\<이름>.apk
 ```
 
@@ -35,6 +37,7 @@ py tools/ai2/build_fixtures.py --build    APK 빌드 → D:\OrcusDev\fixtures\<�
 | `HelloPurrKo.apk` | HelloPurr의 앱 이름(AppName)만 "고양이 쓰다듬기" | 3a 수용 시험 전(B8) |
 | `HelloPurrMin36.apk` | HelloPurr + Screen1 속성 AndroidMinSdk = 36. 웹 IDE의 Project Properties 대화상자 > Publishing에서 고른다(14–36). 새 화면에서는 [프로젝트] 메뉴에 없고 디자이너 도구 막대의 − 버튼 오른쪽 아이콘으로 열며, 오른쪽 속성 패널에는 나오지 않는다. `.aia` 가져오기는 `project.properties`의 `androidminsdk`를 읽지 않아(App Inventor `YoungAndroidSettingsBuilder`는 쓰기만 함) Screen1 `.scm`에도 넣는다. 처음 빌드는 이 때문에 minSdk 14였고, 대화상자에서 고쳐 다시 빌드했다 | 3a 수용 시험 전(B8) |
 | `HelloPurrLand.apk` | HelloPurr의 Screen1 ScreenOrientation만 landscape | 3a 수용 시험 전(B8) |
+| `OrcusWorld.apk` | 4a 확장용: LightSensor·ProximitySensor·Texting(ReceivingEnabled = Always)·PhoneCall 이벤트를 라벨에("light ", "near ", "sms ", "call ", "callend ", "answered ", "pinch "), WebViewer의 `pinch.html`이 두 손가락 수와 벌린 비율을 WebViewStringChange로 넘김. PhoneCall의 status는 OptionList라 `join` 전에 `+ 0`으로 숫자로 만든다(그대로 넣으면 "Bad arguments to join"). `projects.orcus_world` | 4a 기기 시험 전(`tests/device/test_extensions_4a.py`) |
 
 3a 수용 시험용 6개(위 표의 PaintPot부터)는 `py tools/ai2/build_fixtures.py`가 `D:\OrcusDev\fixtures\src\<이름>.aia`로 만들어 둡니다(2026-10-30 생성).
 웹 IDE에서 각 .aia를 가져와 빌드한 뒤 `D:\OrcusDev\fixtures\<이름>.apk`로 저장하면 됩니다. ARM 전용 APK와 합성 파일(AAB·AIA·AIX

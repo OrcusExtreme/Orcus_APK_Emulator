@@ -7,11 +7,11 @@
 > **Ultra-Lightweight, Instant-Launch Windows 11 Desktop Runner for MIT App Inventor APKs**  
 > Powered by Headless Google Android Emulator & Low-Latency Token-Authenticated gRPC
 
-[![Release](https://img.shields.io/badge/Release-v0.1.12-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.12)
+[![Release](https://img.shields.io/badge/Release-v0.1.13-blue.svg)](https://github.com/OrcusExtreme/Orcus_APK_Emulator/releases/tag/v0.1.13)
 [![Python](https://img.shields.io/badge/Python-3.14-green.svg)](pyproject.toml)
 [![GUI](https://img.shields.io/badge/GUI-PySide6--Essentials%206.12-orange.svg)](pyproject.toml)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-WHPX-purple.svg)](docs/ARCHITECTURE.md)
-[![Tests](https://img.shields.io/badge/Tests-408%20Passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-457%20Passed-brightgreen.svg)](tests/)
 [![Typecheck](https://img.shields.io/badge/Typecheck-Pyright%20Clean-success.svg)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-Proprietary-lightgrey.svg)](NOTICE)
 
@@ -83,22 +83,43 @@ Unlike heavy, general-purpose commercial emulators (such as BlueStacks, Nox, or 
 
 ---
 
-## 📊 Current Progress & Status (v0.1.12 / Phase 3b Direct Korean IME, Sensors & Android Fusion Branding Completed)
+## 📊 Current Progress & Status (v0.1.13 / Phase 4a Keep-State, Camera & Sensor Extensions Completed)
 
-The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, and **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, backed by **408 automated unit tests** and strict Pyright type validation.
+The project has achieved **100% completion of Phase 1 (Architecture Specification)**, **Phase 2 (Setup Automation, gRPC Subsystems, Empirical Spikes S0a–S9)**, **Phase 3a (Core Execution Runtime, Primary PySide6 GUI, Real-Device Acceptance, Security Audit & Zero-Pollution Hardening)**, **Phase 3b (Sensor Integration, Direct On-Screen Korean IME Composition, Settings Dialog, Non-Invasive Mouse Wheel Scrolling, Runtime Orientation Sync & Acceptance Matrix B3, B5, B6, B13, B14)**, and **Phase 4a (Keep-State A/B Slots, Camera Image Injection, GPU Fallback Ladder, Two-Finger Pinch, Light/Proximity/Battery Control, SMS/Call Inbound Simulation, Real-time Vibration Pill, Media Drag-and-Drop, Installed App Manager, and One-Click Diag Bundle)**, backed by **457 automated unit tests** and strict Pyright type validation.
 
 ```mermaid
 flowchart LR
     A["Phase 1: Architecture & Review<br/>(Completed, 2026-10-30)"] --> B["Phase 2: Skeleton, Setup & Spikes<br/>(Completed: v0.1.4)"]
     B --> C["Phase 3a: Runtime, Security & Hardening<br/>(Completed: v0.1.8)"]
-    C --> D["Phase 3b: Sensors, Direct IME & Android Branding<br/>(Completed: v0.1.12)"]
-    D --> E["Phase 4: Inno Setup & Release<br/>(Next Milestone)"]
+    C --> D["Phase 3b: Sensors & Direct IME<br/>(Completed: v0.1.12)"]
+    D --> E["Phase 4a: Keep-State, Camera & Extensions<br/>(Completed: v0.1.13)"]
+    E --> F["Phase 4b: Inno Setup, English UI & Release<br/>(Next Milestone)"]
     style A fill:#2d6a4f,stroke:#1b4332,color:#fff
     style B fill:#2d6a4f,stroke:#1b4332,color:#fff
     style C fill:#2d6a4f,stroke:#1b4332,color:#fff
     style D fill:#2d6a4f,stroke:#1b4332,color:#fff
-    style E fill:#1d3557,stroke:#457b9d,color:#fff
+    style E fill:#2d6a4f,stroke:#1b4332,color:#fff
+    style F fill:#1d3557,stroke:#457b9d,color:#fff
 ```
+
+
+### 🏆 Phase 4a Acceptance Verification (Real-Device Measurements)
+
+All Phase 4a features were verified on the real headless Android 16 (API 36) emulator with hardware acceleration (`tests/device/test_acceptance_4a.py`, `tests/device/test_extensions_4a.py`, and 457 unit tests):
+
+| Feature / Criteria | Acceptance Target | Empirical Measurement & Verification | Status |
+|---|---|---|:---:|
+| **Keep-State (A/B Slots)** | Multi-session app/data preservation; fast recovery from corrupted slot | Normal shutdown saves to A/B slot (`state/slots/a`, `state/slots/b`); quick shutdown bypasses save. Broken/corrupted slot falls back to clean golden snapshot in **14.3s** while preserving broken slot for analysis. Restores saved orientation, light, and battery on boot | **PASS** |
+| **GPU Fallback Ladder** | Automated recovery from driver crashes or RDP sessions | Automatic ladder sequence: `host` → `host_hidden` → `software` with verification boot; status persisted in `state/gpu.json`. Temporary remote desktop (RDP) sessions do not overwrite local GPU choice. One-click `[GPU 가속 다시 시도]` in Settings | **PASS** |
+| **Camera Injection** | Dynamic image feed without emulator restart | Headless camera enabled via `-camera-back imagefile:<path>` (golden snapshot rebuild key `camera`). Camera app displays image in real time; switching image file in `[센서 > 카메라]` updates preview immediately on re-opening camera | **PASS** |
+| **Two-Finger Pinch** | Multi-touch zoom in WebViewer / Canvas | `Ctrl + Mouse Drag` simulates symmetric two-finger pinch. WebViewer page measured spread **3.67x** and pinch **0.27x** (multi-touch count = 2) | **PASS** |
+| **Light & Proximity Sensors** | Physical model injection for AI2 sensor components | LightSensor tracks lux changes in **2.3–2.8s** (`LightChanged`); ProximitySensor fires `ProximityChanged` (0.0 cm / 1.0 cm) | **PASS** |
+| **Battery Guard (§9.8)** | Prevent Android SystemUI crash from low battery | Unplugged battery level clamped to **21% minimum** (prevents `LowPowerWarningsController` crash and rescue party in Android 16); charging mode supports 0–100% | **PASS** |
+| **SMS & Phone Inbound** | Simulated inbound carrier messaging and phone calls | `sendSms`: `MessageReceived` event received in **6.6–9.4s** ("010-1234-5678", 70-char Korean message); `sendPhone`: simulated incoming call ring & hangup | **PASS** |
+| **Real-time Vibration Pill** | Visual feedback for physical phone vibration | VIBRATE permission apps poll `dumpsys vibrator_manager` every 1.5s; floating "진동" pill overlay surfaces on mobile screen within **0.1–1.6s** | **PASS** |
+| **Media File Drag & Drop** | Instant photo, audio, and video ingestion | Dropping `.jpg`, `.png`, `.mp3`, `.mp4` stages via ASCII temp files and pushes to `/sdcard/Pictures|Music|Movies/` in **2.4s**; indexed by Android MediaStore automatically | **PASS** |
+| **Installed App Manager** | Inspect, launch, and uninstall secondary packages | [앱] panel displays `pm list packages -3`; 1-click `[실행]` pulls APK and launches in **1.1s** (skipping re-installation for matching epoch); 1-click `[지우기]` uninstalls cleanly | **PASS** |
+| **One-Click Diag Bundle** | Zero-leakage diagnostic zip for support | `orcus-cli diag` and GUI `[진단 묶음 저장]` package logs, status, doctor output, and system metadata into a sanitized `.zip` archive (masking usernames, PC names, IP, and emails) | **PASS** |
 
 ### 🏆 Phase 3b Acceptance Verification (Real-Device Measurements)
 
@@ -337,7 +358,7 @@ Orcus_APK_Emulator/
 ├── tests/
 │   ├── conftest.py             # Test fixtures, mock servers, and shared assertions
 │   ├── fixtures/               # Generated test project archives (HelloPurr, TalkToMe, OrcusProbe)
-│   ├── unit/                   # 408 unit test suites covering contracts, engine, apk, device, gui, app
+│   ├── unit/                   # 457 unit test suites covering contracts, engine, apk, device, gui, app
 │   └── device/                 # Real emulator device integration test suites (Phase 3a & 3b)
 ├── tools/                      # Developer toolchain (D: drive cache isolation)
 │   ├── ai2/                    # MIT App Inventor AST block DSL and .aia project generator
@@ -381,7 +402,7 @@ py -3.14 tools/bootstrap.py
 # 3. Verify static typing with Pyright
 py -3.14 tools/dev.py typecheck
 
-# 4. Run the automated unit test suite (408 tests)
+# 4. Run the automated unit test suite (457 tests)
 py -3.14 tools/dev.py check
 ```
 
@@ -437,9 +458,23 @@ py -3.14 -m orcus.cli smoke --apk D:\OrcusDev\fixtures\HelloPurr.apk
   - [x] Real-device acceptance test suite (`tests/device/test_acceptance_3b.py`) validating criteria B3, B5, B6, B13, B14
   - [x] Official application icon & multi-resolution Windows .ico integration: Orcus geometric monogram fused with iconic Android Bugdroid robot core (assets/, src/orcus/resources/, AppUserModelID taskbar grouping, PyInstaller spec)
   - [x] 408 automated unit tests passing with 100% success rate & 0 Pyright issues
-- [ ] **Phase 4: Packaging & Distribution** (Next Milestone)
+- [x] **Phase 4a: Keep-State, Camera, GPU Ladder & Sensor Extensions** (Completed: v0.1.13)
+  - [x] Multi-session state preservation (Keep-State A/B slots with clean golden fallback on corrupted slots in 14.3s)
+  - [x] Dynamic headless camera image injection (`-camera-back imagefile`, golden snapshot key `camera`)
+  - [x] Automated GPU fallback ladder (`host` → `host_hidden` → `software` with verification boot, `state/gpu.json`)
+  - [x] Two-finger pinch gesture simulation (`Ctrl + Mouse Drag` in WebViewer / Canvas, spread 3.67x / pinch 0.27x)
+  - [x] Light & Proximity sensor injection (LightChanged 2.3–2.8s, ProximityChanged 0.0/1.0 cm)
+  - [x] Android 16 low-battery crash guard (clamped to 21% minimum on non-charging, 0–100% charging)
+  - [x] Inbound SMS & Phone call simulation (`sendSms` in 6.6–9.4s, `sendPhone` ring & hangup)
+  - [x] Real-time visual vibration pill overlay (`dumpsys vibrator_manager` poller in 0.1–1.6s)
+  - [x] Media file drag-and-drop ingestion (`.jpg`, `.png`, `.mp3`, `.mp4` to `/sdcard/` in 2.4s)
+  - [x] Installed app package manager in [앱] tab (`pm list packages -3`, 1-click launch in 1.1s, uninstall)
+  - [x] One-click diagnostic bundle packager (`orcus-cli diag` and GUI zip export with PII masking)
+  - [x] 457 automated unit tests passing with 100% success rate & 0 Pyright issues
+- [ ] **Phase 4b: Packaging, English UI & Distribution** (Next Milestone)
   - [ ] Inno Setup standalone user installer (zero admin privileges required)
-  - [ ] Optional multi-session state preservation (Keep-state A/B slots)
+  - [ ] Bilingual localization (Korean default + English UI switch)
+  - [ ] Standalone PyInstaller onedir distribution smoke test & final release packaging
 
 ---
 

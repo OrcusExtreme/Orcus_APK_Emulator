@@ -35,7 +35,8 @@ class SessionMode(StrEnum):
 class GpuMode(StrEnum):
     HOST = "host"
     HOST_HIDDEN = "host_hidden"
-    SOFTWARE = "software"   # [P4] LADDER
+    SOFTWARE = "software"
+    LADDER = "ladder"       # [P4] start at host, step down by itself when the GPU cannot draw (§5.6)
 
 
 class EpochCause(StrEnum):
@@ -101,6 +102,8 @@ class EngineView(Protocol):
     # reset_device returns the target epoch (= current + 1); in COLD it becomes a rebuild request
     # (the GUI confirms first)
     def rebuild(self, reason: str) -> None: ...          # only after the user confirmed
+    def keep_once(self) -> None: ...                     # [P4] [keep this time]: keep at the next normal stop
+    def retry_gpu(self) -> None: ...                     # [P4] [Retry GPU acceleration]: the ladder starts at host
     def retry(self) -> None: ...                         # [Retry] on the FAILED panel: also resets the rebuild budget
     def subscribe(self, cb: Callable[[EngineStatus], None]) -> Callable[[], None]: ...
 
@@ -127,6 +130,8 @@ class DeviceShell(Protocol):
     # with spaces, so this is what lets '' or values with spaces arrive intact.
     def install(self, apk: Path, flags: Sequence[str], timeout_s: float = 180) -> CmdResult: ...
     def uninstall(self, package: str) -> CmdResult: ...
+    def push(self, src: Path, dst: str, timeout_s: float = 120) -> CmdResult: ...   # [P4] a file into the phone
+    def pull(self, src: str, dst: Path, timeout_s: float = 120) -> CmdResult: ...   # [P4] and out of it
 
 
 class EngineControl(EngineView, Protocol):

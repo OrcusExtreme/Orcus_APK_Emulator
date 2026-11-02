@@ -9,8 +9,15 @@ Locations go through the framework's test providers (S7), which needs a shell: t
 location is sent 3 times, 1 s apart (the app got it within seconds that way in S7); a newer one replaces it.
 Test providers report only when told, so an app that asks for updates later hears nothing until the next send:
 resend_location() repeats the newest one (the session's start place until the user picks another).
+[P4] The posture and the world (light, proximity, battery) are read from the phone when the epoch starts: a kept
+phone (§6.3) comes back turned, lit and charged the way it was saved (P4 device check), and a turn from an assumed
+portrait would jump. Light and proximity are physical models of their own; a text and a call go through the modem.
+The battery stays above 20 % while not charging: at the 20 % warning the image's SystemUI asks Extreme Battery
+Saver's provider (com.google.android.flipendo.api), which this image lacks, and crashes; the app in front pauses and
+resumes, and crash after crash could wake the rescue party (4a device check). Charging, any level is fine.
 """
 
+import dataclasses
 import queue
 import threading
 import time
@@ -18,9 +25,10 @@ from collections.abc import Callable
 from typing import Any
 
 import grpc
+from google.protobuf import empty_pb2
 
 from orcus.common import log
-from orcus.contracts import OrcusFailure, Rotation, Sensitivity
+from orcus.contracts import BATTERY_MIN_UNPLUGGED, OrcusFailure, PhoneWorld, Rotation, Sensitivity
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 
 from . import shake as waves
@@ -44,9 +52,11 @@ class ControlQueue:
         self._q: "queue.Queue[tuple[str, Any] | None]" = queue.Queue()
         self._rot = [0.0, 0.0, 0.0]   # [x tilt, y (no effect on gravity, S7), z screen rotation]
         self._z0 = 0.0
-        self._posture = Rotation.PORTRAIT   # a new epoch starts in the golden's portrait posture
+        self._posture = Rotation.PORTRAIT   # the golden's, until _sync() reads the phone
+        self._world = PhoneWorld()
         self._mic = False                   # SESSION_INIT turns the microphone off (§6.6)
         self._resend: tuple[float, tuple[float, float, float], int] | None = None   # (due, location, sends left)
+        self._sync()
         self._thread = threading.Thread(target=self._run, name="device-controls", daemon=True)
         self._thread.start()
 
@@ -57,6 +67,10 @@ class ControlQueue:
     @property
     def microphone(self) -> bool:
         return self._mic
+
+    @property
+    def world(self) -> PhoneWorld:
+        return self._world
 
     def shake(self, sensitivity: Sensitivity) -> None:
         self._q.put(("shake", sensitivity))
@@ -79,6 +93,28 @@ class ControlQueue:
     def set_microphone(self, enabled: bool) -> None:
         self._mic = enabled
         self._q.put(("mic", enabled))
+
+    def set_light(self, lux: float) -> None:
+        self._world = dataclasses.replace(self._world, light_lux=max(0.0, lux))
+        self._q.put(("model", (ec.PhysicalModelValue.LIGHT, self._world.light_lux)))
+
+    def set_proximity(self, cm: float) -> None:
+        self._world = dataclasses.replace(self._world, proximity_cm=max(0.0, cm))
+        self._q.put(("model", (ec.PhysicalModelValue.PROXIMITY, self._world.proximity_cm)))
+
+    def set_battery(self, level: int, charging: bool) -> None:
+        level = min(max(level, 0 if charging else BATTERY_MIN_UNPLUGGED), 100)
+        self._world = dataclasses.replace(self._world, battery=level, charging=charging)
+        self._q.put(("battery", (self._world.battery, charging)))
+
+    def receive_sms(self, sender: str, text: str) -> None:
+        self._q.put(("sms", (sender, text)))
+
+    def call_in(self, number: str) -> None:
+        self._q.put(("phone", (ec.PhoneCall.InitCall, number)))
+
+    def call_end(self, number: str) -> None:
+        self._q.put(("phone", (ec.PhoneCall.DisconnectCall, number)))
 
     def close(self) -> None:
         self._q.put(None)
@@ -123,6 +159,26 @@ class ControlQueue:
         except Exception:
             _log.exception("%s failed", kind)
 
+    def _sync(self) -> None:
+        """In the constructor (SESSION_INIT): four quick reads; on failure the golden's values stay."""
+        P, B = ec.PhysicalModelValue, ec.BatteryState   # noqa: N806
+        try:
+            rot = list(self._stub.getPhysicalModel(P(target=P.ROTATION), timeout=5).value.data)
+            light = list(self._stub.getPhysicalModel(P(target=P.LIGHT), timeout=5).value.data)
+            near = list(self._stub.getPhysicalModel(P(target=P.PROXIMITY), timeout=5).value.data)
+            battery = self._stub.getBattery(empty_pb2.Empty(), timeout=5)
+        except grpc.RpcError as e:
+            _log.warning("reading the phone's posture failed, the golden's assumed: %s", e.code())
+            return
+        if len(rot) == 3:   # the golden: [-4.75, 0, 0], the emulator's resting pose
+            self._rot = rot
+            self._posture = min(Z_DEGREES, key=lambda r: abs((Z_DEGREES[r] - rot[2] + 180.0) % 360.0 - 180.0))
+            self._z0 = Z_DEGREES[self._posture]
+        self._world = PhoneWorld(light[0] if light else 0.0, near[0] if near else 1.0, battery.chargeLevel,
+                                 battery.charger != B.NONE)
+        if self._posture != Rotation.PORTRAIT or self._world != PhoneWorld():
+            _log.info("the phone starts %s, %s", self._posture.name, self._world)
+
     def _set_rotation(self) -> None:
         self._stub.setPhysicalModel(ec.PhysicalModelValue(
             target=ec.PhysicalModelValue.ROTATION, value=ec.ParameterValue(data=self._rot),
@@ -161,5 +217,26 @@ class ControlQueue:
                     self._location(*payload)
             case "mic":
                 self._stub.setMicrophoneState(ec.MicrophoneState(realAudioEnabled=bool(payload)), timeout=5)
+            case "model":   # light and proximity: physical models of their own, the posture is not touched
+                target, value = payload
+                self._stub.setPhysicalModel(ec.PhysicalModelValue(
+                    target=target, value=ec.ParameterValue(data=[value]),
+                    interpolation=ec.PhysicalModelValue.STEP), timeout=5)
+            case "battery":
+                level, charging = payload
+                B = ec.BatteryState   # noqa: N806
+                self._stub.setBattery(B(hasBattery=True, isPresent=True, charger=B.AC if charging else B.NONE,
+                                        chargeLevel=level, health=B.GOOD,
+                                        status=B.CHARGING if charging else B.DISCHARGING), timeout=5)
+            case "sms":   # Google Messages takes it; App Inventor's Texting gets MessageReceived (P4 device check)
+                sender, text = payload
+                r = self._stub.sendSms(ec.SmsMessage(srcAddress=sender, text=text), timeout=10)
+                if r.response != ec.PhoneResponse.OK:
+                    _log.warning("sendSms: response %s", r.response)
+            case "phone":
+                operation, number = payload
+                r = self._stub.sendPhone(ec.PhoneCall(operation=operation, number=number), timeout=10)
+                if r.response != ec.PhoneResponse.OK:
+                    _log.warning("sendPhone %s: response %s", operation, r.response)
             case _:
                 pass

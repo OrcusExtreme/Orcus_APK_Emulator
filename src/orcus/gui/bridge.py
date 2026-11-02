@@ -17,6 +17,10 @@ class Bridge(QObject):
     frames_ended = Signal(object)  # OrcusError | None
     shot = Signal(object)          # bytes | None (screenshot PNG)
     paths = Signal(list)           # files handed over by a second instance
+    vibrated = Signal(int)         # [P4] ms, -1 while it runs
+    media = Signal(object)         # [P4] MediaResult
+    apps = Signal(object)          # [P4] tuple[InstalledApp, ...]
+    diag = Signal(object)          # [P4] Path of the diagnostic bundle, or the exception
 
     def on_engine(self, st: EngineStatus) -> None:
         self.engine.emit(st)
@@ -32,3 +36,15 @@ class Bridge(QObject):
 
     def on_shot(self, png: bytes | None) -> None:
         self.shot.emit(png)
+
+    def on_vibrated(self, ms: int) -> None:
+        self.vibrated.emit(ms)
+
+    def on_media(self, result: object) -> None:
+        self.media.emit(result)
+
+    def on_apps(self, apps: object) -> None:
+        self.apps.emit(apps)
+
+    def on_diag(self, result: object) -> None:
+        self.diag.emit(result)

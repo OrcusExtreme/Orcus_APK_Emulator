@@ -35,9 +35,13 @@ def test_mode_and_gpu_rows() -> None:
 def test_every_combination_keeps_the_invariants() -> None:
     for mode in LaunchMode:
         for gpu in GpuMode:
+            if gpu == GpuMode.LADDER:   # the engine launches at the ladder's level, never with "ladder" itself
+                with pytest.raises(ValueError):
+                    args.build(CFG, mode, gpu, keep_slot="a")
+                continue
             argv = args.build(CFG, mode, gpu, keep_slot="a")
             assert args.invariant_violations(argv) == []
-            assert "-ports" not in argv and "auto" not in argv
+            assert "-ports" not in argv and "auto" not in argv and "ladder" not in argv
             if "-snapshot" in argv:
                 assert "-no-snapshot-save" in argv
 

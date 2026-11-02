@@ -92,6 +92,16 @@ def third_party(shell: DeviceShell) -> frozenset[str]:
     return frozenset(line.strip() for line in out.splitlines() if line.startswith("package:"))
 
 
+def apks(lines: frozenset[str]) -> dict[str, str]:
+    """package -> its APK in the phone, from `third_party` lines (`package:/data/app/~~x/<pkg>-y/base.apk=<pkg>`)."""
+    out: dict[str, str] = {}
+    for line in lines:
+        path, _, package = line.removeprefix("package:").rpartition("=")
+        if path and package:
+            out[package] = path
+    return out
+
+
 def installed_package(before: frozenset[str], after: frozenset[str]) -> str | None:
     names = {line.rsplit("=", 1)[-1] for line in after - before}
     return names.pop() if len(names) == 1 else None

@@ -8,6 +8,7 @@ from orcus.common.paths import AVD_NAME, GOLDEN_SNAPSHOT
 from orcus.contracts import GpuMode
 
 FEATURES = ("-feature", "-Vulkan")   # changing -feature invalidates snapshots: fixed
+CAMERA_MODE = "imagefile"   # [P4] the back camera shows a file (engine.camera); part of a snapshot's hardware
 CONSOLE_PORT_RANGE = range(5586, 5683)
 MAX_SERVICE_PORT = 49152
 
@@ -30,6 +31,7 @@ class LaunchConfig:
     locale: str = "ko-KR"
     http_proxy: str | None = None
     avd_name: str = AVD_NAME
+    camera_image: Path | None = None   # [P4] on every launch that makes or opens a snapshot
 
 
 _GPU_FLAGS: dict[GpuMode, tuple[str, ...]] = {
@@ -56,6 +58,8 @@ def mode_flags(mode: LaunchMode, cfg: LaunchConfig, keep_slot: str | None = None
 
 
 def build(cfg: LaunchConfig, mode: LaunchMode, gpu: GpuMode, *, keep_slot: str | None = None) -> list[str]:
+    if gpu not in _GPU_FLAGS:   # "ladder" is the engine's choice of a level (§5.6), never an emulator flag
+        raise ValueError(f"no emulator flags for GPU mode {gpu}")
     argv = [
         str(cfg.emulator_exe), "-avd", cfg.avd_name, *_GPU_FLAGS[gpu],
         "-port", str(cfg.console_port),
@@ -67,6 +71,8 @@ def build(cfg: LaunchConfig, mode: LaunchMode, gpu: GpuMode, *, keep_slot: str |
     ]
     if cfg.http_proxy:
         argv += ["-http-proxy", cfg.http_proxy]
+    if cfg.camera_image is not None:
+        argv += ["-camera-back", f"{CAMERA_MODE}:{cfg.camera_image}"]
     argv += mode_flags(mode, cfg, keep_slot)
     problems = invariant_violations(argv)
     if problems:

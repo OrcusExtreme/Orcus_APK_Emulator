@@ -6,7 +6,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -69,6 +69,9 @@ class Sink:
     def release_all(self) -> None:
         self.calls.append(("release_all",))
 
+    def touches(self, points: Sequence[PointerAt]) -> None:
+        self.calls.append(("touches", *((round(p.u, 3), round(p.v, 3)) for p in points)))
+
 
 def mouse(kind: QEvent.Type, x: float, y: float, button: Qt.MouseButton,
           buttons: Qt.MouseButton = Qt.MouseButton.NoButton) -> QMouseEvent:
@@ -113,6 +116,49 @@ def test_screen_maps_mouse_and_always_lifts_the_finger(qapp: QApplication) -> No
     v.mousePressEvent(mouse(QEvent.Type.MouseButtonPress, 1, 1, Qt.MouseButton.MiddleButton))
     assert sink.calls == [("pointer", 0.1, 0.1, True), ("pointer", 0.1, 0.1, False),
                           ("key", str(HwKey.BACK), False), ("key", str(HwKey.HOME), False)]
+
+
+def test_ctrl_drag_is_a_two_finger_pinch_mirrored_through_the_centre(qapp: QApplication) -> None:
+    """[P4] The second finger mirrors the pointer through the screen centre; both lift on release, at the edge and
+    on focus loss; the wheel waits while two fingers are down."""
+    v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
+    v.resize(400, 800)
+    sink = Sink()
+    v.set_input(sink)
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    def press(x: float, y: float) -> None:
+        p = QPointF(x, y)
+        v.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress, p, p, Qt.MouseButton.LeftButton,
+                                      Qt.MouseButton.LeftButton, ctrl))
+    press(160, 320)
+    v.mouseMoveEvent(mouse(QEvent.Type.MouseMove, 100, 200, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton))
+    v.mouseReleaseEvent(mouse(QEvent.Type.MouseButtonRelease, 100, 200, Qt.MouseButton.LeftButton))
+    assert sink.calls == [("touches", (0.4, 0.4), (0.6, 0.6)), ("touches", (0.25, 0.25), (0.75, 0.75)),
+                          ("touches",)]
+    sink.calls.clear()
+    press(100, 200)
+    v.mouseMoveEvent(mouse(QEvent.Type.MouseMove, -5, 200, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton))
+    v.mouseMoveEvent(mouse(QEvent.Type.MouseMove, 50, 200, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton))
+    press(100, 200)
+    v.release()                                             # focus lost / rotation
+    v.release()
+    assert sink.calls == [("touches", (0.25, 0.25), (0.75, 0.75)), ("touches",),   # left the screen: lifted
+                          ("touches", (0.25, 0.25), (0.75, 0.75)), ("touches",)]
+
+
+def test_a_vibration_shows_a_pill_for_its_length(qapp: QApplication) -> None:
+    v = screen.ScreenView(FramePump(Bridge()), lambda: InputSettings())
+    v.resize(400, 800)
+    v.buzz(-1)
+    assert not v.buzzing.isHidden() and v.buzzing.text() == "진동"
+    assert v._buzz_timer.interval() == screen.BUZZ_MIN_MS   # noqa: SLF001
+    v.buzz(3000)
+    assert v.buzzing.text() == "진동 3.0초" and v._buzz_timer.interval() == 3000   # noqa: SLF001
+    v.buzz(60000)
+    assert v._buzz_timer.interval() == screen.BUZZ_MAX_MS   # noqa: SLF001
+    v.clear()                                               # the phone went away
+    assert v.buzzing.isHidden()
 
 
 def test_screen_keys(qapp: QApplication) -> None:
@@ -202,6 +248,12 @@ class FakeEngine:
         return self.st.epoch + 1
 
     def rebuild(self, reason: str) -> None: ...
+
+    def keep_once(self) -> None:
+        self.kept = getattr(self, "kept", 0) + 1
+
+    def retry_gpu(self) -> None:
+        self.gpu_retried = getattr(self, "gpu_retried", 0) + 1
 
     def retry(self) -> None:
         self.retried += 1

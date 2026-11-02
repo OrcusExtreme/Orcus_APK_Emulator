@@ -1,6 +1,6 @@
 # Orcus APK Emulator — 계획
 
-> **상태: Phase 3b 작업 순서 1–6과 수용 시험 완료 — 사용자 수동 점검(B10)과 3b 승인 대기 (§4 끝).** Phase 3a는 2026-10-31에 승인되었다(사용자 커밋 v0.1.8, "Phase 3b까지 계속 진행"). Phase 2는 2026-10-30에 끝났다(A9 승인). Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
+> **상태: Phase 4a 끝, 사용자 확인 대기 (§3 Phase 4 작업 순서, §4 끝).** 확인되면 4b(설치 마법사·영어 UI·배포)로 간다. Phase 3b는 사용자 커밋 v0.1.9–v0.1.12로 끝났다(화면 직접 한글 입력 확인, "나머지 진행" 2026-10-31). Phase 3a는 2026-10-31에 승인되었다(v0.1.8). Phase 2는 2026-10-30에 끝났다(A9 승인). Phase 1(v3)은 2026-10-30에 승인되었다(★D0–★D4 모두 권장값, D5–D17도 권장값으로 진행).
 > 라이선스 동의(★D2)와 UAC 승인·재부팅(★D1)은 사용자가 직접 한다. 에이전트는 이 둘을 대신하지 않는다.
 >
 > - 상세 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 적대적 검토 66건과 수정 점검 52건을 반영했다. 추적 표는 §16에 있다.
@@ -366,6 +366,18 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
   - `.apk` '연결 프로그램' 등록, 제거 시 `D:\OrcusAPK` 보존 여부 질문, NOTICE, 서명(★D3에 따름).
   - 수용: 새 Windows 계정에서 설치 → 첫 앱 실행. 패키징본에서 스모크가 통과하고, `--selftest`의 버전이 lock과 같다.
 
+**작업 순서(Phase 4 안, 2026-10-31 "나머지 진행")** — 범위가 커서 3a/3b처럼 4a를 마치면 한 번 확인받는다. 폰 화면 직접 한글 입력은 3b에서 사용자 요청으로 이미 넣었다(v0.1.10).
+- **4a 엔진·확장**
+  1. **keep-state:** A/B 슬롯, 정상 정지 때 저장(빠른 정지는 저장 안 함), [이번에는 휴대폰 유지하고 닫기], 설정 체크박스, 골든 재구축 시 슬롯 정리, 망가진 슬롯은 골든으로 시작하고 보존. 강제 로드 없이 망가진 슬롯을 여는 동작은 기기 실험으로 먼저 확인한다(S4는 강제 로드만 봤음).
+  2. **GPU 자동 사다리**(`gpu_mode = ladder`): 재확인 부팅, host → host_hidden → software 한 단계씩, 원격 세션 하강은 저장하지 않음, `state\gpu.json`, [GPU 가속 다시 시도].
+  3. **확장:** 두 손가락 핀치(Ctrl+드래그), 조도·근접·배터리, 문자·전화 수신, 진동 표시, 사진·소리 파일 드롭, 설치된 앱 목록, 진단 묶음.
+  4. **카메라:** `-camera-back imagefile` 실험 → 되면 [카메라에 이미지 보여주기], 안 되면 기록.
+- **4b 마감·배포** (4a 확인 뒤)
+  5. GUI 설치 마법사·라이선스 대화상자(동의는 사람이 직접).
+  6. 영어 UI.
+  7. 배포: PyInstaller 정리, Inno Setup 사용자별 설치(컴파일러 설치는 사용자 결정), `.apk` 연결, 제거 시 질문, NOTICE, 무서명(★D3).
+  8. Phase 4 수용 시험.
+
 ### 이후 (각각 별도 승인)
 
 - **Companion 실시간 테스트:** `MITAI2Companion.apk` + `aicompanion://comp/<코드>` 딥링크, 또는 aiStarter 호환 127.0.0.1:8004 shim.
@@ -649,3 +661,47 @@ MIT App Inventor에서 내보낸 APK를 Windows 11 창에 **끌어다 놓으면 
     - **고침(P4 계획 "폰 화면에 직접 한글 입력"을 앞당김, ARCHITECTURE §9.5·§9.6):** 화면이 IME를 켠다(`WA_InputMethodEnabled`). 확정된 음절은 키와 같은 큐로 붙여넣고, 조합 중인 글자는 화면 아래 말풍선에 보이며 한자 후보 창도 그 자리에 뜬다. 조합 중에 화면을 누르면 먼저 확정한다. 한/영 키는 Windows IME 전환으로 돌려주었고, 입력 바는 Ctrl+T와 [가]로 남겼다.
     - 유닛: IME 이벤트(ㅇ→아→안, 다음 자음에 "안" 확정 …)를 넣어 붙여넣기 순서·말풍선·후보 창 위치를 확인(유닛 407개, pyright 0건). 실제 키보드·IME 확인은 사용자 몫이다(이 PC에서 키 입력을 흉내 내면 사용자 데스크톱에 키가 들어가므로 하지 않았다).
   - **로고 및 .ico 아이콘 탑재(2026-10-31):** 사용자 제공 기하 모노그램 이미지를 기반으로 나노바나나(이미지 생성)를 사용해 다크 테마 일렉트릭 그라디언트 스퀘어클 뱃지 로고를 제작하고, 16~256 px 7개 해상도가 내장된 multi-res Windows .ico 파일 및 1024x1024 고해상도 PNG를 생성하여 프로젝트 assets/ 및 패키지 리소스(`src/orcus/resources/`)에 지정. Windows 작업표시줄 AppUserModelID 지정(`win32.set_app_user_model_id`), PyInstaller 빌드 스펙 아이콘 연동, 유닛 테스트 408개 통과.
+- **2026-10-31 — Phase 3b 끝, Phase 4 시작:** 사용자가 3b를 v0.1.9(센서·한글·설정), v0.1.10(화면 직접 한글 입력)으로 커밋하고 아이콘 작업(v0.1.11–v0.1.12)을 더한 뒤 "확인했어. 나머지 진행"을 지시했다. Phase 4를 4a(엔진·확장)와 4b(마감·배포)로 나눠 진행한다(§3).
+- **Phase 4a 진행**
+  - **1 keep-state(ARCHITECTURE §6.1·§6.3):**
+    - `engine/keepstate.py`(포인터 `state\keep_state.json`, 슬롯 `orcus_user_a|b`). 정상 정지에서만 저장한다. 순서는 포인터가 가리키지 않는 슬롯을 지우고 저장 → `ListSnapshots`로 확인 → 포인터 갱신 → 옛 슬롯 삭제다. 빠른 정지(로그오프·디스크 부족)와 크래시 재시작은 저장하지 않는다. 크래시 재시작은 포인터 슬롯으로 연다. 디스크가 3 GiB보다 적으면 저장하지 않고, 실패는 다음 시작 때 배너로 알린다.
+    - 강제 로드 없이 연다. 골든 표식이 없거나(콜드 부팅으로 넘어감), 30 s 안에 부팅하지 못하거나, 에뮬레이터가 끝나면 이번만 골든으로 시작한다. 그 슬롯은 남기고, 그 세션은 보관하지 않는다(`ENGINE_KEEP_FAILED`).
+    - 새 골든(재구축)이면 두 슬롯을 지운다(`ENGINE_KEEP_GONE`). 유지를 끄면 다음 시작 때 지운다. 화면 장치가 없는 COLD 부팅은 열지도 덮어쓰지도 않는다.
+    - GUI: 설정 "세션 간 휴대폰 유지", 닫기 안내의 [이번에는 휴대폰 유지하고 닫기](`EngineView.keep_once`: 다음 시작 때 한 번 열고, 그다음 닫을 때 다시 묻는다), 상태 칩 "휴대폰 유지 모드", 유지 모드의 초기화 질문.
+    - 유닛 12개(`test_engine_keep.py`) + GUI 2개, 전체 422개·pyright 0건.
+    - **실기기(2026-10-31, `tests/device/test_acceptance_4a.py` 3개 통과):** 보관하며 정지 2.8 s(저장 2.0 s, 슬롯을 바꿀 때 7.6 s), 보관본 열기 13.9 s, 슬롯 1,376 MB. 디스크 파일과 RAM 속성이 모두 돌아왔다. 저장 중 qemu를 죽이면 `UNAVAILABLE`로 저장에 실패하고 이전 슬롯이 그대로 열린다(다음 시작 배너). `ram.bin`을 반으로 자른 슬롯은 강제 로드가 없어도 **부팅이 멈췄다**(S4의 강제 로드와 같음). 30 s 제한 뒤 골든으로 시작했고(합 53 s), 에뮬레이터는 슬롯을 지우지 않았다. 시험이 만든 슬롯은 끝에 지웠다.
+  - **2 GPU 자동 사다리(ARCHITECTURE §5.6):**
+    - 설정값 `engine.gpu_mode = ladder`(설정 대화상자의 "자동"). host에서 시작한다. SESSION_INIT에서 소프트웨어 렌더러를 한 번 보면 다시 확인 부팅을 하고, 두 번 연속이면 host → host_hidden → software로 한 단계 내린다(`engine/gpuladder.py`). 준비 부팅에서 보면 바로 내린다(골든은 소프트웨어 렌더러로 만들 수 없음).
+    - 수준은 `state\gpu.json`에 (에뮬레이터 build, 보이는 그래픽 어댑터, 원격 세션 여부)별로 둔다. 원격 세션에서 내린 것은 저장하지 않는다. host와 host_hidden은 골든을 같이 쓰므로 내려도 재구축하지 않고, software는 COLD로 준비한다.
+    - 배너 `ENGINE_GPU_LADDER` + [GPU 가속 다시 시도](`EngineView.retry_gpu`: 수준을 지우고 다시 켬). 사다리로 바꾸거나 사다리에서 바꿀 때는 재구축 대신 재시작한다.
+    - 유닛 7개(`test_engine_ladder.py`: 한 번의 소프트웨어는 재확인만, 두 번이면 host_hidden, 끝은 software COLD, 원격 하강 미저장, 다시 시도, 준비 부팅 즉시 하강) + GUI 1개.
+    - 실기기: 사다리로 켜면 기존 골든을 그대로 열어 host에 머문다(12.3 s, 수준 파일 없음). 원격 세션에서 다른 원격 도구(Mirage)를 켠 상태의 확인은 사용자 몫이다.
+    - **발견(제품): API 36에서 렌더러 판정이 비어 있었다.** `dumpsys SurfaceFlinger | grep -m1 GLES`가 렌더러 줄(436번 "GLES: Google (NVIDIA Corporation) … GTX 1660 …") 앞의 섹션 머리 "------------RE GLES (Ganesh)------------"(433번)를 잡았다. 3a 골든부터 `device_caps.json`의 렌더러가 그 머리였다. 그래서 host 모드에서 소프트웨어로 떨어져도 배너가 뜨지 않았고, 준비도 막지 못했다. `'GLES: '` 줄만 보게 고쳤다(유닛에 API 36 출력 추가). 실기기에서 렌더러가 제대로 기록됨을 확인했다.
+  - **3 확장(ARCHITECTURE §7.1·§7.9·§9.3·§9.7, 2026-10-31):**
+    - **두 손가락 핀치:** Ctrl+드래그, 두 번째 손가락은 화면 가운데 대칭. `InputSink.touches()` → TouchEvent(id 0/1, pressure 0으로 뗌). 마우스 손가락과 함께 누르지 않고, release_all·새 스트림·종료 때 뗀다.
+    - **빛·근접·배터리:** physical model(LIGHT·PROXIMITY)과 `setBattery`. [센서] 탭 "빛·근접·배터리".
+      - **발견(이미지):** 충전하지 않고 20% 이하로 내리면 SystemUI가 죽는다(`LowPowerWarningsController` → 없는 `com.google.android.flipendo.api`). 앞의 앱이 멈췄다 돌아오고(그 사이 온 문자는 Texting이 놓침), 반복되면 rescue party 위험이 있다. 충전하지 않을 때는 **21%까지만**(충전 중이면 0%까지).
+      - **발견·고침(keep-state):** 보관한 휴대폰은 회전·빛·배터리가 저장한 대로 돌아오는데, 컨트롤은 매번 세로로 가정했다(가로로 보관하면 다음 회전이 튐). 이제 시작할 때 `getPhysicalModel`·`getBattery`로 읽어 맞추고 [센서] 탭에도 보여준다.
+    - **문자·전화:** `sendSms`·`sendPhone`. [센서] 탭 "문자·전화"(번호 검사, 문자 70자).
+    - **진동 표시:** VIBRATE 권한이 있는 앱이 도는 동안 1.5 s마다 `dumpsys vibrator_manager`(0.05 s) → 폰 화면 위 "진동" 알약.
+    - **사진·소리·동영상 드롭:** 그림·소리·동영상은 여러 개를 한 번에 놓을 수 있다. 스테이징(ASCII 이름) → `adb push` → `/sdcard/Pictures|Music|Movies/<놓은 이름>`. MediaStore가 바로 올림(스캔 불필요).
+    - **설치된 앱 목록:** [앱] 탭. `pm list packages -3`, [실행](APK를 pull해 같은 길로, 같은 epoch는 설치 생략), [지우기], [새로 고침].
+    - **진단 묶음:** [앱] 탭 버튼과 `orcus-cli diag`. 로그·상태·doctor·보고서를 zip으로. 계정·사용자·PC 이름·이메일은 가린다.
+    - 기기 시험용 픽스처 **OrcusWorld**(LightSensor·ProximitySensor·Texting·PhoneCall·WebViewer 핀치 페이지)를 로컬 빌드 서버로 만들었다. 빌드 서버 재빌드 때 얕은 clone의 `git describe` 실패로 GitBuildId.java가 깨지는 문제는 `ANT_ARGS=-Dgit.build.version=v207a`로 피했다(docs/fixtures.md).
+    - **발견(App Inventor):** PhoneCall의 `status`는 OptionList라 `join`에 그대로 넣으면 "Bad arguments to join" 오류 대화상자가 뜬다(`+ 0`으로 숫자로 바꿔야 함). 학생 앱에서도 같다.
+    - **실기기(2026-10-31, `tests/device/test_extensions_4a.py` 9개 통과, 마지막 실행 6분 1초, 골든 재구축 포함):**
+      - LightChanged 2.3–2.8 s 안(덤프 포함), ProximityChanged 0.0/1.0; 배터리 21%(충전 안 함)·5%(충전)·100%, SystemUI 그대로
+      - 문자 MessageReceived "sms 010-1234-5678 안녕 Orcus 문자"(6.6–9.4 s, 받은편지함에도 있음)
+      - 전화 "call 1 01087654321" → 끊기 "callend 1 01087654321"(받지 않음)
+      - 핀치 벌리기 3.67배·모으기 0.27배(WebViewer 페이지가 손가락 2개를 셈)
+      - 진동(HelloPurr 탭) 0.1–1.6 s 뒤 한 번 알림
+      - 드롭한 그림·소리(한글 이름) 2.4 s 안에 MediaStore에
+      - 설치된 앱 목록 → [실행] 1.1 s(설치 생략)
+      - 카메라 그림 파랑 → 다시 연 뒤 빨강
+    - 5번 실행 중 1번, 핀치와 HelloPurr 탭이 함께 약 45 s 동안 듣지 않았다(경고 로그 없음). 그 뒤 4번 연속 통과했다. 다시 나오면 화면을 남기도록 시험에 증거 수집을 넣었다(열린 문제).
+  - **4 카메라(ARCHITECTURE §9.8·§6.4):**
+    - 실험(골든을 건드리지 않게 `-read-only` 별도 콜드 부팅): `-camera-back imagefile:<파일>`이 37.2.12 헤드리스에서 동작한다. IMAGE_CAPTURE 앱(`com.android.camera2`)에 그림이 나온다. 파일을 바꾸면 카메라를 다시 열 때 새 그림이다(재시작 불필요).
+    - **카메라는 스냅샷 하드웨어에 들어간다:** emulated로 저장한 보관 휴대폰을 이 플래그로 열면 "The emulator hardware cannot load snapshot"이다. 골든 복사본으로 해 보니 강제 로드에서 에뮬레이터가 스냅샷을 지우고 끝났다. 그래서 플래그를 **모든 실행**에 붙이고 골든 키에 `camera`를 넣었다. **기존 골든은 다음 시작 때 한 번 재구축된다(약 3.5분, 이 PC에서 확인).**
+    - [센서] 탭 > 카메라: [그림 고르기…](긴 변 1280 px 이하 PNG로) / [기본 그림](직접 그린 색 막대). 그림은 `<home>\state\camera.png`.
+  - **발견·고침(keep-state, 카메라 작업 중 기기 시험):** 반으로 자른 슬롯이 이번에는 부팅 전, gRPC가 답하기 전에 멈췄다. `ENGINE_CONNECT_TIMEOUT` 실패로 끝났고, 바로 이은 시작은 `engine_in_use`였다. 이제 보관 휴대폰의 연결 시간 초과도 "열리지 않음"(골든으로 시작, 슬롯 보존)으로 다룬다(유닛 1개 추가). 재실행 `test_acceptance_4a.py` 5개 통과(망가진 슬롯 14.3 s 만에 골든, 가로 보관 휴대폰 복원).
+  - 유닛 457개 통과, pyright 0건.

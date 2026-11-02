@@ -106,6 +106,11 @@ class OrcusPaths:
     def app(self) -> Path:
         return self.root / "app"
 
+    @property
+    def camera_image(self) -> Path:
+        """[P4] What the phone's back camera shows (engine.camera)."""
+        return self.state / "camera.png"
+
     def state_file(self, name: str) -> Path:
         return self.state / name
 

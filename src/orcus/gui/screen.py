@@ -3,7 +3,9 @@
 Pointer positions go out as normalized coordinates inside the frame on screen plus that frame's seq; the device
 package maps them to panel pixels with that frame's rotation (§9.2). A held finger is always lifted (§9.3): on
 release, when the pointer leaves the screen (at the edge), on focus loss, and when the frame rotation changes.
-The wheel scrolls (a real scroll event, 3b).
+The wheel scrolls (a real scroll event, 3b). [P4] Ctrl+drag is a two-finger pinch: the second finger mirrors the
+pointer through the screen centre (as in the emulator's own window), so dragging out spreads and in pinches.
+[P4] When the app vibrates, a pill at the top says so: the PC cannot shake.
 
 Korean straight on the screen (§9.6, moved up from P4 at the user's request in 3b): the screen takes the Windows
 IME, which composes here. A finished syllable comes as the event's commit string and goes to the phone by paste,
@@ -17,7 +19,7 @@ from collections.abc import Callable
 
 from typing import Any
 
-from PySide6.QtCore import QPointF, QRect, QSize, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QFocusEvent,
@@ -27,6 +29,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPaintEvent,
+    QPen,
     QWheelEvent,
 )
 from PySide6.QtWidgets import QLabel, QWidget
@@ -37,6 +40,8 @@ from .frame_pump import FramePump, Shown
 from .keymap import CHORD_KEYS, NAMED_KEYS
 
 BACKGROUND = QColor(14, 14, 18)
+FINGER = QColor(255, 255, 255, 110)
+BUZZ_MIN_MS, BUZZ_MAX_MS = 1200, 5000   # how long the vibration pill stays
 
 
 def fit(avail: QSize, *, chrome: QSize, landscape: bool, dpr: float) -> QSize:
@@ -57,6 +62,7 @@ class ScreenView(QWidget):
         self._shown: Shown | None = None
         self._pressed = False
         self._last_at: PointerAt | None = None
+        self._pinch: tuple[PointerAt, PointerAt] | None = None   # [P4] two fingers down (Ctrl+drag)
         self._paints: deque[float] = deque(maxlen=60)
         self.overlay = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -69,6 +75,15 @@ class ScreenView(QWidget):
         f.setPointSizeF(f.pointSizeF() * 1.5)
         self.composing.setFont(f)
         self.composing.hide()
+        self.buzzing = QLabel(self)
+        self.buzzing.setTextFormat(Qt.TextFormat.PlainText)
+        self.buzzing.setStyleSheet("background:rgba(179,38,30,215);color:white;border-radius:10px;padding:3px 12px;"
+                                   "font-weight:bold")
+        self.buzzing.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.buzzing.hide()
+        self._buzz_timer = QTimer(self)
+        self._buzz_timer.setSingleShot(True)
+        self._buzz_timer.timeout.connect(self.buzzing.hide)
 
     # --- frames ---------------------------------------------------------------------------------------------------
     def set_input(self, sink: InputSink | None) -> None:
@@ -90,7 +105,17 @@ class ScreenView(QWidget):
 
     def clear(self) -> None:
         self._shown = None
+        self.buzzing.hide()
         self.update()
+
+    def buzz(self, ms: int) -> None:
+        """[P4] The app vibrated for `ms` (-1: still going): the pill stays that long, at least 1.2 s."""
+        self.buzzing.setText("진동" if ms < 0 else f"진동 {ms / 1000:.1f}초")
+        self.buzzing.adjustSize()
+        self.buzzing.move((self.width() - self.buzzing.width()) // 2, 12)
+        self.buzzing.show()
+        self.buzzing.raise_()
+        self._buzz_timer.start(min(BUZZ_MAX_MS, max(BUZZ_MIN_MS, ms)))
 
     @property
     def rotation(self) -> Rotation:
@@ -110,6 +135,12 @@ class ScreenView(QWidget):
             p.fillRect(QRect(int(drawn.width()), 0, self.width(), self.height()), BACKGROUND)
             p.fillRect(QRect(0, int(drawn.height()), self.width(), self.height()), BACKGROUND)
         self._paints.append(time.monotonic())
+        if self._pinch is not None:   # where the two fingers are
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(QPen(QColor(0, 0, 0, 90), 1.5))
+            p.setBrush(FINGER)
+            for at in self._pinch:
+                p.drawEllipse(QRectF(at.u * self.width() - 11, at.v * self.height() - 11, 22, 22))
         if self.overlay:
             fps = (len(self._paints) - 1) / max(1e-3, self._paints[-1] - self._paints[0]) if len(self._paints) > 1 \
                 else 0.0
@@ -131,6 +162,8 @@ class ScreenView(QWidget):
             QGuiApplication.inputMethod().commit()
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         match event.button():
+            case Qt.MouseButton.LeftButton if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._pinch_to(self._at(event.position()))
             case Qt.MouseButton.LeftButton:
                 self._pressed = True
                 self._last_at = self._at(event.position())
@@ -144,6 +177,13 @@ class ScreenView(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         sink = self._input
+        if self._pinch is not None and sink is not None:
+            pos = event.position()
+            if 0 <= pos.x() < self.width() and 0 <= pos.y() < self.height():
+                self._pinch_to(self._at(pos))
+            else:
+                self._end_pinch()   # left the screen: lift both fingers there
+            return
         if not self._pressed or sink is None:
             return
         pos = event.position()
@@ -156,6 +196,9 @@ class ScreenView(QWidget):
             self._pressed = False
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._pinch is not None:
+            self._end_pinch()
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._pressed and self._input is not None:
             self._input.pointer(self._at(event.position()), False)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -164,7 +207,7 @@ class ScreenView(QWidget):
     def wheelEvent(self, event: QWheelEvent) -> None:
         sink = self._input
         dy = event.angleDelta().y()
-        if sink is not None and dy and not self._pressed:   # not in the middle of a drag
+        if sink is not None and dy and not self._pressed and self._pinch is None:   # not in the middle of a drag
             sink.wheel(self._at(event.position()), dy)
         event.accept()
 
@@ -173,6 +216,22 @@ class ScreenView(QWidget):
         if self._pressed and self._input is not None and self._last_at is not None:
             self._input.pointer(self._last_at, False)
         self._pressed = False
+        self._end_pinch()
+
+    def _pinch_to(self, at: PointerAt) -> None:
+        if self._input is None:
+            return
+        self._pinch = (at, PointerAt(1.0 - at.u, 1.0 - at.v, at.frame_seq))
+        self._input.touches(self._pinch)   # every move at once, like a drag
+        self.update()
+
+    def _end_pinch(self) -> None:
+        if self._pinch is None:
+            return
+        self._pinch = None
+        if self._input is not None:
+            self._input.touches(())
+        self.update()
 
     def focusOutEvent(self, event: QFocusEvent) -> None:
         self.release()

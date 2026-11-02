@@ -28,6 +28,7 @@ from orcus.contracts import (
     LogEntry,
     OrcusError,
     OrcusFailure,
+    PhoneWorld,
     Rotation,
     RunEvent,
     SessionMode,
@@ -97,6 +98,7 @@ class FakeControls:
         self.resent = 0
         self.posture = Rotation.PORTRAIT
         self.microphone = False
+        self.world = PhoneWorld()
 
     def rotate(self, to: Rotation, *, gradual: bool = True) -> None:
         self.rotations.append(to)
@@ -113,6 +115,13 @@ class FakeControls:
     def set_microphone(self, enabled: bool) -> None:
         self.mics.append(enabled)
         self.microphone = enabled
+
+    def set_light(self, lux: float) -> None: ...
+    def set_proximity(self, cm: float) -> None: ...
+    def set_battery(self, level: int, charging: bool) -> None: ...
+    def receive_sms(self, sender: str, text: str) -> None: ...
+    def call_in(self, number: str) -> None: ...
+    def call_end(self, number: str) -> None: ...
 
 
 class FakeSession:
@@ -155,6 +164,10 @@ class Phone:
         self.crash_text = ""
         self.no_process = False
         self.display = "ROTATION_0"   # `dumpsys window displays`: a locked or turned app screen
+        self.vibrator = ""            # `dumpsys vibrator_manager` (P4)
+        self.files: dict[str, bytes] = {}   # pushed into the phone: path -> content (P4)
+        self.apk_bytes: dict[str, bytes] = {}   # package -> the APK installed, for `adb pull` (P4)
+        self.push_fails = False
 
     def wipe(self) -> None:
         self.packages.clear()
@@ -169,6 +182,7 @@ class Phone:
         if self.install_outputs:
             return 1, self.install_outputs.pop(0)
         self.packages[pkg] = self.packages.get(pkg, 0) + 1
+        self.apk_bytes[pkg] = apk.read_bytes()
         self.running.pop(pkg, None)
         return 0, "Performing Streamed Install\nSuccess"
 
@@ -208,6 +222,8 @@ class Phone:
                 return 0, self.crash_text
             case ("dumpsys", "window", "displays"):
                 return 0, f"  mCurrentRotation={self.display}\n"
+            case ("dumpsys", "vibrator_manager"):
+                return 0, self.vibrator
             case _:
                 pass
         return 0, ""
@@ -248,6 +264,24 @@ class FakeShell:
         self._guard()
         self._engine.phone.uninstall(package)
         return CmdResult(("uninstall", package), 0, "Success", "", 0.1, False)
+
+    def push(self, src: Path, dst: str, timeout_s: float = 120) -> CmdResult:
+        self._guard()
+        phone = self._engine.phone
+        if phone.push_fails:
+            return CmdResult(("push", str(src), dst), 1, "", "adb: error: failed to copy", 0.1, False)
+        phone.files[dst] = src.read_bytes()
+        return CmdResult(("push", str(src), dst), 0, f"{src}: 1 file pushed, 0 skipped.", "", 0.1, False)
+
+    def pull(self, src: str, dst: Path, timeout_s: float = 120) -> CmdResult:
+        self._guard()
+        phone = self._engine.phone
+        pkg = next((p for p, n in phone.packages.items() if f"/{p}-{n}/" in src), None)
+        if pkg is None or pkg not in phone.apk_bytes:
+            return CmdResult(("pull", src, str(dst)), 1, "", f"adb: error: failed to stat remote object '{src}'",
+                             0.1, False)
+        dst.write_bytes(phone.apk_bytes[pkg])
+        return CmdResult(("pull", src, str(dst)), 0, f"{src}: 1 file pulled, 0 skipped.", "", 0.1, False)
 
 
 class FakeEngine:

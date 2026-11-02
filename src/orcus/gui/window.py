@@ -7,15 +7,17 @@ in messages_ko); banners are the engine's warnings plus the running app's (RunEv
 """
 
 import subprocess
+import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QGuiApplication, \
-    QKeySequence, QResizeEvent, QShortcut
+    QImage, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -37,14 +39,17 @@ from orcus.contracts import (
     EpochCause,
     ErrorCode,
     HwKey,
+    MediaResult,
     OrcusError,
+    PhoneWorld,
     RemedyAction,
     Rotation,
     RunEvent,
     RunStage,
+    Sensitivity,
     SessionApi,
     SessionMode,
-    Sensitivity,
+    media_folder,
 )
 
 from . import dialogs
@@ -65,10 +70,15 @@ BUSY = (RunStage.STAGING, RunStage.INSPECTING, RunStage.CHECKING, RunStage.INSTA
 USED = (RunStage.INSTALLING, RunStage.LAUNCHING, RunStage.RUNNING)   # the app may have written data
 LANDSCAPES = (Rotation.LANDSCAPE, Rotation.REVERSE_LANDSCAPE)
 RECORD_AUDIO = "android.permission.RECORD_AUDIO"
+CAMERA_MAX_PX = 1280   # [P4] the camera's picture, scaled down to this a side
+MEDIA_WORDS = {"Pictures": ("사진", "ImagePicker로 고를 수 있습니다"),   # [P4] dropped files (§7.1)
+               "Music": ("음악", "Sound·Player의 Source에 이 경로를 쓰세요"),
+               "Movies": ("동영상", "VideoPlayer의 Source에 이 경로를 쓰세요")}
 CRASH_NOTICE = {SessionMode.GOLDEN: "휴대폰이 멈춰서 다시 켰습니다. 저장된 앱 데이터는 처음 상태로 돌아갔습니다.",
                 SessionMode.COLD: "휴대폰이 멈춰서 다시 켰습니다.",
                 SessionMode.KEEP_STATE: "휴대폰이 멈춰서 마지막으로 저장한 상태로 다시 켰습니다."}
 CLOSE_NOTICE = "이번에 실행한 앱의 저장 데이터(TinyDB 등)는 닫으면 지워집니다."   # §6.1, GOLDEN only
+KEEP_ONCE = "이번에는 휴대폰 유지하고 닫기"   # [P4] §6.1
 NO_DISPLAY_CHIP = "이번만 느린 시작 — 초기화하면 깨끗한 휴대폰으로"   # COLD boot that kept the golden (3a finding 18)
 MODE_CHIP = {SessionMode.GOLDEN: "깨끗한 휴대폰 모드 — 닫으면 처음 상태로", SessionMode.COLD: "느린 그래픽 모드 · 휴대폰 상태가 유지됨",
              SessionMode.KEEP_STATE: "휴대폰 유지 모드"}
@@ -79,7 +89,7 @@ REMEDIES: dict[RemedyAction, str] = {
     RemedyAction.OPEN_LOG: "open_logs", RemedyAction.RESET_PHONE: "reset_phone", RemedyAction.RUN_AGAIN: "rerun",
     RemedyAction.GRANT_ALL: "grant_all", RemedyAction.CHANGE_GPU_MODE: "gpu_dialog",
     RemedyAction.FREE_DISK: "explain_disk", RemedyAction.CONTINUE_ANYWAY: "rerun",
-    RemedyAction.MATCH_ORIENTATION: "match_orientation",
+    RemedyAction.MATCH_ORIENTATION: "match_orientation", RemedyAction.RETRY_GPU: "retry_gpu",
 }
 
 
@@ -118,6 +128,7 @@ class MainWindow(QMainWindow):
         self.hangul_bar.closed.connect(lambda: self.screen_view.setFocus())
         self.app_panel = AppPanel()
         self.app_panel.action.connect(self._app_action)
+        self.app_panel.installed.connect(self._installed_action)
         self.sensors = SensorPanel(session.settings().sensors.location_presets)
         self.sensors.shake.connect(self.shake)
         self.sensors.sensitivity_changed.connect(self._sensitivity_chosen)
@@ -126,6 +137,12 @@ class MainWindow(QMainWindow):
         self.sensors.tilt.connect(self._tilt)
         self.sensors.locate.connect(self._locate)
         self.sensors.microphone.connect(self._microphone)
+        self.sensors.light.connect(self._light)
+        self.sensors.proximity.connect(self._proximity)
+        self.sensors.battery.connect(self._battery)
+        self.sensors.sms.connect(self._sms)
+        self.sensors.call.connect(self._call)
+        self.sensors.camera.connect(self._camera)
         self.log_panel = LogPanel()
         self.log_panel.remedy.connect(lambda err: self.remedy(err.remedy.action) if err.remedy else None)
         self.tabs = QTabWidget()
@@ -171,6 +188,10 @@ class MainWindow(QMainWindow):
         bridge.engine.connect(self.on_engine)
         bridge.run.connect(self.on_run)
         bridge.log.connect(self.log_panel.append_log)
+        bridge.vibrated.connect(self.screen_view.buzz)
+        bridge.media.connect(self._media_done)
+        bridge.apps.connect(self.app_panel.show_installed)
+        bridge.diag.connect(self._diag_done)
         bridge.frame.connect(self._on_frame)
         bridge.frames_ended.connect(self._on_frames_ended)
         bridge.shot.connect(self._on_shot)
@@ -299,9 +320,11 @@ class MainWindow(QMainWindow):
         self.screen_view.set_input(dev.input)
         w, h = self._phys()
         dev.frames.start(w, h, self.pump.on_frame, self.bridge.on_frames_ended)
-        # a new phone: portrait, level, at the first location preset, microphone off (SESSION_INIT, §6.6)
+        # a new phone: level, at the first location preset, microphone off (SESSION_INIT, §6.6); its posture,
+        # light and battery as the phone has them (a kept phone comes back as it was saved, P4)
         self.sensors.set_device(dev.controls is not None)
         self.sensors.set_posture(dev.controls.posture if dev.controls else Rotation.PORTRAIT)
+        self.sensors.set_world(dev.controls.world if dev.controls else PhoneWorld())
         self.sensors.center_tilt()
         self.sensors.reset_location()
         self._show_mic()
@@ -396,6 +419,67 @@ class MainWindow(QMainWindow):
         if c is not None:
             c.set_location(lat, lon)
             self.toast.show_text("위치를 보냈습니다. 앱에 닿기까지 몇 초 걸립니다.")
+
+    def _light(self, lux: float) -> None:
+        c = self._controls()
+        if c is not None:
+            c.set_light(lux)
+
+    def _proximity(self, cm: float) -> None:
+        c = self._controls()
+        if c is not None:
+            c.set_proximity(cm)
+
+    def _battery(self, level: int, charging: bool) -> None:
+        c = self._controls()
+        if c is not None:
+            c.set_battery(level, charging)
+
+    def _sms(self, sender: str, text: str) -> None:
+        c = self._controls()
+        if c is not None:
+            c.receive_sms(sender, text)
+            self.toast.show_text("문자를 보냈습니다.")
+
+    def _call(self, number: str, ring: bool) -> None:
+        c = self._controls()
+        if c is None:
+            return
+        if ring:
+            c.call_in(number)
+            self.toast.show_text("전화가 옵니다. 받거나 거절하려면 휴대폰 화면의 알림을 누르세요.")
+        else:
+            c.call_end(number)
+
+    def _camera(self, pick: bool) -> None:
+        """[P4] The camera's picture: a PNG of at most 1280 px a side, or the color bars."""
+        if not pick:
+            self._put_camera(None, "기본 그림 (색 막대)")
+            return
+        name, _ = QFileDialog.getOpenFileName(self, "카메라에 보여 줄 그림", "",
+                                              "그림 (*.png *.jpg *.jpeg *.bmp *.gif *.webp)")
+        if not name:
+            return
+        img = QImage(name)
+        if img.isNull():
+            QMessageBox.warning(self, "카메라", "그림 파일을 읽지 못했습니다.")
+            return
+        if max(img.width(), img.height()) > CAMERA_MAX_PX:
+            img = img.scaled(CAMERA_MAX_PX, CAMERA_MAX_PX, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, "PNG")   # type: ignore[call-overload]  # the stub wants bytes; PySide6 takes only str (4a)
+        self._put_camera(bytes(buf.data().data()), Path(name).name)
+
+    def _put_camera(self, png: bytes | None, words: str) -> None:
+        try:
+            self.s.set_camera_image(png)
+        except OSError as e:
+            QMessageBox.warning(self, "카메라", f"그림을 넣지 못했습니다: {e}")
+            return
+        self.sensors.camera_label.setText(f"지금: {words}")
+        self.toast.show_text("카메라 그림을 바꿨습니다. 앱이 카메라를 다시 열면 보입니다.")
 
     def _sensitivity_chosen(self, sensitivity: Sensitivity) -> None:
         if self._info is None:
@@ -553,6 +637,23 @@ class MainWindow(QMainWindow):
                 self.match_orientation()
             case "copy_report":
                 self.copy_report()
+            case "diag":
+                self.make_diagnostics()
+            case _:
+                pass
+
+    def _installed_action(self, action: str, package: str) -> None:
+        """[P4] The [App] tab's list of apps in the phone."""
+        match action:
+            case "run":
+                self.s.apps.run_installed(package)
+            case "remove":
+                name = package.rsplit(".", 1)[-1]
+                if QMessageBox.question(self, "지우기", f"{name}을(를) PC 휴대폰에서 지울까요? 저장된 데이터도 "
+                                        "지워집니다.") == QMessageBox.StandardButton.Yes:
+                    self.s.apps.remove_app(package)
+            case "refresh":
+                self.s.apps.refresh_apps()
             case _:
                 pass
 
@@ -588,6 +689,9 @@ class MainWindow(QMainWindow):
             question = "휴대폰을 다시 켜서 저장된 깨끗한 휴대폰으로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
         elif self._status.mode == SessionMode.COLD:
             question = "느린 그래픽 모드에서는 휴대폰을 처음부터 다시 준비합니다(수 분). 계속할까요?"
+        elif self._status.mode == SessionMode.KEEP_STATE:
+            question = ("휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워지고, 닫을 때는 이 깨끗한 휴대폰을 "
+                        "보관합니다.")
         else:
             question = "휴대폰을 처음 상태로 되돌릴까요? 설치한 앱과 데이터가 지워집니다."
         if QMessageBox.question(self, "휴대폰 초기화", question) == QMessageBox.StandardButton.Yes:
@@ -605,6 +709,10 @@ class MainWindow(QMainWindow):
         if gpu:
             focus_gpu(dialog)
         dialog.exec()
+
+    def retry_gpu(self) -> None:
+        self.s.engine.retry_gpu()
+        self.toast.show_text("그래픽 카드 가속을 다시 확인합니다. 휴대폰을 다시 켭니다.")
 
     def gpu_dialog(self) -> None:
         self.settings_dialog(gpu=True)
@@ -641,33 +749,73 @@ class MainWindow(QMainWindow):
         QGuiApplication.clipboard().setText(self.s.report())
         self.toast.show_text("보고서를 복사했습니다")
 
+    def make_diagnostics(self) -> None:
+        """[P4] A zip of logs and state (names masked) in <home>\\diag, shown in Explorer."""
+        self.toast.show_text("진단 묶음을 만드는 중입니다…")
+
+        def work() -> None:
+            try:
+                self.bridge.on_diag(self.s.make_diagnostics())
+            except Exception as e:   # said in the window; the bundle is a help, not a step that must work
+                self.bridge.on_diag(e)
+        threading.Thread(target=work, name="diag", daemon=True).start()
+
+    def _diag_done(self, result: object) -> None:
+        if not isinstance(result, Path):
+            QMessageBox.warning(self, "진단 묶음", f"진단 묶음을 만들지 못했습니다: {result}")
+            return
+        self.toast.show_text(f"진단 묶음을 만들었습니다: {result.name} (이름·계정은 가렸습니다)", 5000)
+        subprocess.Popen([str(win32.system_dir().parent / "explorer.exe"), f"/select,{result}"])
+
     def help(self) -> None:
         keys = "\n".join(f"{k}: {v}" for k, v in (
             ("APK 열기", "Ctrl+O"), ("다시 실행", "F5"), ("뒤로", "Esc · 오른쪽 클릭"),
             ("홈", "Ctrl+Shift+H · 가운데 클릭"), ("최근 앱", "Ctrl+Shift+R"), ("흔들기", "F6 (누르고 있으면 반복)"),
             ("왼쪽 / 오른쪽으로 돌리기", "F7 / F8"), ("한글", "폰 화면에서 한/영 키로 바꿔 바로 입력(조합 중인 글자는 화면 "
                                                          "아래 말풍선) · 긴 글은 Ctrl+T · 옆 [가] 버튼의 입력 바"),
-            ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V"), ("스크롤", "마우스 휠")))
+            ("붙여넣기(한글 포함)", "폰 화면에서 Ctrl+V"), ("스크롤", "마우스 휠"),
+            ("두 손가락 확대·축소", "Ctrl을 누른 채 끌기 (두 번째 손가락은 화면 가운데를 중심으로 반대편)"),
+            ("사진·소리·동영상", "창에 끌어다 놓으면 휴대폰의 Pictures·Music·Movies에 들어갑니다")))
         QMessageBox.information(self, "도움말", "App Inventor에서 받은 .apk를 끌어다 놓으면 PC 휴대폰에서 바로 "
                                              "실행합니다. 센서는 오른쪽 [센서] 탭에 있습니다.\n\n" + keys)
 
     # --- window events -------------------------------------------------------------------------------------------------
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+    @staticmethod
+    def _dropped(event: QDragEnterEvent | QDropEvent) -> tuple[list[Path], bool]:
+        """One file (an app), or pictures, sounds and videos, any number (P4); by name only, no I/O (§7.1)."""
         urls = event.mimeData().urls()
-        if len(urls) == 1 and urls[0].isLocalFile():   # no I/O while dragging (§7.1)
+        if not urls or not all(u.isLocalFile() for u in urls):
+            return [], False
+        paths = [Path(u.toLocalFile()) for u in urls]
+        if all(media_folder(p) for p in paths):
+            return paths, True
+        return (paths, False) if len(paths) == 1 else ([], False)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        paths, into_phone = self._dropped(event)
+        if paths:
             event.acceptProposedAction()
-            self.overlay.show_text("놓으면 설치합니다")
+            self.overlay.show_text("놓으면 휴대폰의 사진·음악·동영상에 넣습니다" if into_phone else "놓으면 설치합니다")
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         if not self._busy_run:
             self.overlay.hide()
 
     def dropEvent(self, event: QDropEvent) -> None:
-        urls = event.mimeData().urls()
+        paths, _ = self._dropped(event)
         self.overlay.hide()
-        if len(urls) == 1 and urls[0].isLocalFile():
+        if paths:
             event.acceptProposedAction()
-            self.s.open_paths([Path(urls[0].toLocalFile())])
+            self.s.open_paths(paths)
+
+    def _media_done(self, result: MediaResult) -> None:
+        if result.problem is not None or result.phone_path is None:
+            if result.problem is not None:
+                self.show_problem(result.problem)
+            return
+        folder = result.phone_path.split("/")[2]
+        word, hint = MEDIA_WORDS.get(folder, ("", ""))
+        self.toast.show_text(f"휴대폰 {word}에 넣었습니다: {result.phone_path} ({hint})")
 
     def event(self, event: QEvent) -> bool:
         # moved to a monitor with other scaling: refit, or the phone is cropped and taps land beside (3a review)
@@ -705,12 +853,19 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("Orcus 닫기")
         box.setText(CLOSE_NOTICE)
         close = box.addButton("닫기", QMessageBox.ButtonRole.AcceptRole)
+        keep = None
+        if st.mode == SessionMode.GOLDEN:   # [P4] §6.1: the no-display COLD boot is not the phone to keep
+            keep = box.addButton(KEEP_ONCE, QMessageBox.ButtonRole.AcceptRole)
+            keep.setToolTip("이번 휴대폰을 보관했다가 다음에 열 때 그대로 시작합니다(그다음에 닫을 때 다시 묻습니다).")
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         never = QCheckBox("다시 묻지 않기")
         box.setCheckBox(never)
         box.exec()
-        if box.clickedButton() is not close:
+        clicked = box.clickedButton()
+        if clicked is not close and (keep is None or clicked is not keep):
             return False
+        if keep is not None and clicked is keep:
+            self.s.engine.keep_once()   # saved at the normal stop that follows (§6.3)
         if never.isChecked():
             self._save({"ui.confirm_close_data": False})
         return True

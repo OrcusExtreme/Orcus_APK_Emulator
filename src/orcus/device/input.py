@@ -13,12 +13,16 @@
 - Wheel: the guest has no wheel device and gRPC injectWheel does not scroll (S7). `input mouse scroll` does: it
   injects ACTION_SCROLL, which lists and scrollable screens take and a Canvas ignores (3b). It needs adb, so the
   app injects the sink; notches add up on their own thread while one command (~60 ms) runs.
+- [P4] Several fingers (a pinch): TouchEvent, one Touch per finger with ids 0..n-1, in the same panel pixels as
+  the mouse; pressure 0 lifts a finger (the emulator keeps it down otherwise). The mouse finger and the touch
+  fingers are never down together: whichever comes lifts the other first. Lifted like the mouse finger on
+  release_all, at a new stream and at the end.
 """
 
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import grpc
@@ -34,6 +38,7 @@ PASTE_SETTLE_S = 0.1
 PASTE_MAX = 64 * 1024   # characters; more blocked taps behind it and flooded a text box (3a review)
 LONG_PRESS_S = 0.7
 WHEEL_NOTCH = 120       # Qt angleDelta units per notch; one notch = VSCROLL 1 = 128 px in a ScrollView (3b)
+TOUCH_PRESSURE = 512    # any non-zero value is a finger down (0..1024)
 
 _KP, _DOWN, _UP = ec.KeyboardEvent.keypress, ec.KeyboardEvent.keydown, ec.KeyboardEvent.keyup
 _STALE = ("stale", None)
@@ -99,6 +104,7 @@ class InputQueue:
         self._stream = 0             # the stream generation allowed to take items
         self._pressed = False
         self._last = (0, 0)
+        self._fingers: list[tuple[int, int]] = []   # touch fingers down, by id
         self._quiet_until = 0.0      # no setClipboard before the last Paste had its time
         self._closed = threading.Event()
         self._wheel = _WheelPump(scroll) if scroll is not None else None
@@ -109,6 +115,9 @@ class InputQueue:
     # InputSink ---------------------------------------------------------------------------------------------------
     def pointer(self, at: PointerAt, pressed: bool) -> None:
         self._put(("pointer", (at, pressed)))
+
+    def touches(self, points: Sequence[PointerAt]) -> None:
+        self._put(("touches", tuple(points)))
 
     def wheel(self, at: PointerAt, dy: int) -> None:
         if self._wheel is not None and dy:
@@ -203,17 +212,22 @@ class InputQueue:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 3.0)
 
-    def _events(self, gen: int) -> Iterator[ec.InputEvent]:
-        if self._pressed:   # the old stream may have left the finger down: lift it before anything else
+    def _lift(self) -> Iterator[ec.InputEvent]:
+        """Every finger down, mouse or touch, up."""
+        if self._pressed:
             self._pressed = False
             yield self._mouse(*self._last, 0)
+        if self._fingers:
+            yield self._touch([])
+
+    def _events(self, gen: int) -> Iterator[ec.InputEvent]:
+        yield from self._lift()   # the old stream may have left a finger down: lift it before anything else
         while True:
             item = self._take(gen)
             if item is _STALE:
                 return
             if item is None:
-                if self._pressed:
-                    yield self._mouse(*self._last, 0)
+                yield from self._lift()
                 return
             kind, payload = item
             match kind:
@@ -222,13 +236,21 @@ class InputQueue:
                     x, y = to_panel(self._rotation_of(at.frame_seq), at.u, at.v, *self._panel)
                     if not pressed and not self._pressed:
                         continue   # a release without a press: nothing to undo
+                    if self._fingers:
+                        yield self._touch([])
                     self._pressed = pressed
                     self._last = (x, y)
                     yield self._mouse(x, y, 1 if pressed else 0)
-                case "release":
+                case "touches":
+                    if not payload and not self._fingers:
+                        continue
                     if self._pressed:
                         self._pressed = False
                         yield self._mouse(*self._last, 0)
+                    yield self._touch([to_panel(self._rotation_of(at.frame_seq), at.u, at.v, *self._panel)
+                                       for at in payload])
+                case "release":
+                    yield from self._lift()
                 case "restart":
                     raise _Restart()
                 case "key":
@@ -262,6 +284,15 @@ class InputQueue:
     def _mouse(self, x: int, y: int, buttons: int) -> ec.InputEvent:
         self.sent += 1
         return ec.InputEvent(mouse_event=ec.MouseEvent(x=x, y=y, buttons=buttons))
+
+    def _touch(self, points: list[tuple[int, int]]) -> ec.InputEvent:
+        """Fingers 0..n-1 at `points`; the ones down before and not listed now lift where they were."""
+        touches = [ec.Touch(x=x, y=y, identifier=i, pressure=TOUCH_PRESSURE) for i, (x, y) in enumerate(points)]
+        touches += [ec.Touch(x=x, y=y, identifier=i, pressure=0)
+                    for i, (x, y) in enumerate(self._fingers) if i >= len(points)]
+        self._fingers = points
+        self.sent += 1
+        return ec.InputEvent(touch_event=ec.TouchEvent(touches=touches))
 
     def _key(self, name: str, kind: "ec.KeyboardEvent.KeyEventType") -> ec.InputEvent:
         self.sent += 1

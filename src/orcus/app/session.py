@@ -23,14 +23,15 @@ from orcus.contracts import (
     EngineNotReady,
     EngineState,
     Settings,
+    media_folder,
 )
 from orcus.device import session as device_session
-from orcus.engine import provision, readonly
+from orcus.engine import camera, provision, readonly
 from orcus.engine.manager import EngineManager
 from orcus.engine.seams import Seams
 from orcus.setup.steps import SetupService
 
-from . import compose
+from . import compose, diag
 
 _log = log.get("app.session")
 IDLE = (EngineState.STOPPED, EngineState.FAILED, EngineState.NOT_INSTALLED)
@@ -134,9 +135,22 @@ class Session:
                          f"음성 인식 {'있음' if c.speech_recognizer else '없음'}")
         return "\n".join([*lines, *self._apps.report_lines()])
 
+    def set_camera_image(self, png: bytes | None) -> None:
+        camera.put(self._paths, png)
+
+    def make_diagnostics(self) -> Path:
+        doctor = [f"{line.status:<4} {line.name:<20} {line.detail}" for line in compose.doctor(self._paths,
+                                                                                         self.settings())]
+        return diag.make_bundle(self._paths, self.report(), doctor)
+
     def open_paths(self, paths: Sequence[Path]) -> None:
-        if paths:   # the newest drop wins anyway: only the last one is worth staging
-            self._apps.submit(Path(paths[-1]))
+        """[P4] Pictures, sounds and videos go into the phone, all of them; otherwise the last file is an app (the
+        newest drop wins anyway: only it is worth staging)."""
+        files = [Path(p) for p in paths]
+        if files and all(media_folder(p) for p in files):
+            self._apps.push_media(files)
+        elif files:
+            self._apps.submit(files[-1])
 
     def shutdown(self, *, fast: bool = False) -> None:
         """§4 shutdown order from step 2: cancel the APK pipeline, stop the engine (it closes the device session

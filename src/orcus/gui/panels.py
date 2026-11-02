@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,7 +33,7 @@ def plain_box(parent: QWidget, title: str, words: str) -> None:
     box.setTextFormat(Qt.TextFormat.PlainText)
     box.setText(words)
     box.exec()
-from orcus.contracts import ApkInfo, Issue, IssueLevel, LogEntry, OrcusError
+from orcus.contracts import ApkInfo, InstalledApp, Issue, IssueLevel, LogEntry, OrcusError
 
 from . import dialogs
 
@@ -43,7 +44,8 @@ RAW_LINES = 2000
 
 
 class AppPanel(QWidget):
-    action = Signal(str)   # grant_all | clear_data | uninstall | match_orientation | copy_report
+    action = Signal(str)   # grant_all | clear_data | uninstall | match_orientation | copy_report | diag
+    installed = Signal(str, str)   # [P4] (run | remove | refresh, package)
 
     def __init__(self) -> None:
         super().__init__()
@@ -75,7 +77,8 @@ class AppPanel(QWidget):
         self.chips.setSpacing(4)
         buttons = QVBoxLayout()
         for key, label in (("grant_all", "이 앱 권한 모두 허용"), ("clear_data", "데이터 지우고 실행"),
-                           ("uninstall", "제거"), ("match_orientation", "화면 방향 맞추기"), ("copy_report", "보고서 복사")):
+                           ("uninstall", "제거"), ("match_orientation", "화면 방향 맞추기"), ("copy_report", "보고서 복사"),
+                           ("diag", "진단 묶음 만들기")):
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, k=key: self.action.emit(k))
             buttons.addWidget(b)
@@ -90,8 +93,51 @@ class AppPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.addWidget(self.empty)
         lay.addWidget(self.body)
+        lay.addWidget(self._installed_box())
         lay.addStretch(1)
         self.body.hide()
+
+    def _installed_box(self) -> QGroupBox:
+        """[P4] The apps in the phone: run one again without its file, or remove it."""
+        box = QGroupBox("휴대폰에 설치된 앱")
+        self.apps_list = QListWidget()
+        self.apps_list.setMaximumHeight(150)
+        self.apps_list.itemDoubleClicked.connect(lambda _item: self._installed_action("run"))
+        self.apps_empty = QLabel("아직 없습니다. 앱을 넣으면 여기에 남습니다.")
+        self.apps_empty.setStyleSheet("color:#52606d")
+        row = QHBoxLayout()
+        for key, label in (("run", "실행"), ("remove", "지우기"), ("refresh", "새로 고침")):
+            b = QPushButton(label)
+            b.clicked.connect(lambda _=False, k=key: self._installed_action(k))
+            row.addWidget(b)
+        lay = QVBoxLayout(box)
+        lay.addWidget(self.apps_empty)
+        lay.addWidget(self.apps_list)
+        lay.addLayout(row)
+        self.show_installed(())
+        return box
+
+    def show_installed(self, apps: tuple[InstalledApp, ...]) -> None:
+        chosen = self.selected_app()
+        self.apps_list.clear()
+        for app in apps:
+            item = QListWidgetItem(app.name)
+            item.setData(Qt.ItemDataRole.UserRole, app.package)
+            item.setToolTip(app.package)
+            self.apps_list.addItem(item)
+            if app.package == chosen:
+                self.apps_list.setCurrentItem(item)
+        self.apps_list.setVisible(bool(apps))
+        self.apps_empty.setVisible(not apps)
+
+    def selected_app(self) -> str | None:
+        item = self.apps_list.currentItem()
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
+
+    def _installed_action(self, key: str) -> None:
+        package = self.selected_app()
+        if key == "refresh" or package is not None:
+            self.installed.emit(key, package or "")
 
     def show_app(self, info: ApkInfo | None, issues: tuple[Issue, ...], fallback_name: str = "") -> None:
         self.empty.hide()

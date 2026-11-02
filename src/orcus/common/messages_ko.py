@@ -70,6 +70,10 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.ENGINE_UNAVAILABLE: MessageSpec("휴대폰 엔진을 사용할 수 없습니다. 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     E.ENGINE_NO_FRAMES: MessageSpec("휴대폰 화면을 받지 못했습니다. 다시 시도하세요.", C.ENGINE_PANEL, R.RETRY),
     E.ENGINE_DISK_LOW: MessageSpec("D: 드라이브 공간이 3 GB보다 적습니다. 공간을 비워 주세요.", C.BANNER, R.FREE_DISK),
+    E.ENGINE_GPU_LADDER: MessageSpec("그래픽 카드로 휴대폰 화면을 그리지 못해 자동으로 더 느린 방식으로 바꿨습니다. 그래픽 드라이버를 바꾼 뒤에는 [GPU 가속 다시 시도]를 누르세요.", C.BANNER, R.RETRY_GPU),
+    E.ENGINE_KEEP_FAILED: MessageSpec("보관해 둔 휴대폰을 열지 못해 깨끗한 휴대폰으로 시작했습니다. 보관본은 지우지 않았고, 이번에는 닫아도 보관하지 않습니다.", C.BANNER, None),
+    E.ENGINE_KEEP_GONE: MessageSpec("보관해 둔 휴대폰을 더 쓸 수 없어(휴대폰을 다시 준비했거나 보관본이 없어짐) 깨끗한 휴대폰으로 시작했습니다.", C.BANNER, None),
+    E.ENGINE_KEEP_SAVE_FAILED: MessageSpec("지난번에 닫을 때 휴대폰을 보관하지 못했습니다(디스크 공간 등). 그 전 상태로 시작했습니다.", C.BANNER, None),
     E.ENGINE_NO_DISPLAY: MessageSpec("화면 장치가 보이지 않을 때 켜져서(원격 데스크톱 연결이 끊긴 경우 등) 이번만 느린 시작으로 켰습니다. 휴대폰 초기화를 하면 저장된 깨끗한 휴대폰으로 돌아옵니다.", C.BANNER, None),
     # 드롭한 파일
     E.STAGE_UNEXPECTED: MessageSpec("앱을 준비하다 예기치 않은 문제가 생겼습니다. 다시 넣어 보고, 계속되면 [로그 보기]로 로그를 확인하세요.", C.MODAL, None),
@@ -79,6 +83,7 @@ ERRORS: dict[ErrorCode, MessageSpec] = {
     E.FILE_IS_AIX: MessageSpec("AIX는 확장 기능 파일입니다. App Inventor 프로젝트에 넣고 APK로 빌드하세요.", C.MODAL, None),
     E.STAGE_DRIVE_TIMEOUT: MessageSpec("Google Drive에서 파일을 가져오지 못했습니다. 파일을 PC에 내려받은 뒤 다시 넣으세요.", C.MODAL, R.RETRY),
     E.STAGE_COPY_FAILED: MessageSpec("파일을 복사하지 못했습니다. 다시 시도하세요.", C.MODAL, R.RETRY),
+    E.FILE_PUSH_FAILED: MessageSpec("사진·소리·동영상 파일을 휴대폰에 넣지 못했습니다. 휴대폰이 켜진 뒤 다시 넣어 보세요.", C.MODAL, None),
     E.APK_PARSE: MessageSpec("APK 파일을 읽을 수 없습니다. 파일이 손상되었을 수 있으니 다시 빌드하세요.", C.MODAL, None),
     # 설치(앱)
     E.INSTALL_OLDER_SDK: MessageSpec("이 앱은 이 가상 휴대폰보다 새 Android가 필요합니다.", C.MODAL, None),
@@ -112,6 +117,7 @@ REMEDY_LABELS: dict[RemedyAction, str] = {
     R.FREE_DISK: "공간 확보 방법",
     R.CONTINUE_ANYWAY: "그래도 계속",
     R.MATCH_ORIENTATION: "화면 방향 맞추기",
+    R.RETRY_GPU: "GPU 가속 다시 시도",
 }
 
 TEXT: dict[str, str] = {
@@ -174,6 +180,7 @@ TEXT: dict[str, str] = {
     "engine.state.provisioning_gpu": "그래픽 장치가 바뀌어 휴대폰을 다시 준비하는 중 (약 5분)",
     "engine.state.provisioning_save": "휴대폰 상태를 저장하는 중…",
     "engine.state.stopping": "휴대폰 끄는 중…",
+    "engine.state.keeping": "휴대폰 보관하는 중…",
     "engine.state.failed": "휴대폰을 켜지 못했습니다",
     # 사전 점검 칩 (Issue.text_key, §7.4)
     "issue.hw_nfc": "NFC는 PC 휴대폰에서 동작하지 않습니다. 실제 휴대폰으로 시험하세요.",

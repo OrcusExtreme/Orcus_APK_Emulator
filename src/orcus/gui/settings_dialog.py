@@ -34,6 +34,7 @@ GPU_CHOICES = (
     (GpuMode.HOST, "host (기본)", "그래픽 카드로 그립니다. 가장 빠릅니다."),
     (GpuMode.HOST_HIDDEN, "host_hidden", "그래픽 카드로 그리되 숨은 창을 씁니다. host에서 화면이 검거나 소리가 안 날 때."),
     (GpuMode.SOFTWARE, "software", "그래픽 카드 없이 그립니다. 느리지만 그래픽 드라이버 문제를 피합니다."),
+    (GpuMode.LADDER, "자동", "host로 시작하고, 그래픽 카드로 그리지 못하면 스스로 한 단계씩 낮춥니다(여러 PC에서 쓸 때)."),
 )
 REBUILD_QUESTION = "GPU 모드를 바꾸면 휴대폰을 다시 준비합니다(약 5분). 저장된 앱과 데이터는 지워집니다. 계속할까요?"
 
@@ -78,7 +79,11 @@ class SettingsDialog(QDialog):
         self.reset_each.setChecked(st.apk.reset_before_each_run)
         self.ask_close = QCheckBox("닫을 때 앱 데이터가 지워진다고 알리기")
         self.ask_close.setChecked(st.ui.confirm_close_data)
-        for w in (self.grant_all, self.reset_each, self.ask_close):
+        self.keep_state = QCheckBox("세션 간 휴대폰 유지 — 닫아도 설치한 앱과 데이터를 보관했다가 다음에 그대로 엽니다")
+        self.keep_state.setToolTip("보관본은 약 1 GB입니다. 끄면 보관한 휴대폰은 다음 시작 때 지워집니다. "
+                                   "휴대폰을 다시 준비하면(GPU 모드 변경 등) 보관본도 지워집니다.")
+        self.keep_state.setChecked(st.session.keep_state)
+        for w in (self.grant_all, self.reset_each, self.ask_close, self.keep_state):
             r.addWidget(w)
         lay.addWidget(runs)
 
@@ -120,13 +125,15 @@ class SettingsDialog(QDialog):
             "apk.grant_all": self.grant_all.isChecked(),
             "apk.reset_before_each_run": self.reset_each.isChecked(),
             "ui.confirm_close_data": self.ask_close.isChecked(),
+            "session.keep_state": self.keep_state.isChecked(),
             "engine.gpu_mode": self.chosen_gpu().value,
         }
         now: dict[str, object] = {
             "input.esc_is_back": st.input.esc_is_back, "input.right_click_back": st.input.right_click_back,
             "sensors.shake_default": st.sensors.shake_default.value, "apk.grant_all": st.apk.grant_all,
             "apk.reset_before_each_run": st.apk.reset_before_each_run,
-            "ui.confirm_close_data": st.ui.confirm_close_data, "engine.gpu_mode": st.engine.gpu_mode.value,
+            "ui.confirm_close_data": st.ui.confirm_close_data, "session.keep_state": st.session.keep_state,
+            "engine.gpu_mode": st.engine.gpu_mode.value,
         }
         return {k: v for k, v in wanted.items() if v != now[k]}
 
@@ -136,14 +143,19 @@ class SettingsDialog(QDialog):
             self.accept()
             return
         result = self.s.preview_settings(changes)
-        if result.needs_rebuild:
+        gpu = changes.get("engine.gpu_mode")
+        # to or from the ladder: a restart; the ladder starts at host and prepares a phone only if none fits (§5.6)
+        ladder = gpu is not None and GpuMode.LADDER.value in (gpu, self.s.settings().engine.gpu_mode.value)
+        if result.needs_rebuild and not ladder:
             if QMessageBox.question(self, "휴대폰 다시 준비", REBUILD_QUESTION) != QMessageBox.StandardButton.Yes:
                 return
-        elif result.needs_restart:
-            QMessageBox.information(self, "설정", "이 설정은 휴대폰을 다시 켤 때 적용됩니다.")
+        elif result.needs_restart and not ladder:
+            QMessageBox.information(self, "설정", "이 설정은 휴대폰을 다시 켤 때 적용됩니다. 휴대폰 유지는 다음에 "
+                                                "닫을 때부터 보관합니다.")
         self.s.update_settings(changes)
-        gpu = changes.get("engine.gpu_mode")
-        if gpu is not None:
+        if ladder:
+            self.s.engine.retry_gpu()
+        elif gpu is not None:
             self.s.engine.rebuild(f"GPU 모드를 {gpu}(으)로 바꿈")
         self.accept()
 

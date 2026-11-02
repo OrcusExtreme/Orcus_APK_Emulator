@@ -22,7 +22,7 @@ from orcus.common.ports import Ports
 from orcus.contracts import CmdResult, PortSettings
 from orcus.emugrpc import channel as grpc_channel
 
-from . import discovery
+from . import discovery, gpuladder
 from .discovery import DiscoveryRecord
 
 
@@ -86,6 +86,7 @@ class Seams:
     home_problems: Callable[[Path], list[str]] = paths_mod.home_problems   # root guard (§11.4)
     adb_lines: AdbLines | None = None     # `adb logcat` for the app; None: the session's gRPC stream only
     displays: Callable[[], int] = win32.display_device_count   # 0 in a disconnected Remote Desktop session
+    gpu_key: Callable[[], gpuladder.Key] = gpuladder.current_key   # [P4] the GPU ladder's key (§5.6)
 
     @staticmethod
     def real(paths: OrcusPaths) -> "Seams":

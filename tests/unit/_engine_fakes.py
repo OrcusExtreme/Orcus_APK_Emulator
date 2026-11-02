@@ -21,6 +21,7 @@ from orcus.emugrpc.channel import make_channel
 from orcus.emugrpc.fake import FakeEmulatorServer
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 from orcus.emugrpc.generated import snapshot_pb2
+from orcus.engine import gpuladder
 from orcus.engine.discovery import DiscoveryRecord
 from orcus.engine.manager import EngineManager
 from orcus.engine.seams import Seams
@@ -57,6 +58,7 @@ class FakeDevice:
         self.persist = {"persist.sys.locale": "en-US", "persist.sys.timezone": "Asia/Seoul"}
         self.props: dict[str, str] = dict(self.RAM_DEFAULTS)
         self.golden_props: dict[str, str] | None = None
+        self.slots: dict[str, tuple[dict[str, str], dict[tuple[str, str], str]]] = {}   # kept phones (§6.3)
         self.unflushed: dict[tuple[str, str], str] = {}
         self.flushed = True
         self.renderer = GLES_HOST
@@ -99,6 +101,18 @@ class FakeDevice:
         self.framework_up = not self.dead_golden
         return True
 
+    def save_slot(self, name: str) -> None:
+        """A kept phone: RAM and the disk (settings), unlike the golden here, which keeps the RAM only."""
+        self.slots[name] = (dict(self.props), dict(self.settings))
+
+    def load_slot(self, name: str) -> bool:
+        saved = self.slots.get(name)
+        if saved is None:
+            return False
+        self.props, self.settings = dict(saved[0]), dict(saved[1])
+        self.framework_up = True
+        return True
+
     # shell ----------------------------------------------------------------------------------------------------
     def shell(self, cmd: str) -> tuple[int, str]:
         with self.lock:
@@ -121,7 +135,7 @@ class FakeDevice:
             return 0, "synced"
         if cmd.startswith("service check"):
             return 0, "\n".join(f"Service {s}: found" for s in cmd.split("service check ")[1:])
-        if cmd == "dumpsys SurfaceFlinger | grep -m1 GLES":
+        if cmd == "dumpsys SurfaceFlinger | grep -m1 'GLES: '":
             return 0, self.renderer
         if cmd == "dumpsys power | grep -m1 mStayOn=":
             return 0, f"mStayOn={self.settings.get(('svc', 'stayon'), 'false')}"
@@ -192,12 +206,18 @@ class _HookSet(set[str]):
         if element == GOLDEN_SNAPSHOT:
             self._env.device.save_golden()
             self._env.sync_golden_file()
+        elif element.startswith("orcus_user_"):
+            self._env.device.save_slot(element)
+            self._env.sync_slot_files()
 
     def discard(self, element: object, /) -> None:
         super().discard(element)
         if element == GOLDEN_SNAPSHOT:
             self._env.device.golden_props = None
             self._env.sync_golden_file()
+        elif isinstance(element, str) and element.startswith("orcus_user_"):
+            self._env.device.slots.pop(element, None)
+            self._env.sync_slot_files()
 
 
 class HookedFake(FakeEmulatorServer):
@@ -258,10 +278,30 @@ class FakeProcesses:
             return p
         log_path.parent.mkdir(parents=True, exist_ok=True)
         fake, dev = self.env.fake, self.env.device
+        works = self.env.host_gpu_draws
+        if self.env.renderers:   # one renderer per coming boot, then back to whatever the rules give
+            dev.renderer = self.env.renderers.pop(0)
+        elif works is not None:   # '-gpu host' falling back to software (Mirage, remote sessions; S2 risk 3)
+            hw = "host" in argv and any(flag in argv for flag in works)
+            dev.renderer = GLES_HOST if hw else GLES_SOFT
         fake.vm_state = ec.VmRunState.RUNNING
+        fake.status_hangs = False
         lines = [ACCEL_LINE]
         golden_load_ok = True
-        if "-snapshot" in argv:
+        for name in [n for n in fake.snapshots if n.startswith("orcus_user_")]:   # the emulator lists the disk
+            if not (self.env.paths.avd_data / "snapshots" / name / "ram.bin").exists():
+                fake.snapshots.discard(name)
+        kept = argv[argv.index("-snapshot") + 1] if "-snapshot" in argv else ""
+        if kept.startswith("orcus_user_"):   # a kept phone, opened without -force-snapshot-load (§6.3)
+            if self.env.slot_load_exits:
+                golden_load_ok = False
+                lines.append(f"ERROR | Failed to load snapshot '{kept}'\n")
+            elif self.env.slot_hangs:
+                fake.status_hangs = True
+            elif self.env.broken_slot or kept not in fake.snapshots or not dev.load_slot(kept):
+                dev.cold_boot(wipe=False, change_locale=None)   # it falls back to a cold boot
+                lines.append(f"WARNING | Failed to load snapshot '{kept}', cold booting\n")
+        elif "-snapshot" in argv:
             golden_load_ok = dev.load_golden() and GOLDEN_SNAPSHOT in fake.snapshots
             if golden_load_ok and self.env.gpu_changes_once:   # the emulator deletes the golden itself (3a)
                 self.env.gpu_changes_once = golden_load_ok = False
@@ -415,6 +455,14 @@ class EngineEnv:
         self.displays = 1                     # display devices of the session (0: disconnected Remote Desktop)
         self.golden_gpu = "10de-Fake GPU-"    # what a saved golden records as its host GPU
         self.gpu_changes_once = False         # the next golden load fails as 'host GPU has changed'
+        self.broken_slot = False              # a kept phone does not open: the emulator boots cold instead
+        self.free = 100 * GIB                 # free space on the runtime drive
+        self.ladder_key = gpuladder.Key("test", "Fake GPU", False)   # the GPU ladder's key (§5.6)
+        self.host_gpu_draws: tuple[str, ...] | None = None   # flags under which the host GPU really draws; None:
+                                                            # always (the renderer is device.renderer as set)
+        self.renderers: list[str] = []        # the renderers of the next boots, in order (a one-off blip)
+        self.slot_load_exits = False          # ... or exits
+        self.slot_hangs = False               # ... or hangs before gRPC answers (4a device test)
         self.device = FakeDevice()
         self.fake = HookedFake(self)
         self.fake.start()
@@ -425,8 +473,9 @@ class EngineEnv:
         self.sessions: list[FakeSession] = []
         self.seams = Seams(procs=self.procs, discovery=self.discovery, adb=self.adb, register=lambda a, b: "OKAY",
                            ports=FakePorts(), clock=self.clock, channel=make_channel, whpx_on=lambda: True,
-                           disk_free=lambda p: 100 * GIB, env=lambda port: dict(os.environ),
-                           home_problems=lambda p: [], displays=lambda: self.displays)
+                           disk_free=lambda p: self.free, env=lambda port: dict(os.environ),
+                           home_problems=lambda p: [], displays=lambda: self.displays,
+                           gpu_key=lambda: self.ladder_key)
         self.manager = EngineManager(self.paths, lambda: self.settings, self.seams, self._session, owner_kind="test")
 
     def _session(self, endpoint: DeviceEndpoint) -> Any:
@@ -447,14 +496,28 @@ class EngineEnv:
             ram.unlink(missing_ok=True)
             meta.unlink(missing_ok=True)
 
+    def sync_slot_files(self) -> None:
+        for name in ("orcus_user_a", "orcus_user_b"):
+            d = self.paths.avd_data / "snapshots" / name
+            if name in self.fake.snapshots:
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "ram.bin").write_bytes(b"ram")
+                (d / "snapshot.pb").write_bytes(
+                    snapshot_pb2.Snapshot(host=snapshot_pb2.Host(gpu_driver=self.golden_gpu)).SerializeToString())
+            else:
+                for f in ("ram.bin", "snapshot.pb"):
+                    (d / f).unlink(missing_ok=True)
+
     def modes(self) -> list[str]:
-        """Launch modes of the emulator spawns, in order."""
+        """Launch modes of the emulator spawns, in order (KEEP_a/KEEP_b for a kept phone)."""
         out = []
         for argv in self.procs.spawned:
             if "nodaemon" in argv:
                 continue
-            out.append("GOLDEN" if "-snapshot" in argv else "REBUILD" if "-wipe-data" in argv
-                       else "PROVISION" if "-change-locale" in argv else "COLD")
+            snap = argv[argv.index("-snapshot") + 1] if "-snapshot" in argv else ""
+            out.append(f"KEEP_{snap[-1]}" if snap.startswith("orcus_user_") else "GOLDEN" if snap
+                       else "REBUILD" if "-wipe-data" in argv else "PROVISION" if "-change-locale" in argv
+                       else "COLD")
         return out
 
     def close(self) -> None:

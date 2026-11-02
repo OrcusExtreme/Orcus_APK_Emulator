@@ -73,6 +73,31 @@ def display_device_count() -> int:
         n += 1
 
 
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+SM_REMOTESESSION = 0x1000
+
+
+def display_adapter() -> str:
+    """The display adapters this session sees, sorted ('Microsoft Remote Display Adapter | NVIDIA GeForce GTX
+    1660' over Remote Desktop); '' when it sees none."""
+    names: set[str] = set()
+    n = 0
+    while True:
+        dev = _DisplayDevice()
+        dev.cb = ctypes.sizeof(_DisplayDevice)
+        if not user32.EnumDisplayDevicesW(None, n, ctypes.byref(dev), 0):
+            return " | ".join(sorted(names))
+        if dev.DeviceString:
+            names.add(dev.DeviceString)
+        n += 1
+
+
+def remote_session() -> bool:
+    """A Remote Desktop session (GetSystemMetrics(SM_REMOTESESSION)); its GPU access can come and go."""
+    return user32.GetSystemMetrics(SM_REMOTESESSION) != 0
+
+
 def message_box(title: str, text: str) -> None:
     """A plain Windows error box, for failures before Qt (the windowed EXE has no console)."""
     user32.MessageBoxW(None, text, title, MB_ICONERROR)

@@ -118,6 +118,13 @@ def test_renderer_check() -> None:
     assert not gpu.is_software(gpu.renderer(line))
     assert gpu.is_software("Google (Google Inc.), Android Emulator OpenGL ES Translator (Google SwiftShader)")
     assert gpu.renderer("") == ""
+    # API 36 (Phase 4): a section header before the renderer line; only 'GLES: ' counts
+    android16 = ("------------RE GLES (Ganesh)------------\n\n"
+                 "GLES: Google (NVIDIA Corporation), Android Emulator OpenGL ES Translator (NVIDIA GeForce GTX "
+                 "1660/PCIe/SSE2), OpenGL ES 3.1 (4.5.0 NVIDIA 595.79)\n")
+    assert gpu.renderer(android16).startswith("Google (NVIDIA Corporation)")
+    assert gpu.renderer("------------RE GLES (Ganesh)------------") == ""
+    assert "'GLES: '" in gpu.RENDERER_CMD
 
 
 def test_apply_checked_retries_until_read_back_then_reports_failure() -> None:

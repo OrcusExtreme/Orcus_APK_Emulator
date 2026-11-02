@@ -117,6 +117,9 @@ class SessionApi(Protocol):
     # update_settings: dotted keys such as 'engine.gpu_mode'
     def report(self) -> str: ...                    # body of [Copy report]
     def open_paths(self, paths: Sequence[Path]) -> None: ...
+    def make_diagnostics(self) -> Path: ...   # [P4] the diagnostic bundle; blocks a second or two: not on the GUI thread
+    def set_camera_image(self, png: bytes | None) -> None: ...
+    # [P4] what the phone's camera shows (PNG; None: the color bars); seen the next time an app opens the camera
     def shutdown(self, *, fast: bool = False) -> None: ...
 
 

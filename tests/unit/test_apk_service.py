@@ -11,7 +11,7 @@ import pytest
 
 from _apk_fakes import SYSTEM_PID, Events, FakeEngine, fake_inspect, make_apk, now_us
 from conftest import REPO
-from orcus.apk import launch
+from orcus.apk import launch, media
 from orcus.apk import service as service_mod
 from orcus.apk.service import Service
 from orcus.common import messages_ko
@@ -22,14 +22,17 @@ from orcus.contracts import (
     EngineState,
     EpochCause,
     ErrorCode,
+    InstalledApp,
     IssueCode,
     LogEntry,
+    MediaResult,
     RemedyAction,
     Rotation,
     RunEvent,
     RunPolicy,
     RunStage,
     SessionMode,
+    media_folder,
 )
 
 PKG = "appinventor.ai_test.HelloPurr"
@@ -43,7 +46,8 @@ def _manifests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class World:
     def __init__(self, tmp_path: Path, engine: FakeEngine | None = None, settings: ApkSettings | None = None,
-                 mic_for: tuple[str, ...] = (), orient_check_s: float = 60.0, orient_soon_s: float = 60.0) -> None:
+                 mic_for: tuple[str, ...] = (), orient_check_s: float = 60.0, orient_soon_s: float = 60.0,
+                 buzz_check_s: float = 60.0) -> None:
         self.engine = engine or FakeEngine()
         self.phone = self.engine.phone
         self.events = Events()
@@ -53,7 +57,7 @@ class World:
         self.mic_for = list(mic_for)
         self.svc = Service(cast(EngineControl, self.engine), self.staging, lambda: chosen,
                            mic_allowed=lambda pkg: pkg in self.mic_for, sleep=lambda s: None,
-                           orient_check_s=orient_check_s, orient_soon_s=orient_soon_s)
+                           orient_check_s=orient_check_s, orient_soon_s=orient_soon_s, buzz_check_s=buzz_check_s)
         self.svc.subscribe(self.events)
 
     def apk(self, name: str = "HelloPurr", package: str = PKG, **manifest: object) -> Path:
@@ -229,6 +233,105 @@ def test_a_screen_switch_is_checked_soon_whatever_the_slow_pace(make: Callable[.
     w.phone.display = "ROTATION_90"
     w.engine.current().push(LogEntry(now_us(), running.pid, running.pid, "I", "Form", "Form Screen2 got onResume"))
     w.events.wait(lambda e: e.warnings == (ErrorCode.APP_ORIENTATION_MISMATCH,), timeout_s=2, after=mark)
+
+
+def vibrator(running: tuple[str, str] | None = None, done: tuple[tuple[str, str, int], ...] = ()) -> str:
+    """`dumpsys vibrator_manager` as API 36 prints it (4a device check), cut to what matters."""
+    text = "VibratorManagerService:\n  Vibrators:\n    Vibrator (id=1):\n"
+    if running is not None:
+        when, pkg = running
+        text += ("      Vibration:\n        status = running\n        durationMs = -1\n"
+                 f"        createTime = {when}\n        endTime = null\n"
+                 f"        callerInfo = CallerInfo{{ uid=10216, opPkg={pkg}, deviceId=0, attrs=VibrationAttributes"
+                 "{mUsage=TOUCH, mFlags=0}, reason=null}\n")
+    text += "  Recent vibrations:\n    TOUCH:\n"
+    for when, pkg, ms in done:
+        text += (f"      {when} |   effect |             finished | duration:   {ms}ms | start: 18:15:58.991 | "
+                 f"end: 18:15:59.524 | scale:     NONE (adaptive=1.00) | flags:    0 | usage: TOUCH | {pkg} "
+                 "(uid=10216, deviceId=0)\n")
+    return text
+
+
+def test_vibrations_of_the_running_app_are_reported_once(make: Callable[..., World]) -> None:
+    """[P4] Listed before the launch: old. The running one and, once it ended, the same one in the list: once.
+    Another package (the keyboard's touch feedback) is not the app."""
+    w = make(buzz_check_s=0.03)
+    got: list[int] = []
+    w.svc.subscribe_vibration(got.append)
+    old = ("10-31 18:00:00.000", PKG, 500)
+    w.phone.vibrator = vibrator(done=(old,))
+    rid = w.svc.submit(w.apk(permissions=["android.permission.VIBRATE"]))
+    w.stage_is(rid, S.RUNNING)
+    time.sleep(0.15)
+    assert got == []
+    w.phone.vibrator = vibrator(("10-31 18:15:58.988", PKG), (old,))
+    until(lambda: got == [-1])
+    w.phone.vibrator = vibrator(done=(old, ("10-31 18:15:58.988", PKG, 536),
+                                      ("10-31 18:16:00.100", "com.google.android.inputmethod.latin", 20),
+                                      ("10-31 18:16:01.200", PKG, 300)))
+    until(lambda: got == [-1, 300])
+    time.sleep(0.15)
+    assert got == [-1, 300]
+
+
+def test_an_app_that_cannot_vibrate_is_not_looked_at(make: Callable[..., World]) -> None:
+    w = make(buzz_check_s=0.03)
+    w.stage_is(w.svc.submit(w.apk()), S.RUNNING)
+    time.sleep(0.2)
+    assert ("dumpsys", "vibrator_manager") not in w.phone.commands
+
+
+def test_pictures_and_sounds_go_into_the_phone_under_their_names(make: Callable[..., World]) -> None:
+    """[P4] A staged ASCII copy for adb (§7.2), the dropped name in the phone; one result each, failures too."""
+    w = make()
+    got: list[MediaResult] = []
+    w.svc.subscribe_media(got.append)
+    photo = w.dir / "고양이 사진.JPG"
+    photo.write_bytes(b"\xff\xd8 jpeg")
+    sound = w.dir / "meow.wav"
+    sound.write_bytes(b"RIFF wav")
+    w.svc.push_media([photo, sound])
+    until(lambda: len(got) == 2)
+    assert [(r.name, r.phone_path, r.problem) for r in got] == [
+        ("고양이 사진.JPG", "/sdcard/Pictures/고양이 사진.JPG", None), ("meow.wav", "/sdcard/Music/meow.wav", None)]
+    assert w.phone.files["/sdcard/Pictures/고양이 사진.JPG"] == b"\xff\xd8 jpeg"
+    staged = sorted(p.name for p in (w.staging / "media").iterdir())
+    assert len(staged) == 2 and all(n.isascii() and n.endswith((".jpg", ".wav")) for n in staged)
+    w.phone.push_fails = True
+    w.svc.push_media([sound])
+    until(lambda: len(got) == 3)
+    assert got[2].phone_path is None and got[2].problem is not None
+    assert got[2].problem.code is ErrorCode.FILE_PUSH_FAILED and "failed to copy" in got[2].problem.detail
+
+
+def test_the_app_list_follows_installs_and_runs_an_installed_app_again(make: Callable[..., World]) -> None:
+    """[P4] The [App] tab's list: after an install it has the app; [Run] pulls its APK and goes the usual way (same
+    SHA-256 in the same epoch: no second install); [Remove] uninstalls and the list follows."""
+    w = make()
+    lists: list[tuple[InstalledApp, ...]] = []
+    w.svc.subscribe_apps(lists.append)
+    rid = w.svc.submit(w.apk())
+    w.stage_is(rid, S.RUNNING)
+    until(lambda: bool(lists) and lists[-1] == (InstalledApp(PKG, "HelloPurr"),))
+    mark = w.events.mark()
+    w.svc.run_installed(PKG)
+    again = w.events.wait(lambda e: e.stage is S.RUNNING and e.run_id != rid, after=mark)
+    assert again.info is not None and again.info.package == PKG and len(w.phone.installs) == 1
+    w.svc.remove_app(PKG)
+    until(lambda: lists[-1] == ())
+    assert w.phone.uninstalls == [PKG]
+    mark = w.events.mark()
+    w.svc.run_installed(PKG)                                  # gone: said, not stuck
+    failed = w.events.wait(lambda e: e.stage is S.FAILED, after=mark)
+    assert failed.problem is not None and failed.problem.code is ErrorCode.STAGE_COPY_FAILED
+
+
+def test_media_names_and_folders() -> None:
+    assert media_folder(Path("a.JPEG")) == "Pictures" and media_folder(Path("b.mp3")) == "Music"
+    assert media_folder(Path("c.mp4")) == "Movies" and media_folder(Path("d.apk")) is None
+    assert media.phone_name("..숨김.png") == "숨김.png"
+    long = media.phone_name("가" * 100 + ".jpg")
+    assert long.endswith(".jpg") and len(long.encode("utf-8")) <= media.NAME_MAX_BYTES
 
 
 def test_a_turn_still_settling_is_not_a_mismatch(make: Callable[..., World]) -> None:

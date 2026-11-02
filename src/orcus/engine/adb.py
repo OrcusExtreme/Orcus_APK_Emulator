@@ -144,6 +144,12 @@ class EpochShell:
     def uninstall(self, package: str) -> CmdResult:
         return self._run(60, "uninstall", package)
 
+    def push(self, src: Path, dst: str, timeout_s: float = 120) -> CmdResult:
+        return self._run(timeout_s, "push", str(src), dst)
+
+    def pull(self, src: str, dst: Path, timeout_s: float = 120) -> CmdResult:
+        return self._run(timeout_s, "pull", src, str(dst))
+
 
 class AdbLogcat:
     """CancellableIter[LogEntry]: `adb logcat -v threadtime -T 1`, i.e. the guest's log from now on.

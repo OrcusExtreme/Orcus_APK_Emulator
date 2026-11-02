@@ -88,8 +88,10 @@ def _copy_hashing(src: Path, tmp: Path, out: dict[str, object], stop: threading.
         tmp.unlink(missing_ok=True)
 
 
-def stage(path: Path, staging: Path, *, keep: int = 20, timeout_s: float = DRIVE_TIMEOUT_S) -> tuple[str, Path]:
-    """Copy while hashing into staging/<sha256>.apk. Raises OrcusFailure (STAGE_*).
+def stage(path: Path, staging: Path, *, keep: int = 20, timeout_s: float = DRIVE_TIMEOUT_S,
+          suffix: str = ".apk") -> tuple[str, Path]:
+    """Copy while hashing into staging/<sha256><suffix> (a dropped picture keeps its extension, P4). Raises
+    OrcusFailure (STAGE_*).
 
     Each call has its own temporary file: a copy abandoned at the Drive deadline keeps writing for a while, and a
     shared name let the next drop's file mix with it (3a review)."""
@@ -109,20 +111,20 @@ def stage(path: Path, staging: Path, *, keep: int = 20, timeout_s: float = DRIVE
         tmp.unlink(missing_ok=True)
         raise OrcusFailure(messages_ko.error(ErrorCode.STAGE_COPY_FAILED, f"{path}: {out.get('error')}"))
     sha = str(out["sha"])
-    staged = staging / f"{sha}.apk"
+    staged = staging / f"{sha}{suffix}"
     try:
         os.replace(tmp, staged)   # same content by name; a half-written older copy is replaced too
         staged.touch()            # LRU by modification time
     except OSError as e:          # a scanner holds the old copy, say: a final stage, not a stuck run
         tmp.unlink(missing_ok=True)
         raise OrcusFailure(messages_ko.error(ErrorCode.STAGE_COPY_FAILED, f"{path}: {e}")) from e
-    prune(staging, keep)
+    prune(staging, keep, "*.apk" if suffix == ".apk" else "[0-9a-f]*.*")
     return sha, staged
 
 
-def prune(staging: Path, keep: int) -> None:
-    """Keep the `keep` newest staged APKs (at least the one just staged) and drop stale temporary files."""
-    files = sorted(staging.glob("*.apk"), key=lambda p: p.stat().st_mtime, reverse=True)
+def prune(staging: Path, keep: int, pattern: str = "*.apk") -> None:
+    """Keep the `keep` newest staged files (at least the one just staged) and drop stale temporary files."""
+    files = sorted(staging.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     for old in files[max(keep, 1):]:
         try:
             old.unlink()

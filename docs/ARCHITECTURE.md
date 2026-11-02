@@ -676,6 +676,12 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 원격 세션(`GetSystemMetrics(SM_REMOTESESSION)`) 중의 하강은 저장하지 않는다. 일시적이기 때문이다.
   - `state\gpu.json`의 키는 (에뮬레이터 build, NVIDIA 드라이버, 원격 여부)다. [GPU 가속 다시 시도]는 L1을 다시 검사한다.
   - 사다리 하강은 단계마다 재구축 1회의 별도 예산을 쓴다.
+  - **[P4 구현]** `engine/gpuladder.py` + EngineManager `_gpu()`. 엔진이 GPU 모드를 읽는 곳은 모두 이것을 거친다(실행 플래그, 골든 유효성 키, COLD 여부, 경고, 기기 정보).
+    - 키의 드라이버 대신 이 세션에 보이는 그래픽 어댑터 이름들을 쓴다. 원격 데스크톱에서는 "Microsoft Remote Display Adapter"만 보인다.
+    - 준비 부팅에서 소프트웨어면 재확인 없이 내린다(긴 부팅이고, 골든을 소프트웨어 렌더러로 만들 수 없다).
+    - host와 host_hidden은 골든을 같이 쓰므로 host_hidden으로 내려도 재구축이 없다. software는 COLD 준비다.
+    - 배너 `ENGINE_GPU_LADDER`에 해결 [GPU 가속 다시 시도](`EngineView.retry_gpu`)가 있다. `-gpu auto`(에뮬레이터 자체 값)는 여전히 쓰지 않는다. `args.build`는 "ladder"를 받으면 거부한다.
+- **렌더러 판정 [P4 발견·고침]:** API 36의 `dumpsys SurfaceFlinger`에는 렌더러 줄 "GLES: <vendor>, <renderer>, <version>" 앞에 섹션 머리 "------------RE GLES (Ganesh)------------"가 있다. `grep -m1 GLES`는 그 머리를 잡아 3a 골든부터 렌더러가 비어 있었다(소프트웨어 대체를 놓침). 이제 `grep -m1 'GLES: '`로 렌더러 줄만 본다.
 
 ### 5.7 감시와 정리
 
@@ -771,6 +777,13 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 저장 도중 강제 종료하면 어떻게 되는가
   - 강제 로드 없이 부팅했을 때, 로드 실패가 조용한 콜드 부팅이 되는지와 슬롯이 남는지
   - 저장 시간
+- **[P4 구현·실측, 2026-10-31]** `engine/keepstate.py` + EngineManager.
+  - 같은 이름 저장: 덮어씀(S4). 그래도 대상 슬롯을 먼저 지우고 저장한다.
+  - 저장 중 qemu 강제 종료: 저장이 `UNAVAILABLE`로 실패하고 포인터 슬롯이 그대로 남아 다음 시작에 열린다.
+  - `ram.bin`이 잘린 슬롯을 강제 로드 없이 열면 **조용한 콜드 부팅이 아니라 멈춤**이었다. 그래서 KEEP 부팅에는 골든과 같은 30 s 부팅 한도를 두고, 넘거나 표식이 없거나 에뮬레이터가 끝나면 이번만 골든으로 시작한다. 슬롯은 지우지 않는다(에뮬레이터도 지우지 않았다).
+  - 시간: 보관하며 정지 2.8 s(첫 저장 2.0 s, 슬롯을 바꾸는 저장 7.6 s), 보관본 열기 13.9 s. 슬롯 하나는 1.4 GB다.
+  - 표식: 보관본은 골든에서 자란 세션이라 RAM 표식 `debug.orcus.golden`을 그대로 갖는다. SESSION_INIT은 KEEP 부팅에도 표식과 프레임워크를 확인한다.
+  - [이번에는 휴대폰 유지하고 닫기]는 포인터에 `once`를 남긴다. 다음 시작 때 유지가 꺼져 있어도 한 번 열고, 그다음 닫을 때 다시 유지하지 않으면 지운다. 화면 장치가 없는 COLD 부팅은 보관본을 열지도 덮어쓰지도 않는다.
 
 ### 6.4 유효성 키와 무효화 (`state\provision.json`)
 
@@ -778,6 +791,7 @@ D:\OrcusAPK\sdk\emulator\emulator.exe -avd orcus36 <GPU> -port 5640 -grpc 8640 -
   - 에뮬레이터 build, 이미지 태그·리비전, `config.ini`의 SHA-256, GPU 모드
   - **관찰한** 로케일·시간대, feature 플래그, 준비 스크립트 버전 `PROVISION_V`
   - **공유 adb 키**(`D:\OrcusAPK\home\adbkey.pub`)의 SHA-256
+  - **[4a]** 뒷면 카메라 방식 `camera = imagefile`(§9.8). 카메라는 스냅샷 하드웨어에 들어가므로, 그 전 골든은 한 번 재구축된다.
   - S4 결과에 따라 콘솔 포트와 프록시를 추가할 수 있다.
 - **공유 adb 키를 쓰는 이유:**
   - adb는 Windows 사용자마다 `%USERPROFILE%\.android\adbkey`를 쓴다(P).
@@ -894,6 +908,7 @@ PROVISIONING 상태가 이 단계를 스스로 실행한다. 먼저 LAUNCHING과
 ### 7.1 판정 (드롭한 **뒤**, 확장자가 아니라 내용으로)
 
 - **드래그 중에는 판정하지 않는다.** `dragEnterEvent`에서는 I/O 없이 "로컬 파일 1개인가"와 확장자 힌트만 본다.
+- **[4a] 사진·소리·동영상:** 놓은 파일이 모두 그림·소리·동영상 확장자면(`contracts.media_folder`, 개수 제한 없음) 앱이 아니라 휴대폰에 넣는다. `<home>\staging\media\<sha256>.<ext>`로 복사한 뒤(adb는 ASCII 경로만 봄, 오늘 날짜가 되어 사진 고르기 목록 위에 옴) `adb push`로 `/sdcard/Pictures|Music|Movies/<놓은 이름>`에 넣는다. MediaStore는 FUSE 경로로 닫히는 즉시 목록에 올린다(4a 실측: 스캔 불필요, 한글 이름 포함, 두 파일 2.4 s). 결과는 `MediaResult`로 오고 창은 휴대폰 경로와 쓸 곳(ImagePicker, Sound·Player·VideoPlayer의 Source)을 알린다. 실패는 `FILE_PUSH_FAILED`(대화상자).
   - Drive '온라인 전용' 파일을 드래그 중에 열면 다운로드가 시작되어 창이 멈춘다.
   - 내용 판정은 드롭한 뒤 STAGING/INSPECTING 단계에서 한다.
 
@@ -1034,6 +1049,8 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
 - [제거]: 빠른 경로 기록을 지운다.
 - [권한 모두 허용]
 - **[P3b]** [화면 방향 맞추기]: §9.7
+- **[4a] 휴대폰에 설치된 앱** ([앱] 탭 목록): `pm list packages -3 -f`로 새 휴대폰·설치·제거 뒤마다 다시 읽는다(App Inventor 앱은 이름만 보임). [실행]은 그 APK를 `adb pull`해 놓은 파일처럼 같은 길로 보낸다(같은 epoch면 SHA-256이 같아 설치 생략, 실측 1.1 s; 보관한 휴대폰은 데이터를 지키며 다시 설치). [지우기]는 묻고 지운다.
+- **[4a] 진단 묶음** ([앱] 탭 버튼, `orcus-cli diag`): `<home>\diag\orcus-diag-<시각>.zip`(최근 5개). 보고서, doctor 결과, 최근 Orcus 로그 30개·에뮬레이터 로그 5개·boot-check 결과 3개, `state\*.json`, AVD `config.ini`. 8 MiB가 넘는 로그는 끝부분만. App Inventor 계정(`appinventor.ai_<account>`), Windows 사용자·PC 이름, 이메일은 가린다(실제 묶음 42개 파일·74 KiB에서 남은 이름 0개). SDK·디스크·스냅샷·APK·adb 키는 넣지 않는다.
 - [보고서 복사]: APK 정보, `DeviceCaps`, Orcus·에뮬레이터 build, 관련 로그를 텍스트로 모은다. 로그는 앱의 경고·오류(W/E/F) 최근 30줄과 I 이상 최근 50줄이다. App Inventor의 Form은 `onGlobalLayout()`·`keyboard hidden!` D 줄을 초당 여러 번 남겨, D를 넣으면 50줄이 그것으로 채워진다(Phase 3a 기기 시험).
 
 ---
@@ -1139,7 +1156,7 @@ App Inventor는 오류를 **두 경로**로 알린다(P, appinventor-sources).
   - **[3b 구현, 계획 변경]** `cmd input mouse scroll <x> <y> --axis VSCROLL,<n>`으로 진짜 스크롤 이벤트(ACTION_SCROLL)를 넣는다. 처음 계획한 "Canvas 밖에서만 짧은 세로 드래그"는 Canvas 위치를 알아야 했다.
   - 실측(OrcusProbe, 2026-10-31): 명령 하나 0.06 s, 한 칸 = 128 px. **Canvas 위에서 굴려도 Canvas는 터치·드래그를 받지 않고**(Dragged 0) 바깥 Scrollable 화면만 스크롤된다.
   - adb가 필요하므로 app이 `ScrollSink`를 주입한다. `device-wheel` 스레드가 명령을 하나씩 보내고, 그동안 온 칸은 더해서(마지막 위치로) 다음에 보낸다. 좌표는 회전된 표시 좌표이며, 표시가 프레임 자세를 따른다고 보고 계산한다(180°와 고정 화면은 방향 불일치 배너가 맡는다).
-- **[P4]** 두 손가락 핀치(Ctrl + 드래그, TouchEvent id 0/1)를 넣는다.
+- **[4a] 두 손가락 핀치:** Ctrl + 드래그. 두 번째 손가락은 화면 가운데를 중심으로 반대편에 있다(에뮬레이터 창과 같은 방식). `InputSink.touches(points)`가 움직일 때마다 `TouchEvent` 하나(id 0/1, pressure 512, 마우스와 같은 패널 좌표)를 보내고, 빠진 손가락은 pressure 0으로 뗀다. 마우스 손가락과 터치 손가락은 함께 누르지 않는다(먼저 온 쪽을 뗌). `release_all`·새 스트림·종료 때 함께 뗀다. 화면에는 두 손가락 위치를 그린다. 실측(OrcusWorld WebViewer, 2026-10-31): 벌리기 3.67배, 모으기 0.27배.
 
 ### 9.4 키
 
@@ -1258,8 +1275,17 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - "App Inventor LocationSensor 기본값은 TimeInterval 60000 ms·DistanceInterval 5 m라서, 첫 위치 뒤에는 약 1분마다·5 m 이상 움직였을 때만 LocationChanged가 옵니다. 빨리 보려면 TimeInterval을 1000으로 바꾸세요."(P)
   - "권한 대화상자에서 '대략적인 위치'를 고르면 10분에 한 번만 갱신됩니다 — [이 앱 권한 모두 허용]으로 정확한 위치를 허용하세요."
 
-**[P4]** 조도·근접(`setPhysicalModel`), 배터리(`setBattery`), 문자·전화 수신(`sendSms`/`sendPhone`).
-**진동:** gRPC 신호가 없다(I). [P3a]에서는 VIBRATE INFO 칩(§7.4)만 보여준다. **[P4]** 표시는 `dumpsys vibrator_manager`로 한다: HelloPurr의 Vibrate(500)가 `effect | finished | duration: 531ms | … usage: TOUCH | <pkg>` 줄로 남았다(S5).
+**[4a] 빛·근접·배터리** ([센서] 탭):
+- 조도(lux)와 근접(cm)은 각자의 physical model이다(`setPhysicalModel` LIGHT/PROXIMITY, STEP). 자세는 건드리지 않는다. 골든 값은 0 lux, 1 cm(Goldfish 근접 센서의 '멀리')다. 실측: LightChanged 2.3 s 안(덤프 시간 포함), ProximityChanged 0.0/1.0.
+- 배터리는 `setBattery`(수준, AC/NONE, CHARGING/DISCHARGING). **[4a 발견] 충전하지 않을 때 20% 이하로 내리면 이 이미지의 SystemUI가 죽는다**(`LowPowerWarningsController`가 Extreme Battery Saver의 `com.google.android.flipendo.api`를 찾다가 `IllegalArgumentException: Unknown authority`). 앞의 앱은 onPause·onStop·onResume을 겪고(그 사이에 온 문자는 Texting이 놓쳤다), 내려갈 때마다 다시 죽으면 rescue party가 깨어날 수 있다. 그래서 **충전하지 않으면 21%까지만**(`BATTERY_MIN_UNPLUGGED`, 컨트롤과 [센서] 탭 모두) 내린다. 충전 중이면 어떤 값이든 된다. 이를 끄는 device_config 플래그는 없었다.
+- **[4a 발견·고침] 보관한 휴대폰은 저장한 대로 돌아온다**(가로 자세 `[0,0,90]`, 123 lux, 15%). 컨트롤이 매 epoch를 세로로 가정해서, 가로로 보관한 휴대폰을 돌리면 엉뚱하게 튀었다. 이제 `ControlQueue`가 시작할 때 `getPhysicalModel`(ROTATION·LIGHT·PROXIMITY)과 `getBattery`를 읽어 자세와 `PhoneWorld`를 맞추고, [센서] 탭도 그 값을 보여준다(아무것도 보내지 않음). 골든의 회전은 `[-4.75, 0, 0]`(에뮬레이터의 쉬는 자세)이다.
+
+**[4a] 문자·전화** ([센서] 탭, 번호 하나로):
+- 문자는 `sendSms`(모뎀). Google 메시지 받은편지함에도 들어가고, App Inventor Texting은 ReceivingEnabled가 Foreground·Always일 때 MessageReceived(번호는 `010-1234-5678`처럼 하이픈이 붙음, 한글 그대로)를 받는다. 실측 6.6–9.4 s(덤프 포함).
+- 전화는 `sendPhone` InitCall/DisconnectCall. 휴대폰 화면에 받기·거절 알림이 뜬다. PhoneCall은 권한(READ_PHONE_STATE·READ_CALL_LOG·PROCESS_OUTGOING_CALLS)을 받은 뒤 Initialize에서 듣기 시작하고, PhoneCallStarted(1)·PhoneCallEnded(1: 받지 않음)가 온다.
+- **[4a 발견, 시험 앱]** PhoneCall의 `status`는 OptionList(StartedStatus/EndedStatus)로 와서 `join`이 받지 못한다(기기에 "Bad arguments to join" 대화상자). App Inventor 자체의 동작이며, OrcusWorld는 `status + 0`으로 숫자를 만든다.
+
+**[4a] 진동 표시:** gRPC 신호도 로그 줄도 없다. 앱이 VIBRATE 권한을 가질 때만 ApkService가 1.5 s마다 `dumpsys vibrator_manager`(0.05 s)를 읽는다. 실행 중이면 `Vibration: status = running … createTime … opPkg=<pkg>` 블록, 끝나면 `<생성 시각> | effect | finished | duration: 536ms | … usage: TOUCH | <pkg> (uid=` 줄이다. 생성 시각+패키지로 하나를 세고, 실행 직전 목록은 옛것으로 본다. 다른 패키지(키보드 촉각 등)는 세지 않는다. 창은 폰 화면 위쪽에 "진동"(길이를 알면 "진동 0.5초") 알약을 1.2–5 s 띄운다. 실측: 탭 뒤 0.1–1.6 s에 알림.
 
 ### 9.8 오디오·마이크·카메라
 
@@ -1275,13 +1301,14 @@ Ctrl+←/→와 Ctrl+Shift+←/→는 TextBox의 단어 이동·선택과 겹치
   - S3: SoundRecorder 녹음·재생 흐름은 마이크 꺼짐·켜짐 모두 동작한다(3gp 약 13 KB, AfterSoundRecorded). 이 PC에는 녹음 장치가 없어(`dsound: Could not initialize DirectSoundCapture`) 실제 소리는 확인하지 못했다 → 녹음 장치가 없으면 [마이크 켜기]를 끄고 "이 PC에 마이크가 없습니다"를 보여준다. 장치 유무는 에뮬레이터 로그의 이 줄로 안다.
   - **[3b 구현]** 장치 유무는 에뮬레이터 로그 대신 Windows `waveInGetNumDevs()`(녹음 장치 수)로 GUI가 직접 본다. 같은 원인을 보면서 부팅을 기다리지 않아도 된다(이 PC: 0개 → 버튼 꺼짐, 상태 표시 "마이크 없음").
   - 동의는 사용자가 [센서] 탭에서 켤 때 그 앱이 RECORD_AUDIO를 쓰면 `privacy.mic_allowed_packages`에 저장하고, 끄면 지운다. **ApkService가 실행할 때마다**(크래시 재시작 포함) 그 패키지의 동의대로 켜고 끈다. 그래서 다음 앱은 마이크를 물려받지 않는다. 켜져 있으면 상태 표시줄에 빨간 "마이크 켜짐".
-- **카메라:** `hw.camera.back=emulated`(**소프트웨어 가상 카메라**, P).
+- **카메라:** **[4a]** 모든 실행에 `-camera-back imagefile:<home>\state\camera.png`. (그 전: `hw.camera.back=emulated`, 소프트웨어 가상 카메라.)
   - Camera·Camcorder는 가짜 영상을 받는다. BarcodeScanner는 실제 바코드를 비출 수 없으므로 인식할 수 없다(§7.4 문구).
-  - **확인 항목(Phase 2에서 미실시 → [P4] 착수 전):** `-camera-back imagefile:D:\OrcusAPK\camera\current.png`(고정 ASCII 경로)를 확인한다. OrcusProbe의 BarcodeScanner는 외부 스캐너를 쓰므로(1501) 내장 스캐너용 픽스처가 따로 필요하다.
-    - 헤드리스 37.2.12에서 동작하는가
-    - 스캔하는 사이에 파일을 바꾸면 반영되는가
-    - 골든 유효성에 영향이 있는가(카메라 설정은 스냅샷 호환성에 들어갈 수 있음)
-    - 모두 되면 **[P4]** [카메라에 이미지 보여주기](QR PNG 드롭)로 BarcodeScanner·Camera 수업을 시험할 수 있게 한다. 안 되면 웹캠 옵션(**[P4]**, AVD 변경이라 재구축)으로 대신한다.
+  - **[4a 실험 결과]** (골든을 건드리지 않게 `-read-only` 별도 콜드 부팅과 보관 슬롯으로 확인):
+    - 헤드리스 37.2.12에서 동작한다. IMAGE_CAPTURE를 받는 `com.android.camera2`(Camera.TakePicture가 여는 앱) 미리보기에 그림이 화면을 채워 나온다.
+    - 에뮬레이터는 카메라를 열 때마다 파일을 다시 읽는다: 파일을 바꾸고 카메라 앱을 다시 열면 새 그림이다(재시작 불필요). 열려 있는 동안에는 그대로다.
+    - **카메라는 스냅샷 하드웨어에 들어간다**: emulated로 저장한 휴대폰을 이 플래그로 열면 "The emulator hardware cannot load snapshot". 강제 로드였다면 에뮬레이터가 스냅샷을 지우고 끝난다(복사본으로 확인: "Emulator will delete existing snapshot and exit"). 그래서 플래그는 **모든 실행**(준비·콜드·골든·보관)에 붙고, 골든 키에 `camera`가 들어가 그 전 골든은 한 번 재구축된다(§6.4, 실측 rebuild 한 번 뒤 정상).
+  - **[4a] [센서] 탭 > 카메라:** [그림 고르기…]는 그림을 긴 변 1280 px 이하 PNG로 바꿔 `SessionApi.set_camera_image`로 넘기고(통째 교체), [기본 그림]은 Orcus가 직접 그린 색 막대로 되돌린다. "→ Camera.TakePicture · 바꾼 그림은 앱이 카메라를 다시 열 때 보입니다." 기기 시험: 파랑 → 다시 연 뒤 빨강.
+  - BarcodeScanner는 내장 스캐너(UseExternalScanner=False)일 때 QR 그림으로 시험할 수 있을 것이다(4b 이후 확인).
 
 ---
 

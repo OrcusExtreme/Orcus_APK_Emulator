@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,7 +38,9 @@ from orcus.contracts import (
     Issue,
     IssueCode,
     IssueLevel,
+    InstalledApp,
     LogEntry,
+    MediaResult,
     OrcusError,
     OrcusFailure,
     Prompt,
@@ -47,9 +49,10 @@ from orcus.contracts import (
     RunPolicy,
     RunStage,
     SessionMode,
+    media_folder,
 )
 
-from . import compat, install, intake, launch
+from . import compat, install, intake, launch, media, vibration
 from .inspect import inspect
 from .watcher import Finding, Watcher, crash_from_buffer, line
 
@@ -63,6 +66,10 @@ MAX_FILE = 1 << 30       # nothing App Inventor builds comes near 1 GiB: refuse 
 UNKNOWN_TARGET_SDK = 36  # unreadable manifest: install retries with the legacy flag by itself if needed
 ORIENT_CHECK_S = 3.0     # while an app runs: its display rotation against the posture (§9.7, 0.06 s each)
 ORIENT_SOON_S = 1.2      # right after a launch or a screen switch: two quick checks (the display settles in ~1 s)
+BUZZ_CHECK_S = 1.5       # [P4] while an app that may vibrate runs: what the vibrator lists (0.05 s each)
+MEDIA_WAIT_S = 300.0     # [P4] a picture dropped while the phone starts waits for it this long
+MEDIA_KEEP = 10          # staged pictures, sounds and videos kept
+VIBRATE = "android.permission.VIBRATE"
 RECORD_AUDIO = "android.permission.RECORD_AUDIO"
 LOCATION = frozenset({"android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"})
 
@@ -105,7 +112,7 @@ class Service:
     def __init__(self, engine: EngineControl, staging: Path, settings: Callable[[], ApkSettings], *,
                  mic_allowed: Callable[[str], bool] = lambda package: False,
                  sleep: Callable[[float], None] = time.sleep, orient_check_s: float = ORIENT_CHECK_S,
-                 orient_soon_s: float = ORIENT_SOON_S) -> None:
+                 orient_soon_s: float = ORIENT_SOON_S, buzz_check_s: float = BUZZ_CHECK_S) -> None:
         self._engine = engine
         self._staging = staging
         self._settings = settings
@@ -113,6 +120,7 @@ class Service:
         self._sleep = sleep
         self._orient_check_s = orient_check_s
         self._orient_soon_s = orient_soon_s
+        self._buzz_check_s = buzz_check_s
         self._q: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._lock = threading.Lock()            # submit/cancel/answer/subscribe vs the pipeline
         self._latest: str | None = None
@@ -122,6 +130,9 @@ class Service:
         self._prompts: dict[str, _Slot] = {}
         self._subs: list[Callable[[RunEvent], None]] = []
         self._log_subs: list[tuple[Callable[[LogEntry], None], bool]] = []
+        self._buzz_subs: list[Callable[[int], None]] = []
+        self._media_subs: list[Callable[[MediaResult], None]] = []
+        self._apps_subs: list[Callable[[tuple[InstalledApp, ...]], None]] = []
         # pipeline thread only
         self._current: _Run | None = None        # the app [Run again] and the app panel mean
         self._front: tuple[str, int] | None = None   # (package, epoch) last launched: force-stopped before the next
@@ -130,6 +141,9 @@ class Service:
         self._orient_seen: tuple[Rotation, Rotation] | None = None   # last (display, posture) that differed
         self._next_check = 0.0
         self._quick_checks = 0   # quick ones still due after a launch or a screen switch
+        self._buzzes: set[str] | None = None   # vibrations already listed, while the current app may vibrate
+        self._apks: dict[str, str] = {}        # package -> its APK in the phone, from the last list (P4)
+        self._next_buzz = 0.0
         # logcat thread + pipeline, under _watch_lock
         self._watch_lock = threading.Lock()
         self._stream: CancellableIter[LogEntry] | None = None
@@ -216,6 +230,48 @@ class Service:
                     self._log_subs.remove(item)
         return unsubscribe
 
+    def subscribe_vibration(self, cb: Callable[[int], None]) -> Callable[[], None]:
+        with self._lock:
+            self._buzz_subs.append(cb)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if cb in self._buzz_subs:
+                    self._buzz_subs.remove(cb)
+        return unsubscribe
+
+    def push_media(self, paths: Sequence[Path]) -> None:
+        self._q.put(("media", tuple(Path(p) for p in paths)))
+
+    def subscribe_media(self, cb: Callable[[MediaResult], None]) -> Callable[[], None]:
+        with self._lock:
+            self._media_subs.append(cb)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if cb in self._media_subs:
+                    self._media_subs.remove(cb)
+        return unsubscribe
+
+    def refresh_apps(self) -> None:
+        self._q.put(("list_apps", None))
+
+    def subscribe_apps(self, cb: Callable[[tuple[InstalledApp, ...]], None]) -> Callable[[], None]:
+        with self._lock:
+            self._apps_subs.append(cb)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if cb in self._apps_subs:
+                    self._apps_subs.remove(cb)
+        return unsubscribe
+
+    def run_installed(self, package: str) -> None:
+        self._q.put(("run_installed", package))
+
+    def remove_app(self, package: str) -> None:
+        self._q.put(("remove_app", package))
+
     def report_lines(self) -> list[str]:
         """[Copy report] lines about the current app (§7.9). Any thread: a slightly stale view is fine."""
         run = self._current
@@ -264,16 +320,23 @@ class Service:
             run = self._current
             wait: float | None = None
             if run is not None and run.stage == RunStage.RUNNING:
-                wait = self._next_check - time.monotonic()
-                if wait <= 0:   # by the clock: commands arriving more often than that must not starve it
+                now = time.monotonic()
+                if now >= self._next_check:   # by the clock: commands arriving more often must not starve it
                     self._quick_checks = max(0, self._quick_checks - 1)
-                    self._next_check = time.monotonic() + (self._orient_soon_s if self._quick_checks
-                                                           else self._orient_check_s)
+                    self._next_check = now + (self._orient_soon_s if self._quick_checks else self._orient_check_s)
                     try:
                         self._check_orientation()
                     except Exception:
                         _log.exception("orientation check failed")
                     continue
+                if self._buzzes is not None and now >= self._next_buzz:
+                    self._next_buzz = now + self._buzz_check_s
+                    try:
+                        self._check_vibration()
+                    except Exception:
+                        _log.exception("vibration check failed")
+                    continue
+                wait = (min(self._next_check, self._next_buzz) if self._buzzes is not None else self._next_check) - now
             try:
                 cmd, arg = self._q.get(timeout=wait)
             except queue.Empty:
@@ -288,6 +351,15 @@ class Service:
                         self._on_epoch(arg)
                     case "finding":
                         self._on_finding(*arg)
+                    case "media":
+                        for path in arg:
+                            self._media_done(self._push_one(path))
+                    case "list_apps":
+                        self._list_apps()
+                    case "run_installed":
+                        self._run_installed(arg)
+                    case "remove_app":
+                        self._remove_app(arg)
                     case _:
                         self._app_command(cmd, arg)
             except Exception:
@@ -437,6 +509,8 @@ class Service:
         self._ensure_logcat(shell.epoch).wait(LOG_LIVE_WAIT_S)
         with self._watch_lock:
             mark = self._seq
+        self._buzzes = self._buzz_baseline(run, shell)
+        self._next_buzz = time.monotonic() + self._buzz_check_s
         out = launch.launch(shell, run.package, run.launcher, sleep=self._sleep)
         self._front = (run.package, shell.epoch)
         if not out.ok:
@@ -453,6 +527,7 @@ class Service:
         self._attach(run, mark)
         self._emit(run, RunStage.RUNNING)
         self._screen_shown(run)
+        self._list_apps()
         _log.info("%s running %.1f s after the drop (launching %.1f s, am start %s ms)", run.package,
                   time.monotonic() - run.t0, time.monotonic() - started, out.total_ms)
 
@@ -519,6 +594,127 @@ class Service:
             run.warnings = (ErrorCode.APP_ORIENTATION_MISMATCH,) if mismatch else ()
             self._emit(run, run.stage)
 
+    def _buzz_baseline(self, run: _Run, shell: DeviceShell) -> set[str] | None:
+        """[P4] What the vibrator listed before the launch is old: only newer ones of this app show (§9.7). An app
+        without the VIBRATE permission cannot vibrate, so nothing is looked up for it."""
+        if run.info is None or VIBRATE not in run.info.permissions:
+            return None
+        try:
+            return {b.key for b in vibration.parse(shell.shell(list(vibration.CMD), timeout_s=10).out)}
+        except OrcusFailure as e:
+            _log.info("no vibration baseline: %s", e)
+            return None
+
+    def _check_vibration(self) -> None:
+        run = self._current
+        seen = self._buzzes
+        if run is None or seen is None or run.stage != RunStage.RUNNING \
+                or self._engine.status().state != EngineState.READY:
+            return
+        try:
+            shell = self._engine.shell()
+            if shell.epoch != run.epoch:
+                return
+            found = vibration.parse(shell.shell(list(vibration.CMD), timeout_s=10).out)
+        except OrcusFailure as e:
+            _log.info("vibration check skipped: %s", e)
+            return
+        for b in found:
+            if b.key in seen:
+                continue
+            seen.add(b.key)
+            if b.package == run.package:
+                _log.info("%s vibrated (%d ms)", b.package, b.duration_ms)
+                with self._lock:
+                    subs = list(self._buzz_subs)
+                for cb in subs:
+                    try:
+                        cb(b.duration_ms)
+                    except Exception:
+                        _log.exception("vibration subscriber failed")
+
+    def _push_one(self, path: Path) -> MediaResult:
+        """[P4] Stage, wait for the phone, push (§7.1). The app pipeline waits meanwhile, as for an install."""
+        where = media_folder(path)
+        try:
+            if where is None:
+                raise OrcusFailure(messages_ko.error(ErrorCode.FILE_NOT_ANDROID, path.name))
+            try:
+                too_big = path.stat().st_size > MAX_FILE
+            except OSError as e:
+                raise OrcusFailure(messages_ko.error(ErrorCode.STAGE_COPY_FAILED, f"{path}: {e}")) from e
+            if too_big:
+                raise OrcusFailure(messages_ko.error(ErrorCode.FILE_PUSH_FAILED, f"{path.name}: over 1 GiB"))
+            _, staged = intake.stage(path, self._staging / "media", keep=MEDIA_KEEP, suffix=path.suffix.lower())
+            self._engine.wait_ready(MEDIA_WAIT_S)
+            dst = f"/sdcard/{where}/{media.phone_name(path.name)}"
+            r = self._engine.shell().push(staged, dst)
+            if r.code != 0:
+                raise OrcusFailure(messages_ko.error(ErrorCode.FILE_PUSH_FAILED, (r.err or r.out).strip()[-300:]))
+            _log.info("pushed a dropped %s file into %s (%.1f s)", path.suffix.lower(), where, r.elapsed_s)
+            return MediaResult(path.name, dst, None)
+        except OrcusFailure as f:
+            return MediaResult(path.name, None, f.error)
+
+    def _list_apps(self) -> None:
+        """[P4] The apps in the phone for the [App] tab: after a refresh, an install, a removal and a new phone."""
+        try:
+            self._apks = install.apks(install.third_party(self._engine.shell()))
+        except EngineNotReady as e:
+            _log.info("no app list: %s", e)
+            return
+        apps = tuple(sorted((InstalledApp(p, p.rsplit(".", 1)[-1] if p.startswith("appinventor.ai_") else p)
+                             for p in self._apks), key=lambda a: a.name.lower()))
+        with self._lock:
+            subs = list(self._apps_subs)
+        for cb in subs:
+            try:
+                cb(apps)
+            except Exception:
+                _log.exception("app list subscriber failed")
+
+    def _run_installed(self, package: str) -> None:
+        """[P4] Its APK out of the phone into staging, then the usual path: a drop of that file (§8). In this epoch the
+        install is skipped (same SHA-256); a kept phone (§6.3) gets it reinstalled with its data kept."""
+        run = _Run(uuid.uuid4().hex[:12], Path(package), RunPolicy.KEEP_DATA, time.monotonic(), package=package)
+        try:
+            shell = self._engine.shell()
+            src = self._apks.get(package) or install.apks(install.third_party(shell)).get(package)
+            if src is None:
+                raise OrcusFailure(messages_ko.error(ErrorCode.STAGE_COPY_FAILED, f"{package} is not in the phone"))
+            pulled = self._staging / "pulled"
+            pulled.mkdir(parents=True, exist_ok=True)
+            local = pulled / "installed.apk"
+            r = shell.pull(src, local)
+            if r.code != 0:
+                raise OrcusFailure(messages_ko.error(ErrorCode.STAGE_COPY_FAILED, (r.err or r.out).strip()[-300:]))
+        except (OrcusFailure, OSError) as e:
+            err = e.error if isinstance(e, OrcusFailure) else messages_ko.error(ErrorCode.STAGE_COPY_FAILED, str(e))
+            self._emit(run, RunStage.FAILED, problem=err)
+            return
+        self.submit(local)
+
+    def _remove_app(self, package: str) -> None:
+        run = self._current
+        if run is not None and run.package == package and run.staged is not None:
+            self._app_command("uninstall")   # the current app: the card says it ended, the list follows
+            return
+        try:
+            self._engine.shell().uninstall(package)
+        except EngineNotReady as e:
+            _log.info("remove %s ignored: %s", package, e)
+        self._installed.pop(package, None)
+        self._list_apps()
+
+    def _media_done(self, result: MediaResult) -> None:
+        with self._lock:
+            subs = list(self._media_subs)
+        for cb in subs:
+            try:
+                cb(result)
+            except Exception:
+                _log.exception("media subscriber failed")
+
     def _stop_front(self, shell: DeviceShell) -> None:
         self._detach()
         if self._front is not None and self._front[1] == shell.epoch:
@@ -552,6 +748,7 @@ class Service:
             self._ensure_logcat(st.epoch)
         except OrcusFailure as e:
             _log.info("no logcat in epoch %d: %s", st.epoch, e)
+        self._list_apps()   # a new phone: the golden's none, a kept phone's own (P4)
         run = self._current
         if run is None or run.epoch >= st.epoch or run.stage != RunStage.RUNNING:
             return
@@ -629,6 +826,7 @@ class Service:
                     if self._front is not None and self._front[0] == run.package:
                         self._front = None
                     self._emit(run, RunStage.EXITED)
+                    self._list_apps()
                 case "grant_all":
                     if run.info is not None:
                         n = launch.grant_all(shell, run.package, run.info.permissions)

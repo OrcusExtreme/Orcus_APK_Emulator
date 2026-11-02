@@ -266,6 +266,59 @@ def mole_mash() -> Project:
     return Project("MoleMash", [s], {"mole.png": mole_png()})
 
 
+# --- 4a (ARCHITECTURE.md §9.7): light, proximity, a text, a call, two fingers --------------------------------------
+def orcus_world() -> Project:
+    """Labels start with a fixed word ("light ", "near ", ...) for `uiautomator dump`, like OrcusProbe's."""
+    # PhoneCall's status comes as an OptionList (StartedStatus/EndedStatus) whose value is a number, and `join`
+    # takes no such value ("Bad arguments to join" on the device, 4a): `+ 0` makes it the number.
+    status = b.Add(b.Param("status"), b.Num(0))
+    s = Screen("Screen1", screen1("OrcusWorld", Title="OrcusWorld"), [
+        label("lblLight", "light -"),
+        label("lblNear", "near -"),
+        label("lblSms", "sms -"),
+        label("lblCall", "call -"),
+        label("lblCallEnd", "callend -"),
+        label("lblAnswered", "answered -"),
+        label("lblPinch", "pinch -"),
+        component("WebViewer", "WebPinch", Width=FILL_PARENT, Height="320",
+                  HomeUrl="file:///android_asset/pinch.html"),
+        component("LightSensor", "LightSensor1"),
+        component("ProximitySensor", "ProximitySensor1"),
+        component("Texting", "Texting1", ReceivingEnabled="3"),                 # Always
+        component("PhoneCall", "PhoneCall1"),
+    ], events=[
+        b.Event("LightSensor1", "LightSensor", "LightChanged", ["lux"],
+                [set_text("lblLight", join("light ", dec("lux", 0)))]),
+        b.Event("ProximitySensor1", "ProximitySensor", "ProximityChanged", ["distance"],
+                [set_text("lblNear", join("near ", dec("distance", 1)))]),
+        b.Event("Texting1", "Texting", "MessageReceived", ["number", "messageText"],
+                [set_text("lblSms", join("sms ", b.Param("number"), " ", b.Param("messageText")))]),
+        b.Event("PhoneCall1", "PhoneCall", "PhoneCallStarted", ["status", "phoneNumber"],
+                [set_text("lblCall", join("call ", status, " ", b.Param("phoneNumber")))]),
+        b.Event("PhoneCall1", "PhoneCall", "PhoneCallEnded", ["status", "phoneNumber"],
+                [set_text("lblCallEnd", join("callend ", status, " ", b.Param("phoneNumber")))]),
+        b.Event("PhoneCall1", "PhoneCall", "IncomingCallAnswered", ["phoneNumber"],
+                [set_text("lblAnswered", join("answered ", b.Param("phoneNumber")))]),
+        b.Event("WebPinch", "WebViewer", "WebViewStringChange", ["value"], [set_text("lblPinch", b.Param("value"))]),
+    ])
+    return Project("OrcusWorld", [s], {"pinch.html": PINCH_HTML})
+
+
+# Most fingers seen in one gesture and how far two of them spread (end / start), handed to the app at the end.
+PINCH_HTML = (b'<!doctype html><html><head><meta charset="utf-8">'
+              b'<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">'
+              b'<style>html,body{margin:0;height:100%;background:#e8eefc;touch-action:none}</style></head><body>'
+              b'<script>var most=0,d0=0,d1=0;'
+              b'function gap(t){var x=t[0].clientX-t[1].clientX,y=t[0].clientY-t[1].clientY;return Math.sqrt(x*x+y*y)}'
+              b'function on(n,f){document.addEventListener(n,function(e){f(e);e.preventDefault()},{passive:false})}'
+              b'on("touchstart",function(e){most=Math.max(most,e.touches.length);'
+              b'if(e.touches.length==2){d0=gap(e.touches);d1=d0}});'
+              b'on("touchmove",function(e){if(e.touches.length==2){d1=gap(e.touches)}});'
+              b'on("touchend",function(e){if(e.touches.length==0){'
+              b'window.AppInventor.setWebViewString("pinch "+most+" "+(d0?d1/d0:0).toFixed(2));most=0;d0=0;d1=0}});'
+              b'</script></body></html>\n')
+
+
 def hello_purr_variant(name: str, **screen: str) -> Callable[[], Project]:
     def make() -> Project:
         p = hello_purr()
@@ -290,6 +343,7 @@ ALL: dict[str, Callable[[], Project]] = {
     "HelloPurrKo": hello_purr_variant("HelloPurrKo", AppName="고양이 쓰다듬기"),   # Korean label (B8)
     "HelloPurrMin36": hello_purr_min36,                                          # minSdk 36 installs (B8)
     "HelloPurrLand": hello_purr_variant("HelloPurrLand", ScreenOrientation="landscape"),   # turned first (B8)
+    "OrcusWorld": orcus_world,                                                   # 4a extensions
 }
 
 

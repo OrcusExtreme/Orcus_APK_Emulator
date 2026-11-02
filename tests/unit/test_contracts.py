@@ -47,7 +47,8 @@ def test_settings_defaults_follow_section_11_3() -> None:
 
 
 def test_gpu_mode_has_no_auto() -> None:
-    assert {m.value for m in c.GpuMode} == {"host", "host_hidden", "software"}
+    # the emulator's own -gpu auto stays out (§5.6); "ladder" is Orcus stepping down by itself [P4]
+    assert {m.value for m in c.GpuMode} == {"host", "host_hidden", "software", "ladder"}
 
 
 def test_orcus_failure_carries_the_error() -> None:

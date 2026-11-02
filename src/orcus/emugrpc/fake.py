@@ -72,6 +72,8 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
     def getStatus(self, request: Empty, context: grpc.ServicerContext) -> ec.EmulatorStatus:
         f = self.f
         f.record("getStatus")
+        if f.status_hangs:   # tests: an emulator stuck before its services answer
+            context.abort(grpc.StatusCode.UNAVAILABLE, "not answering (test)")
         hw = ec.EntryList(entry=[ec.Entry(key="hw.lcd.width", value=str(f.width)),
                                  ec.Entry(key="hw.lcd.height", value=str(f.height)),
                                  ec.Entry(key="hw.lcd.density", value="320")])
@@ -141,7 +143,13 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
     def setPhysicalModel(self, request: ec.PhysicalModelValue, context: grpc.ServicerContext) -> Empty:
         self.f.record("setPhysicalModel", request.target)
         self.f.physical.append(request)
+        self.f.models[request.target] = list(request.value.data)
         return Empty()
+
+    def getPhysicalModel(self, request: ec.PhysicalModelValue,
+                         context: grpc.ServicerContext) -> ec.PhysicalModelValue:
+        return ec.PhysicalModelValue(target=request.target,
+                                     value=ec.ParameterValue(data=self.f.models.get(request.target, [])))
 
     def setClipboard(self, request: ec.ClipData, context: grpc.ServicerContext) -> Empty:
         self.f.record("setClipboard", request.text)
@@ -166,6 +174,22 @@ class _Controller(ec_grpc.EmulatorControllerServicer):
 
     def getMicrophoneState(self, request: Empty, context: grpc.ServicerContext) -> ec.MicrophoneState:
         return ec.MicrophoneState(realAudioEnabled=self.f.microphone)
+
+    def setBattery(self, request: ec.BatteryState, context: grpc.ServicerContext) -> Empty:
+        self.f.record("setBattery", (request.chargeLevel, request.charger))
+        self.f.battery = request
+        return Empty()
+
+    def getBattery(self, request: Empty, context: grpc.ServicerContext) -> ec.BatteryState:
+        return self.f.battery
+
+    def sendSms(self, request: ec.SmsMessage, context: grpc.ServicerContext) -> ec.PhoneResponse:
+        self.f.record("sendSms", (request.srcAddress, request.text))
+        return ec.PhoneResponse(response=ec.PhoneResponse.OK)
+
+    def sendPhone(self, request: ec.PhoneCall, context: grpc.ServicerContext) -> ec.PhoneResponse:
+        self.f.record("sendPhone", (request.operation, request.number))
+        return ec.PhoneResponse(response=ec.PhoneResponse.OK)
 
     def streamNotification(self, request: Empty, context: grpc.ServicerContext):   # type: ignore[no-untyped-def]
         self.f.record("streamNotification")
@@ -239,12 +263,18 @@ class FakeEmulatorServer:
         self.stopping = threading.Event()
         self.calls: list[tuple[str, Any]] = []
         self.booted = True
+        self.status_hangs = False
         self.vm_state: ec.VmRunState.RunState = ec.VmRunState.RUNNING
         self.rotation: ec.Rotation.SkinRotation = ec.Rotation.PORTRAIT
         self.seq = 0
         self.input_events: list[ec.InputEvent] = []
         self.sensors: dict[int, ec.SensorValue] = {}
         self.physical: list[ec.PhysicalModelValue] = []
+        P = ec.PhysicalModelValue   # noqa: N806
+        # what getPhysicalModel answers; the real golden's rotation is [-4.75, 0, 0] (P4)
+        self.models: dict[int, list[float]] = {P.ROTATION: [0.0, 0.0, 0.0], P.LIGHT: [0.0], P.PROXIMITY: [1.0]}
+        self.battery = ec.BatteryState(hasBattery=True, isPresent=True, charger=ec.BatteryState.AC, chargeLevel=100,
+                                       health=ec.BatteryState.GOOD, status=ec.BatteryState.CHARGING)
         self.clipboard = ""
         self.gps = ec.GpsState()
         self.microphone = False

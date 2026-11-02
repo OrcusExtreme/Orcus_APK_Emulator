@@ -57,6 +57,20 @@ def test_session_wires_engine_device_and_apps(world) -> None:   # type: ignore[n
     assert s.engine.status().state is EngineState.STOPPED
 
 
+def test_dropped_pictures_go_into_the_phone_and_an_app_is_run(world, monkeypatch) -> None:   # type: ignore[no-untyped-def]
+    """[P4] Pictures, sounds, videos, any number: into the phone; anything else: the last file is an app."""
+    env, s = world
+    pushed: list[list[Path]] = []
+    submitted: list[Path] = []
+    monkeypatch.setattr(s._apps, "push_media", pushed.append)   # noqa: SLF001
+    monkeypatch.setattr(s._apps, "submit", submitted.append)    # noqa: SLF001
+    pic, song, apk = (env.paths.root / n for n in ("고양이.JPG", "b.mp3", "x.apk"))
+    s.open_paths([pic, song])
+    s.open_paths([pic, apk])
+    s.open_paths([apk])
+    assert pushed == [[pic, song]] and submitted == [apk, apk]
+
+
 def test_settings_preview_update_and_persist(world) -> None:   # type: ignore[no-untyped-def]
     env, s = world
     r = s.preview_settings({"engine.gpu_mode": "software"})

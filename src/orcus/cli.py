@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from orcus.app import compose
+from orcus.app import compose, diag
 from orcus.app import smoke as smoke_mod
 from orcus.app.session import Session
 from orcus.common import hostinfo, messages_ko, win32
@@ -254,6 +254,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_diag(args: argparse.Namespace) -> int:
+    """[P4] The diagnostic bundle without the window (it may be what does not start)."""
+    p = compose.make_paths(args.home)
+    lines = [f"{line.status:<4} {line.name:<20} {line.detail}" for line in compose.doctor(p, compose.load_settings(p))]
+    out = diag.make_bundle(p, f"orcus-cli diag ({time.strftime('%Y-%m-%d %H:%M:%S')}): 창 없이 만든 묶음", lines)
+    _out(f"진단 묶음: {out}")
+    return 0
+
+
 def cmd_selftest(args: argparse.Namespace) -> int:
     report = compose.selftest()
     for name, ok, detail in report.lines:
@@ -423,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--full", action="store_true", help="with --boot-check: wait until Android finished booting")
     d.add_argument("--gpu", action="append", choices=[g.value for g in GpuMode], help="GPU mode(s) to try")
     sub.add_parser("selftest", help="built-in checks of this build (no device needed)")
+    g = sub.add_parser("diag", help="diagnostic bundle (logs, state, doctor; names masked) to send to whoever helps")
+    g.add_argument("--home")
     r = sub.add_parser("run", help="boot the phone, install and launch an APK, print problems")
     r.add_argument("apk")
     r.add_argument("--home")
@@ -439,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--out", help="with shot: PNG path (default logs\\shot-*.png)")
     args = parser.parse_args(argv)
     return {"setup": cmd_setup, "doctor": cmd_doctor, "selftest": cmd_selftest, "run": cmd_run,
-            "smoke": cmd_smoke, "engine": cmd_engine}[args.cmd](args)
+            "smoke": cmd_smoke, "engine": cmd_engine, "diag": cmd_diag}[args.cmd](args)
 
 
 if __name__ == "__main__":

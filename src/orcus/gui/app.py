@@ -74,6 +74,9 @@ def run(make_session: Callable[[], SessionApi], logs_dir: Path, files: list[str]
     session.engine.subscribe(bridge.on_engine)
     session.apps.subscribe(bridge.on_run)
     session.apps.subscribe_log(bridge.on_log)
+    session.apps.subscribe_vibration(bridge.on_vibrated)
+    session.apps.subscribe_media(bridge.on_media)
+    session.apps.subscribe_apps(bridge.on_apps)
     win = MainWindow(session, bridge, logs_dir)
     if not icon.isNull():
         win.setWindowIcon(icon)

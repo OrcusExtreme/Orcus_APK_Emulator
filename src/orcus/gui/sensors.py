@@ -1,25 +1,29 @@
-"""[Sensors] tab (ARCHITECTURE.md §10.3, §9.7, §9.8): shake with its sensitivity, turning, a tilt pad, location
-and the microphone. Next to every control is the App Inventor event it causes.
+"""[Sensors] tab (ARCHITECTURE.md §10.3, §9.7, §9.8): shake with its sensitivity, turning, a tilt pad, location,
+the microphone, and [P4] light, proximity, battery, an incoming text and call. Next to every control is the App
+Inventor event it causes.
 
 The panel only emits; the window turns that into DeviceControls calls (all of them enqueue and return).
 """
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtCore import QPointF, QRectF, QRegularExpression, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen, QRegularExpressionValidator
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from orcus.contracts import Rotation, Sensitivity
+from orcus.contracts import BATTERY_MIN_UNPLUGGED, PhoneWorld, Rotation, Sensitivity
 
 SHAKE_REPEAT_MS = 450   # a held shake button: longer than App Inventor's 400 ms MinimumInterval (§9.7)
 TILT_MAX_DEG = 20.0     # the controls clamp to 20° too: 26° flips a landscape frame to portrait (S7)
@@ -35,6 +39,19 @@ LOCATION_HINTS = (
 )
 MIC_HINT = ("켜면 이 앱은 다음 실행에서도 켜집니다. 녹음이 조용하면 Windows 설정 > 개인 정보 > 마이크에서 "
             "'데스크톱 앱이 마이크에 액세스하도록 허용'을 켜세요.")
+LIGHT_PRESETS = (("어두움", 10), ("실내", 400), ("햇빛", 30000))   # lux
+PROXIMITY_FAR_CM = 1.0   # the Goldfish proximity sensor's far value (the golden's); 0 = something near
+SMS_MAX = 70             # one text in Korean (UCS-2)
+PHONE_NUMBER = QRegularExpression(r"\+?[0-9]{3,15}")
+DEFAULT_NUMBER = "01012345678"
+SMS_HINT = ("→ Texting.MessageReceived · Texting의 ReceivingEnabled가 Foreground나 Always여야 합니다. 휴대폰 메시지 "
+            "앱에도 들어갑니다.")
+BATTERY_HINT = (f"충전 중이 아니면 {BATTERY_MIN_UNPLUGGED}%까지만 내려갑니다: 이 휴대폰은 20% 이하 경고를 띄우다 시스템 "
+                "화면이 멈춥니다(시스템 이미지 문제). 더 낮은 값은 '충전 중'을 켜고 시험하세요.")
+CAMERA_HINT = ("→ Camera.TakePicture · 휴대폰 카메라가 이 그림을 비춥니다. 바꾼 그림은 앱이 카메라를 다시 열 때 "
+               "보입니다.")
+CALL_HINT = ("→ PhoneCall.PhoneCallStarted · PhoneCallEnded · 받기(IncomingCallAnswered)와 거절은 휴대폰 화면에 뜬 "
+             "전화 알림에서 합니다.")
 
 
 def _caption(words: str) -> QLabel:
@@ -130,6 +147,12 @@ class SensorPanel(QScrollArea):
     tilt = Signal(float, float)
     locate = Signal(float, float)
     microphone = Signal(bool)
+    light = Signal(float)                  # lux
+    proximity = Signal(float)              # cm
+    battery = Signal(int, bool)            # level %, charging
+    sms = Signal(str, str)                 # sender, text
+    call = Signal(str, bool)               # number; True: it rings, False: hang up
+    camera = Signal(bool)                  # [P4] True: pick a picture for the camera, False: the color bars again
 
     def __init__(self, presets: tuple[tuple[float, float, str], ...]) -> None:
         super().__init__()
@@ -145,6 +168,9 @@ class SensorPanel(QScrollArea):
         lay.addWidget(self._tilt_box())
         lay.addWidget(self._location_box(presets))
         lay.addWidget(self._mic_box())
+        lay.addWidget(self._world_box())
+        lay.addWidget(self._phone_box())
+        lay.addWidget(self._camera_box())
         lay.addStretch(1)
         self.setWidget(body)
         self.set_device(False)
@@ -259,13 +285,123 @@ class SensorPanel(QScrollArea):
         lay.addWidget(_caption(MIC_HINT))
         return box
 
+    def _world_box(self) -> QGroupBox:
+        box = QGroupBox("빛·근접·배터리")
+        self.light_spin = QSpinBox()
+        self.light_spin.setRange(0, 100000)
+        self.light_spin.setSingleStep(50)
+        self.light_spin.setSuffix(" lux")
+        self.light_spin.setKeyboardTracking(False)   # Enter or the arrows send, not every digit typed
+        self.light_spin.valueChanged.connect(lambda v: self.light.emit(float(v)))
+        self.light_presets = [QPushButton(name) for name, _ in LIGHT_PRESETS]
+        for b, (_, lux) in zip(self.light_presets, LIGHT_PRESETS, strict=True):
+            b.clicked.connect(lambda _=False, v=lux: self.light_spin.setValue(v))
+        self.near_box = QCheckBox("가까이 (센서를 손으로 가림)")
+        self.near_box.toggled.connect(lambda on: self.proximity.emit(0.0 if on else PROXIMITY_FAR_CM))
+        self.battery_spin = QSpinBox()
+        self.battery_spin.setRange(0, 100)
+        self.battery_spin.setSuffix(" %")
+        self.battery_spin.setKeyboardTracking(False)
+        self.battery_spin.valueChanged.connect(lambda _v: self._battery_changed())
+        self.charging_box = QCheckBox("충전 중")
+        self.charging_box.toggled.connect(self._charging_toggled)
+        grid = QGridLayout()
+        grid.addWidget(QLabel("밝기"), 0, 0)
+        grid.addWidget(self.light_spin, 0, 1)
+        row = QHBoxLayout()
+        for b in self.light_presets:
+            row.addWidget(b)
+        grid.addLayout(row, 1, 1)
+        grid.addWidget(QLabel("근접"), 2, 0)
+        grid.addWidget(self.near_box, 2, 1)
+        grid.addWidget(QLabel("배터리"), 3, 0)
+        battery = QHBoxLayout()
+        battery.addWidget(self.battery_spin)
+        battery.addWidget(self.charging_box, 1)
+        grid.addLayout(battery, 3, 1)
+        grid.setColumnStretch(1, 1)
+        self.world_widgets: list[QWidget] = [self.light_spin, *self.light_presets, self.near_box, self.battery_spin,
+                                             self.charging_box]
+        lay = QVBoxLayout(box)
+        lay.addLayout(grid)
+        lay.addWidget(_caption("→ LightSensor.LightChanged · ProximitySensor.ProximityChanged (가까이 0 cm, 멀리 1 cm)"))
+        lay.addWidget(_caption("배터리는 휴대폰 상태 표시줄과, 배터리를 읽는 확장 기능에 보입니다."))
+        lay.addWidget(_caption(BATTERY_HINT))
+        self.set_world(PhoneWorld())
+        return box
+
+    def _phone_box(self) -> QGroupBox:
+        box = QGroupBox("문자·전화")
+        self.number_edit = QLineEdit(DEFAULT_NUMBER)
+        self.number_edit.setValidator(QRegularExpressionValidator(PHONE_NUMBER, self.number_edit))
+        self.number_edit.setPlaceholderText("상대 번호")
+        self.sms_edit = QLineEdit()
+        self.sms_edit.setMaxLength(SMS_MAX)
+        self.sms_edit.setPlaceholderText(f"문자 내용 ({SMS_MAX}자까지)")
+        self.sms_button = QPushButton("문자 받기")
+        self.call_button = QPushButton("전화 오기")
+        self.hangup_button = QPushButton("끊기")
+        self.sms_edit.returnPressed.connect(self._send_sms)
+        self.sms_button.clicked.connect(lambda _=False: self._send_sms())
+        self.call_button.clicked.connect(lambda _=False: self.call.emit(self.number_edit.text(), True))
+        self.hangup_button.clicked.connect(lambda _=False: self.call.emit(self.number_edit.text(), False))
+        for edit in (self.number_edit, self.sms_edit):
+            edit.textChanged.connect(lambda _t: self._phone_buttons())
+        grid = QGridLayout()
+        grid.addWidget(QLabel("번호"), 0, 0)
+        grid.addWidget(self.number_edit, 0, 1, 1, 2)
+        grid.addWidget(QLabel("문자"), 1, 0)
+        grid.addWidget(self.sms_edit, 1, 1)
+        grid.addWidget(self.sms_button, 1, 2)
+        calls = QHBoxLayout()
+        calls.addWidget(self.call_button)
+        calls.addWidget(self.hangup_button)
+        grid.addLayout(calls, 2, 1, 1, 2)
+        grid.setColumnStretch(1, 1)
+        lay = QVBoxLayout(box)
+        lay.addLayout(grid)
+        lay.addWidget(_caption(SMS_HINT))
+        lay.addWidget(_caption(CALL_HINT))
+        return box
+
+    def _camera_box(self) -> QGroupBox:
+        box = QGroupBox("카메라")
+        pick = QPushButton("그림 고르기…")
+        bars = QPushButton("기본 그림")
+        pick.clicked.connect(lambda _=False: self.camera.emit(True))
+        bars.clicked.connect(lambda _=False: self.camera.emit(False))
+        self.camera_buttons = [pick, bars]
+        self.camera_label = QLabel("지금: 기본 그림 (색 막대)")
+        self.camera_label.setTextFormat(Qt.TextFormat.PlainText)   # a file name the user chose
+        row = QHBoxLayout()
+        row.addWidget(pick)
+        row.addWidget(bars)
+        lay = QVBoxLayout(box)
+        lay.addLayout(row)
+        lay.addWidget(self.camera_label)
+        lay.addWidget(_caption(CAMERA_HINT))
+        return box
+
     # --- state from the window ------------------------------------------------------------------------------------
     def set_device(self, available: bool) -> None:
         self._available = available
         for w in (self.shake_button, self.sensitivity_box, self.left_button, self.right_button, self.match_button,
-                  self.pad, *self.location_buttons):
+                  self.pad, *self.location_buttons, *self.world_widgets, self.number_edit, self.sms_edit):
             w.setEnabled(available)
         self.mic_button.setEnabled(available and self._host_mic)
+        self._phone_buttons()
+
+    def set_world(self, world: PhoneWorld) -> None:
+        """What the phone has now (a new phone: the golden's, or a kept phone's, §6.3); nothing is sent."""
+        widgets = (self.light_spin, self.near_box, self.battery_spin, self.charging_box)
+        blockers = [QSignalBlocker(w) for w in widgets]
+        self.light_spin.setValue(round(world.light_lux))
+        self.near_box.setChecked(world.proximity_cm < PROXIMITY_FAR_CM)
+        self.charging_box.setChecked(world.charging)
+        self._battery_floor()
+        self.battery_spin.setValue(world.battery)
+        for b in blockers:
+            b.unblock()
 
     def sensitivity(self) -> Sensitivity:
         return Sensitivity(self.sensitivity_box.currentData())
@@ -327,3 +463,26 @@ class SensorPanel(QScrollArea):
     def _mic_toggled(self, on: bool) -> None:
         if not self._mic_quiet:
             self.microphone.emit(on)
+
+    def _battery_changed(self) -> None:
+        self.battery.emit(self.battery_spin.value(), self.charging_box.isChecked())
+
+    def _battery_floor(self) -> None:
+        """Unplugged, the spin box stops at 21 % (the image's SystemUI, see device.controls)."""
+        self.battery_spin.setMinimum(0 if self.charging_box.isChecked() else BATTERY_MIN_UNPLUGGED)
+
+    def _charging_toggled(self, _on: bool) -> None:
+        blocker = QSignalBlocker(self.battery_spin)   # the new floor may raise the level: one send for both
+        self._battery_floor()
+        blocker.unblock()
+        self._battery_changed()
+
+    def _phone_buttons(self) -> None:
+        number = self.number_edit.hasAcceptableInput()
+        self.call_button.setEnabled(self._available and number)
+        self.hangup_button.setEnabled(self._available and number)
+        self.sms_button.setEnabled(self._available and number and bool(self.sms_edit.text().strip()))
+
+    def _send_sms(self) -> None:
+        if self.sms_button.isEnabled():
+            self.sms.emit(self.number_edit.text(), self.sms_edit.text().strip())

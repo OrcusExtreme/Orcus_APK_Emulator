@@ -20,7 +20,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import CancelledError
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ from orcus.emugrpc import channel as grpc_channel
 from orcus.emugrpc.generated import emulator_controller_pb2 as ec
 from orcus.emugrpc.generated import snapshot_service_pb2 as ss
 
-from . import args, discovery, exitlog, gpu, provision, snapshots
+from . import args, camera, discovery, exitlog, gpu, gpuladder, keepstate, provision, snapshots
 from .adb import AdbLogcat, AdbServer, EpochShell, RawShell, client, not_ready
 from .bootcheck import accelerator_from_log
 from .discovery import DiscoveryRecord
@@ -67,6 +67,8 @@ EMULATOR_IMAGES = discovery.EMULATOR_IMAGES
 CRASH_WINDOW_S = 300.0
 KEEPALIVE_FAILS = 3
 DEFAULT_LOCATION = (37.5665, 126.9780)
+KEEP_DISK_MIN = 3 * GIB            # a kept phone is about 1.1 GB (S4: the golden 1.09 GB); two exist mid-switch
+KEPT = frozenset({args.LaunchMode.GOLDEN, args.LaunchMode.KEEP_STATE})   # boots whose phone can be kept
 
 ACTIVE = frozenset({S.PREFLIGHT, S.LAUNCHING, S.CONNECTING, S.BOOTING, S.SESSION_INIT, S.RESETTING,
                     S.PROVISIONING})
@@ -91,6 +93,9 @@ class _Vm:
     session: DeviceSession | None = None
     watched: bool = False
     done: threading.Event = field(default_factory=threading.Event)   # set at teardown: ends the watchers
+    slot: str | None = None        # [P4] the kept phone this boot opened (§6.3)
+    slot_once: bool = False        # opened by [keep this time]: forgotten at a stop that does not keep again
+    kept_elsewhere: bool = False   # a kept phone exists that this boot did not open: do not overwrite it
 
     def alive(self) -> bool:
         return self.proc.poll() is None
@@ -120,6 +125,16 @@ class _Fail(_Outcome):
 class _GoldenBad(_Outcome):
     detail: str
     gpu_changed: bool = False   # the emulator deleted the golden itself: 'host GPU has changed' (3a finding 18)
+
+
+@dataclass
+class _KeepBad(_Outcome):
+    detail: str   # the kept phone did not open: start from the golden this run, keep the slot (§6.3)
+
+
+@dataclass
+class _LadderStep(_Outcome):
+    detail: str   # [P4] the GPU ladder re-checks or steps down: boot again at the level now in force (§5.6)
 
 
 @dataclass
@@ -192,6 +207,12 @@ class EngineManager:
         # worker-owned
         self._provision_id = ""
         self._verify: snapshots.Record | None = None   # set by the supervisor before the verification boot
+        self._boot_slot: str | None = None              # keep-state (§6.3): what the next launch opens
+        self._boot_once = False
+        self._kept_elsewhere = False
+        self._keep_notes: list[ErrorCode] = []          # banners for the next READY
+        self._ladder_suspect = False                    # GPU ladder (§5.6): one software renderer seen, re-check
+        self._ladder_temp: GpuMode | None = None        # a step taken in a remote session: this run only
         self._first_connect = True
         self._job_now = 0
         # supervisor-owned
@@ -214,6 +235,8 @@ class EngineManager:
         self._retried: set[str] = set()
         self._last_disk = -DISK_EVERY_S
         self._wanted = False             # a start is pending or the engine should be running
+        self._keep_requested = False     # [keep this time] at the close notice (§6.1)
+        self._keep_skip = False          # the kept phone did not open this run: start clean, keep the slot
         self._status = self._make_status()
         self._worker_q: "queue.Queue[tuple[int, Callable[[threading.Event], _Outcome], threading.Event] | None]" = \
             queue.Queue()
@@ -233,6 +256,15 @@ class EngineManager:
     def stop(self, *, fast: bool = False) -> None:
         self._wanted = False
         self._q.put(("stop", fast))
+
+    def retry_gpu(self) -> None:
+        """[P4] [Retry GPU acceleration]: the ladder starts at host again (§5.6)."""
+        self._wanted = True
+        self._q.put(("retry_gpu", None))
+
+    def keep_once(self) -> None:
+        """[P4] [keep this time]: the next normal stop keeps the phone; the next start opens it once (§6.1, §6.3)."""
+        self._q.put(("keep_once", None))
 
     def reset_device(self) -> int:
         target = self._status.epoch + 1
@@ -421,6 +453,15 @@ class EngineManager:
                 elif state == S.FAILED:
                     self._release()
                     self._set(S.STOPPED)
+            case "keep_once":
+                self._keep_requested = True
+            case "retry_gpu":
+                gpuladder.reset(self._paths)
+                self._ladder_temp, self._ladder_suspect = None, False
+                if state in ACTIVE or state == S.READY:
+                    self._stopping(("restart", EpochCause.BOOT))
+                elif state in IDLE:
+                    self._begin(rebuild=False)
             case "reset" if state == S.READY and self._vm is not None:
                 if ErrorCode.ENGINE_NO_DISPLAY in self._warnings:   # the golden is fine: a restart loads it
                     self._stopping(("restart", EpochCause.RESET))
@@ -487,6 +528,7 @@ class EngineManager:
     def _begin(self, *, rebuild: bool) -> None:
         """Idle -> PREFLIGHT: take the lock first (§1.3), then the worker checks and boots."""
         self._warnings = ()
+        self._keep_requested = self._keep_skip = False
         if self._missing_install():
             self._set(S.FAILED, error=messages_ko.error(ErrorCode.PRE_NOT_INSTALLED))
             return
@@ -501,11 +543,24 @@ class EngineManager:
         self._run(lambda c: self._job_bring_up(c, force_rebuild=rebuild))
 
     def _stopping(self, intent: tuple[str, Any], *, fast: bool = False) -> None:
+        # §6.3: only a normal stop of a READY phone keeps it; fast stops (logoff, low disk) never save
+        normal = intent[0] == "stop" and not fast and self._state == S.READY and self._vm is not None
+        keep = normal and self._vm is not None and self._keeps(self._vm)
+        forget = normal and not keep and self._vm is not None and self._vm.slot_once
         self._cancel_job()
         self._intent = intent
         vm, self._vm = self._vm, None
-        self._set(S.STOPPING)
-        self._run(lambda c: self._job_teardown(vm, fast=fast))
+        self._set(S.STOPPING, text_key="engine.state.keeping" if keep else None)
+        self._run(lambda c: self._job_teardown(vm, fast=fast, keep=keep, forget=forget))
+
+    def _keeps(self, vm: _Vm) -> bool:
+        """Keep this phone at the stop? Never a COLD boot (not the kept phone, and no snapshots in software); never
+        over a kept phone this boot did not open, unless the user asked at the close notice."""
+        if vm.mode not in KEPT:
+            return False
+        if self._keep_requested:
+            return True
+        return self._settings().session.keep_state and not vm.kept_elsewhere
 
     def _on_crash(self, detail: str) -> None:
         now = self._clock.monotonic()
@@ -528,9 +583,21 @@ class EngineManager:
                 self._warnings = out.warnings
                 if out.cause == EpochCause.RESET_RECOVERY:   # banner: the reset was not confirmed (§6.7)
                     self._warnings = (*self._warnings, ErrorCode.ENGINE_RESET_FAILED)
-                self._mode = SessionMode.COLD if out.vm.mode == args.LaunchMode.COLD else SessionMode.GOLDEN
+                if out.vm.mode == args.LaunchMode.COLD:
+                    self._mode = SessionMode.COLD
+                else:   # with keeping on, every GOLDEN or kept boot is kept at a normal stop (§6.1)
+                    self._mode = SessionMode.KEEP_STATE if self._settings().session.keep_state else SessionMode.GOLDEN
                 self._watch(out.vm)
                 self._set(S.READY)
+            case _LadderStep():
+                _log.warning("GPU ladder: %s", out.detail)
+                self._intent = ("restart", self._next_cause)
+                self._after_teardown()
+            case _KeepBad():
+                _log.warning("the kept phone did not open: %s", out.detail)
+                self._keep_skip = True   # this run starts from the golden; the slot stays for the next start
+                self._intent = ("restart", self._next_cause)
+                self._after_teardown()
             case _NeedProvision():
                 self._mode = out.mode
                 if out.rebuild:   # the first preparation reports BOOT, any later one REBUILD (§5.1)
@@ -583,7 +650,7 @@ class EngineManager:
                 self._run(lambda c: self._job_bring_up(c, force_rebuild=False))
             case "rebuild":
                 self._next_cause = EpochCause.REBUILD
-                cold = self._settings().engine.gpu_mode == GpuMode.SOFTWARE
+                cold = self._gpu(self._settings()) == GpuMode.SOFTWARE
                 self._mode = SessionMode.COLD if cold else SessionMode.GOLDEN
                 self._set(S.PROVISIONING, text_key="engine.state.provisioning_gpu" if value == "gpu"
                           else "engine.state.provisioning_rebuild")
@@ -712,7 +779,7 @@ class EngineManager:
             self._enter(S.CONNECTING)
             self._connect(vm, cancel)
             self._enter(S.BOOTING)
-            self._boot(vm, cancel, BOOT_GOLDEN_S if mode == args.LaunchMode.GOLDEN else BOOT_COLD_S)
+            self._boot(vm, cancel, BOOT_GOLDEN_S if mode in KEPT else BOOT_COLD_S)
             self._enter(S.SESSION_INIT)
             ready = self._session_init(vm, settings, cancel, cause=self._next_cause, epoch=self._epoch + 1)
             self._check(cancel)   # a stop or rebuild meanwhile drops this outcome: the VM must not be left running
@@ -728,14 +795,15 @@ class EngineManager:
         if not self._seams.whpx_on():
             raise _fail(ErrorCode.PRE_WHPX_OFF)
         self._cleanup_orphans()
-        cold = settings.engine.gpu_mode == GpuMode.SOFTWARE
+        level = self._gpu(settings)
+        cold = level == GpuMode.SOFTWARE
         mode = SessionMode.COLD if cold else SessionMode.GOLDEN
         if self._verify is not None and self._verify.mode == mode:
             record: snapshots.Record | None = self._verify     # the verification boot after provisioning
         elif force_rebuild:
             record = None
         else:
-            record = snapshots.usable(self._paths, snapshots.current_key(self._paths, settings), mode)
+            record = snapshots.usable(self._paths, snapshots.current_key(self._paths, settings, level), mode)
         free = self._seams.disk_free(self._paths.root)
         if free < (DISK_PROVISION_MIN if record is None else DISK_RUN_MIN):
             raise _fail(ErrorCode.PRE_DISK, f"{free / GIB:.1f} GiB free")
@@ -750,8 +818,69 @@ class EngineManager:
             if record is self._verify:   # the verification boot must load the new golden (§6.5 step 10)
                 raise _fail(ErrorCode.PRE_NO_DISPLAY, "no display device for the verification boot")
             _log.warning("no display device: COLD boot this once instead of loading the golden")
+            return args.LaunchMode.COLD   # never a kept phone either: its load would fail the same way
+        if cold:
             return args.LaunchMode.COLD
-        return args.LaunchMode.COLD if cold else args.LaunchMode.GOLDEN
+        self._boot_slot = self._keep_slot(settings, record)
+        return args.LaunchMode.GOLDEN if self._boot_slot is None else args.LaunchMode.KEEP_STATE
+
+    def _gpu(self, settings: Settings) -> GpuMode:
+        """The GPU mode in force: the setting, or the ladder's level (§5.6 [P4])."""
+        if settings.engine.gpu_mode != GpuMode.LADDER:
+            return settings.engine.gpu_mode
+        return self._ladder_temp or gpuladder.level(self._paths, self._seams.gpu_key())
+
+    def _ladder_check(self, settings: Settings, level: GpuMode, renderer: str) -> None:
+        """§5.6 [P4]: a software renderer at host or host_hidden once means a re-check boot; twice, a step down."""
+        if settings.engine.gpu_mode != GpuMode.LADDER or level == GpuMode.SOFTWARE:
+            return
+        if not gpu.is_software(renderer):
+            self._ladder_suspect = False
+            return
+        if not self._ladder_suspect:
+            self._ladder_suspect = True
+            raise _Abort(_LadderStep(f"{renderer!r} at {level}: re-checking with another boot"))
+        self._ladder_suspect = False
+        raise _Abort(_LadderStep(self._step_down(settings, f"{renderer!r} twice at {level}")))
+
+    def _step_down(self, settings: Settings, why: str) -> str:
+        level = self._gpu(settings)
+        down = gpuladder.below(level) or GpuMode.SOFTWARE
+        key = self._seams.gpu_key()
+        if key.remote:   # a remote session is passing: the next local one starts at host again
+            self._ladder_temp = down
+        else:
+            gpuladder.save(self._paths, key, down)
+        return f"{why}: down to {down}{' (this run only: remote session)' if key.remote else ''}"
+
+    def _keep_slot(self, settings: Settings, record: snapshots.Record) -> str | None:
+        """§6.3: the kept phone to open instead of the golden, if any. Clears what no longer fits."""
+        self._boot_once = self._kept_elsewhere = False
+        p = keepstate.read(self._paths)
+        if p is None:
+            return None
+        if p.save_failed:   # said once, at this start
+            self._keep_notes.append(ErrorCode.ENGINE_KEEP_SAVE_FAILED)
+            p = replace(p, save_failed="")
+            keepstate.write(self._paths, p)
+        if not p.slot:
+            keepstate.drop(self._paths)
+            return None
+        if p.provision_id != record.provision_id or not keepstate.exists(self._paths, p.slot):
+            # a new golden (the kept phone grew from the old one), or the emulator deleted the slot itself
+            keepstate.drop(self._paths)
+            self._keep_notes.append(ErrorCode.ENGINE_KEEP_GONE)
+            return None
+        if not settings.session.keep_state and not p.once:   # keeping was turned off: free the ~1 GB slots
+            keepstate.drop(self._paths)
+            return None
+        if self._keep_skip or record is self._verify:   # it did not open this run: start clean, leave it alone
+            self._kept_elsewhere = True
+            if self._keep_skip:
+                self._keep_notes.append(ErrorCode.ENGINE_KEEP_FAILED)
+            return None
+        self._boot_once = p.once
+        return p.slot
 
     def _cleanup_orphans(self) -> None:
         """With the lock held: a live VM of our AVD is an orphan; dead discovery files go (§5.7). A record's pid is
@@ -798,17 +927,21 @@ class EngineManager:
         adb = self._ensure_adb(ports)
         proxy = childenv.decide_proxy(os.environ)
         cfg = args.LaunchConfig(self._paths.emulator_exe, ports.console, ports.grpc, settings.engine.idle_grpc_timeout_s,
-                                settings.engine.timezone, settings.engine.locale, proxy.http_proxy_flag)
-        gpu_mode = GpuMode.SOFTWARE if mode == args.LaunchMode.COLD and settings.engine.gpu_mode == GpuMode.SOFTWARE \
-            else settings.engine.gpu_mode
-        argv = args.build(cfg, mode, gpu_mode)
+                                settings.engine.timezone, settings.engine.locale, proxy.http_proxy_flag,
+                                camera_image=camera.ensure(self._paths))
+        gpu_mode = self._gpu(settings)   # also the clean cold boot of a GOLDEN provisioning: host flags
+        slot = self._boot_slot if mode == args.LaunchMode.KEEP_STATE else None
+        argv = args.build(cfg, mode, gpu_mode, keep_slot=slot)
         log_path = self._paths.logs / f"emulator-{time.strftime('%Y%m%d-%H%M%S')}-{mode}.log"
         proc = self._seams.procs.spawn(argv, env=self._seams.env(ports.adb_server), log_path=log_path)
         _log.info("launched %s: %s", mode, " ".join(argv[1:]))
         self._write_owner({"pid": os.getpid(), "started": time.time(), "kind": self._owner_kind,
                            "console": ports.console, "grpc": ports.grpc, "adb_server": ports.adb_server,
                            "adb_server_pid": adb.pid})
-        return _Vm(mode, ports, proc, log_path)
+        vm = _Vm(mode, ports, proc, log_path)
+        if mode in KEPT:
+            vm.slot, vm.slot_once, vm.kept_elsewhere = slot, slot is not None and self._boot_once, self._kept_elsewhere
+        return vm
 
     def _exited(self, vm: _Vm) -> _Abort:
         """The emulator ended on its own while starting: classify its log tail (§5.1 table)."""
@@ -819,6 +952,8 @@ class EngineManager:
         golden = vm.mode == args.LaunchMode.GOLDEN
         c = exitlog.classify(exitlog.tail(text, 40), golden=golden)
         excerpt = exitlog.tail(text)
+        if vm.mode == args.LaunchMode.KEEP_STATE:   # e.g. 'host GPU has changed': the emulator deletes it and exits
+            return _Abort(_KeepBad("the emulator exited opening it: " + excerpt[-300:]))
         if c.golden_load_failed or (golden and c.code == ErrorCode.ENGINE_EXIT
                                     and not snapshots.golden_exists(self._paths)):
             return _Abort(_GoldenBad("golden did not load: " + excerpt[-300:], gpu_changed=c.gpu_changed))
@@ -836,7 +971,7 @@ class EngineManager:
             if not vm.alive():
                 raise self._exited(vm)
             if self._clock.monotonic() > end:
-                raise _fail(ErrorCode.ENGINE_CONNECT_TIMEOUT, f"no discovery file in {limit:.0f} s")
+                raise self._connect_timeout(vm, f"no discovery file in {limit:.0f} s")
             rec = self._seams.discovery.find(vm.ports.console)
             if rec is not None and rec.grpc_port and rec.grpc_token:
                 vm.record = rec
@@ -854,11 +989,18 @@ class EngineManager:
                 if not vm.alive():
                     raise self._exited(vm) from None
                 if self._clock.monotonic() > end:
-                    raise _fail(ErrorCode.ENGINE_CONNECT_TIMEOUT, "getStatus never answered") from None
+                    raise self._connect_timeout(vm, "getStatus never answered") from None
                 self._clock.sleep(0.5)
         self._first_connect = False
         assert self._adb is not None
         vm.shell = RawShell(self._seams.adb, self._adb.port, vm.ports.serial)
+
+    def _connect_timeout(self, vm: _Vm, detail: str) -> Exception:
+        """A kept phone that hangs before gRPC answers did not open either (4a device test: a cut-short ram.bin hung
+        there once, at boot the other times): the golden this time, the slot left alone (§6.3)."""
+        if vm.mode == args.LaunchMode.KEEP_STATE:
+            return _Abort(_KeepBad(f"the kept phone did not answer: {detail}"))
+        return _fail(ErrorCode.ENGINE_CONNECT_TIMEOUT, detail)
 
     def _boot(self, vm: _Vm, cancel: threading.Event, limit_s: float) -> None:
         end = self._clock.monotonic() + limit_s
@@ -878,6 +1020,8 @@ class EngineManager:
             self._clock.sleep(0.5)
         if vm.mode == args.LaunchMode.GOLDEN:   # S4: a broken golden hangs without exiting or being deleted
             raise _Abort(_GoldenBad(f"GOLDEN boot did not finish in {limit_s:.0f} s"))
+        if vm.mode == args.LaunchMode.KEEP_STATE:
+            raise _Abort(_KeepBad(f"the kept phone did not boot in {limit_s:.0f} s"))
         raise _fail(ErrorCode.ENGINE_BOOT_TIMEOUT, f"not booted in {limit_s:.0f} s")
 
     def _adb_device(self, vm: _Vm, cancel: threading.Event) -> None:
@@ -900,13 +1044,14 @@ class EngineManager:
         assert vm.shell is not None
         sh = vm.shell
         self._adb_device(vm, cancel)
-        if vm.mode == args.LaunchMode.GOLDEN:
+        if vm.mode in KEPT:   # a kept phone grew from the golden and carries its RAM marker (§6.3)
+            bad = _GoldenBad if vm.mode == args.LaunchMode.GOLDEN else _KeepBad
             marker = sh.text("getprop debug.orcus.golden", 10)
-            if marker != self._provision_id:
-                raise _Abort(_GoldenBad(f"golden marker {marker!r}, expected {self._provision_id!r}"))
-            problem = provision.framework_problem(sh)   # a golden that comes back without its framework
+            if marker != self._provision_id:   # a kept phone without it: the emulator fell back to a cold boot
+                raise _Abort(bad(f"golden marker {marker!r}, expected {self._provision_id!r}"))
+            problem = provision.framework_problem(sh)   # a snapshot that comes back without its framework
             if problem is not None:
-                raise _Abort(_GoldenBad(f"after the load: {problem}"))
+                raise _Abort(bad(f"after the load: {problem}"))
         try:
             log_text = vm.log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -915,10 +1060,15 @@ class EngineManager:
         if hypervisor != "WHPX":   # getStatus.vmConfig.hypervisorType is always UNKNOWN in 37.2.12 (S0b)
             raise _fail(ErrorCode.PRE_WHPX_OFF, f"accelerator {hypervisor}")
         renderer = gpu.renderer(sh.text(gpu.RENDERER_CMD, 15))
-        warnings = [ErrorCode.ENGINE_GPU_SOFTWARE] if (gpu.is_software(renderer)
-                                                      or settings.engine.gpu_mode == GpuMode.SOFTWARE) else []
-        if vm.mode == args.LaunchMode.COLD and settings.engine.gpu_mode != GpuMode.SOFTWARE:
+        level = self._gpu(settings)
+        self._ladder_check(settings, level, renderer)
+        laddered = settings.engine.gpu_mode == GpuMode.LADDER and level != GpuMode.HOST
+        warnings = [ErrorCode.ENGINE_GPU_LADDER] if laddered else [ErrorCode.ENGINE_GPU_SOFTWARE] if (
+            gpu.is_software(renderer) or level == GpuMode.SOFTWARE) else []
+        if vm.mode == args.LaunchMode.COLD and level != GpuMode.SOFTWARE:
             warnings.append(ErrorCode.ENGINE_NO_DISPLAY)   # the COLD boot that kept the golden (_preflight)
+        warnings += [n for n in dict.fromkeys(self._keep_notes) if n not in warnings]   # keep-state news (§6.3)
+        self._keep_notes = []
         self._frame_check(vm, cancel)
         vm.nonce = uuid.uuid4().hex[:12]
         presets = settings.sensors.location_presets
@@ -931,7 +1081,7 @@ class EngineManager:
             vm.stub.setMicrophoneState(ec.MicrophoneState(realAudioEnabled=False), timeout=5)
         except grpc.RpcError as e:
             _log.warning("setMicrophoneState: %s", e.code())
-        caps = self._caps_for(vm, renderer, settings.engine.gpu_mode, hypervisor)
+        caps = self._caps_for(vm, renderer, level, hypervisor)
         if self._verify is not None:   # verification boot right after provisioning (§6.5 step 10)
             if vm.mode == args.LaunchMode.GOLDEN:
                 self._sleep(cancel, POST_LOAD_HEALTH_S - (self._clock.monotonic() - vm.booted_at))
@@ -996,7 +1146,7 @@ class EngineManager:
             raise _fail(ErrorCode.PRE_NO_DISPLAY, "no display device to record in the golden")
         start = self._clock.monotonic()
         provision_id = uuid.uuid4().hex[:12]
-        key = snapshots.current_key(self._paths, settings)
+        key = snapshots.current_key(self._paths, settings, self._gpu(settings))
         step = ["launch"]
 
         def failed(detail: str) -> _Abort:
@@ -1014,6 +1164,8 @@ class EngineManager:
             step[0] = "renderer"
             renderer = gpu.renderer(vm.shell.text(gpu.RENDERER_CMD, 15))
             if mode == SessionMode.GOLDEN and gpu.is_software(renderer):
+                if settings.engine.gpu_mode == GpuMode.LADDER:   # a long boot already: no re-check (§5.6)
+                    raise _Abort(_LadderStep(self._step_down(settings, f"provisioning drew with {renderer!r}")))
                 raise failed(f"software renderer {renderer!r} in a host GPU mode")
             step[0] = "settings"
             self._enter(S.PROVISIONING, None, 0.4)
@@ -1116,10 +1268,47 @@ class EngineManager:
             return _ResetFailed(detail)
 
     # teardown (§5.1 STOPPING)
-    def _job_teardown(self, vm: _Vm | None, *, fast: bool) -> _Outcome:
+    def _job_teardown(self, vm: _Vm | None, *, fast: bool, keep: bool = False, forget: bool = False) -> _Outcome:
         if vm is not None:
+            if keep:
+                self._keep_save(vm)
             self._teardown(vm, fast=fast)
+            if forget:   # a phone kept once and not kept again: the next start is the clean golden (§6.1)
+                keepstate.drop(self._paths)
         return _Stopped()
+
+    def _keep_save(self, vm: _Vm) -> None:
+        """§6.3 normal stop: into the slot the pointer does not name, checked, then the pointer, then the old slot.
+        A failure leaves the pointer's slot alone and is said at the next start."""
+        pointer = keepstate.read(self._paths)
+        current = pointer.slot if pointer is not None and keepstate.exists(self._paths, pointer.slot) else None
+        target = keepstate.other(vm.slot or current)
+        target_id = keepstate.name(target)
+        once = not self._settings().session.keep_state
+        t = self._clock.monotonic()
+        try:
+            free = self._seams.disk_free(self._paths.root)
+            if free < KEEP_DISK_MIN:
+                raise RuntimeError(f"{free / GIB:.1f} GiB free on the disk")
+            vm.snap.DeleteSnapshot(ss.SnapshotPackage(snapshot_id=target_id), timeout=60)   # never mix two saves
+            saved = vm.snap.SaveSnapshot(ss.SnapshotPackage(snapshot_id=target_id), timeout=300)
+            if not saved.success:
+                raise RuntimeError(f"SaveSnapshot: {saved.err.decode(errors='replace')}")
+            listed = vm.snap.ListSnapshots(ss.SnapshotFilter(statusFilter=ss.SnapshotFilter.All), timeout=30)
+            ok = (ss.SnapshotDetails.Compatible, ss.SnapshotDetails.Loaded)
+            if not any(d.snapshot_id == target_id and d.status in ok for d in listed.snapshots):
+                raise RuntimeError("not listed as loadable after the save")
+            keepstate.write(self._paths, keepstate.Pointer(target, self._provision_id, time.time(), once=once))
+            for old in {vm.slot, current} - {None, target}:
+                assert old is not None
+                vm.snap.DeleteSnapshot(ss.SnapshotPackage(snapshot_id=keepstate.name(old)), timeout=60)
+            _log.info("phone kept in slot %s in %.1f s%s", target, self._clock.monotonic() - t,
+                      " (once)" if once else "")
+        except (grpc.RpcError, RuntimeError, OSError) as e:
+            detail = str(e.code()) if isinstance(e, grpc.RpcError) else str(e)
+            _log.warning("phone not kept: %s", detail)
+            failed = keepstate.Pointer("", self._provision_id, 0.0) if pointer is None else pointer
+            keepstate.write(self._paths, replace(failed, save_failed=detail[:200]))
 
     def _teardown(self, vm: _Vm, *, fast: bool) -> None:
         vm.done.set()

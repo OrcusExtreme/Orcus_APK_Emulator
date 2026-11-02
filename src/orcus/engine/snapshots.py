@@ -33,6 +33,7 @@ class ValidityKey:
     features: str
     provision_v: int
     adbkey_sha256: str
+    camera: str   # [P4] the back camera's mode: a golden from before the picture camera does not open (4a)
 
 
 def _sha256(path: Path) -> str:
@@ -42,17 +43,19 @@ def _sha256(path: Path) -> str:
         return ""
 
 
-def current_key(paths: OrcusPaths, settings: Settings) -> ValidityKey:
+def current_key(paths: OrcusPaths, settings: Settings, gpu_mode: GpuMode | None = None) -> ValidityKey:
+    """gpu_mode: the mode in force when it is not the setting itself (the GPU ladder's level, §5.6 [P4])."""
     return ValidityKey(
         emulator_build=pins.EMULATOR_BUILD,
         image=f"{pins.SYSTEM_IMAGE_API}-{pins.SYSTEM_IMAGE_TAG}-r{pins.SYSTEM_IMAGE.revision}",
         config_sha256=avd.config_sha256(paths) or "",
-        gpu_mode=str(settings.engine.gpu_mode),
+        gpu_mode=str(gpu_mode or settings.engine.gpu_mode),
         locale=settings.engine.locale,
         timezone=settings.engine.timezone,
         features=" ".join(args.FEATURES),
         provision_v=PROVISION_V,
         adbkey_sha256=_sha256(Path(f"{paths.adbkey}.pub")),
+        camera=args.CAMERA_MODE,
     )
 
 

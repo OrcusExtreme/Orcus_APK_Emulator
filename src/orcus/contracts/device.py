@@ -1,6 +1,6 @@
 """Device surface: frames, input, sensors, logcat (implemented by orcus.device over emulator gRPC)."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Protocol
@@ -82,6 +82,8 @@ class InputSink(Protocol):
     """Every call only enqueues and returns."""
 
     def pointer(self, at: PointerAt, pressed: bool) -> None: ...
+    def touches(self, points: Sequence[PointerAt]) -> None: ...
+    # [P4] fingers 0..n-1 down at these points (a pinch); fingers no longer listed lift, () lifts them all
     def wheel(self, at: PointerAt, dy: int) -> None: ...   # Qt angleDelta: 120 a notch, + scrolls up
     def key(self, key: HwKey | str, *, long_press: bool = False) -> None: ...   # always a keypress
     def chord(self, modifier: str, key: str) -> None: ...                      # e.g. ("Control", "a")
@@ -90,11 +92,27 @@ class InputSink(Protocol):
     def release_all(self) -> None: ...
 
 
+BATTERY_MIN_UNPLUGGED = 21   # [P4] 20 % and below, not charging, crashes the image's SystemUI (device.controls)
+
+
+@dataclass(frozen=True, slots=True)
+class PhoneWorld:
+    """[P4] What the phone senses around it (§9.7). The golden is dark (0 lux), with nothing near (1 cm is the
+    Goldfish sensor's far value) and full on AC; a kept phone (§6.3) comes back as it was saved."""
+    light_lux: float = 0.0
+    proximity_cm: float = 1.0
+    battery: int = 100
+    charging: bool = True
+
+
 class DeviceControls(Protocol):
     """Everything goes to the device-controls FIFO thread and returns at once."""
 
     @property
-    def posture(self) -> Rotation: ...      # the newest rotate() target; every epoch starts in PORTRAIT
+    def posture(self) -> Rotation: ...      # the newest rotate() target; read from the phone when the epoch starts
+    # (the golden is PORTRAIT; a kept phone comes back turned the way it was saved, P4)
+    @property
+    def world(self) -> PhoneWorld: ...      # [P4] the newest set_light/proximity/battery; read at the start too
     @property
     def microphone(self) -> bool: ...       # the newest set_microphone(); SESSION_INIT turns it off
     def shake(self, sensitivity: Sensitivity) -> None: ...
@@ -107,6 +125,13 @@ class DeviceControls(Protocol):
     # the newest location again: test providers report only when told, so a LocationSensor that starts listening
     # later gets its first fix only from the next send (3b)
     def set_microphone(self, enabled: bool) -> None: ...
+    # [P4] more of the phone's world (§9.7): light (lux), proximity (cm: 0 near), battery, a text, a call
+    def set_light(self, lux: float) -> None: ...
+    def set_proximity(self, cm: float) -> None: ...
+    def set_battery(self, level: int, charging: bool) -> None: ...
+    def receive_sms(self, sender: str, text: str) -> None: ...
+    def call_in(self, number: str) -> None: ...
+    def call_end(self, number: str) -> None: ...
 
 
 class DeviceSession(Protocol):
